@@ -66,6 +66,10 @@ body {
   .aitk-react-select-container .aitk-react-select__placeholder {
     @apply text-sm text-neutral-200;
   }
+
+  .fill-height {
+      height: 85vh;
+  }
 }
 
 
