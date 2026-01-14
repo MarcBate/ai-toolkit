@@ -45,7 +45,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         {['success', 'refreshing'].includes(status) && (
           <div className="space-y-1">
             {files.map((file, index) => {
-              const fileName = file.path.split('/').pop() || '';
+              const fileName = (file.path || '').split(/[/\\]/).pop() || '';
               const nameWithoutExt = fileName.replace('.safetensors', '');
               return (
                 <a
