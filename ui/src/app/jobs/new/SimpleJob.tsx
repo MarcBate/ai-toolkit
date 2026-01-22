@@ -451,6 +451,13 @@ export default function SimpleJob({
               min={1}
               required
             />
+            <FormGroup label="Options">
+              <Checkbox
+                label="Archive Optimizer"
+                checked={jobConfig.config.process[0].save.archive_optimizer || false}
+                onChange={value => setJobConfig(value, 'config.process[0].save.archive_optimizer')}
+              />
+            </FormGroup>
           </Card>
         </div>
         <div>

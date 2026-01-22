@@ -473,6 +473,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     shutil.rmtree(item)
                 else:
                     os.remove(item)
+                    # if it's a safetensors file, see if we have an optimizer to remove
+                    if item.endswith('.safetensors'):
+                        # Matches digits after the last underscore (e.g., 'my_model_000001000.safetensors')
+                        match = re.search(r'_(\d+)\.safetensors$', item)
+                        if match:
+                            step_num_str = match.group(1)
+                            optimizer_to_remove = os.path.join(self.save_root, f"optimizer_{step_num_str}.pt")
+                            if os.path.exists(optimizer_to_remove):
+                                print_acc(f"Removing old optimizer: {optimizer_to_remove}")
+                                os.remove(optimizer_to_remove)
+
                 # see if a yaml file with same name exists
                 yaml_file = os.path.splitext(item)[0] + ".yaml"
                 if os.path.exists(yaml_file):
@@ -667,15 +678,43 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # save optimizer
         if self.optimizer is not None:
+            optimizer_path = os.path.join(self.save_root, 'optimizer.pt')
+            if self.save_config.archive_optimizer:
+                try:
+                    if os.path.exists(optimizer_path):
+                        # 1. List all safetensors files
+                        checkpoint_files = glob.glob(os.path.join(self.save_root, "*.safetensors"))
+
+                        if checkpoint_files:
+                            step_numbers = []
+                            for f in checkpoint_files:
+                                # Matches digits after the last underscore (e.g., 'my_model_000001000.safetensors')
+                                match = re.search(r'_(\d+)\.safetensors$', f)
+                                if match:
+                                    step_numbers.append(int(match.group(1)))
+
+                            if step_numbers:
+                                # 2. Find the highest step count currently on disk
+                                max_step = max(step_numbers)
+
+                                # Format with leading zeros to match common toolkit naming (e.g., 9 digits)
+                                archive_name = f"optimizer_{max_step:09d}.pt"
+                                archive_path = os.path.join(self.save_root, archive_name)
+
+                                # 3. Archive the existing optimizer if not already archived
+                                if not os.path.exists(archive_path):
+                                    os.rename(optimizer_path, archive_path)
+                except Exception as e:
+                    print_acc(f"Error archiving optimizer: {e}")
+
+            # 4. Save the new optimizer.pt (this will be the 'latest' for next time)
             try:
-                filename = f'optimizer.pt'
-                file_path = os.path.join(self.save_root, filename)
                 try:
                     state_dict = unwrap_model(self.optimizer).state_dict()
                 except Exception as e:
                     state_dict = self.optimizer.state_dict()
-                torch.save(state_dict, file_path)
-                print_acc(f"Saved optimizer to {file_path}")
+                torch.save(state_dict, optimizer_path)
+                print_acc(f"Saved optimizer to {optimizer_path}")
             except Exception as e:
                 print_acc(e)
                 print_acc("Could not save optimizer")
@@ -1951,6 +1990,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # check if it exists
         optimizer_state_filename = f'optimizer.pt'
         optimizer_state_file_path = os.path.join(self.save_root, optimizer_state_filename)
+
         if os.path.exists(optimizer_state_file_path):
             # try to load
             # previous param groups
