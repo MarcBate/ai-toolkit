@@ -430,21 +430,35 @@ class BaseSDTrainProcess(BaseTrainProcess):
             critic_pattern = f"CRITIC_{self.job.name}_*"
             critic_items = glob.glob(os.path.join(self.save_root, critic_pattern))
 
-            # Sort the lists by creation time if they are not empty
+            def get_step_num(p):
+                try:
+                    # matches digits after last underscore before extension
+                    f_name = os.path.basename(p)
+                    # remove extension if present
+                    f_name = os.path.splitext(f_name)[0]
+                    # match last digits
+                    match = re.search(r'_(\d+)$', f_name)
+                    if match:
+                        return int(match.group(1))
+                except Exception:
+                    pass
+                return -1
+
+            # Sort the lists by step number, then by creation time if step number is the same
             if safetensors_files:
-                safetensors_files.sort(key=os.path.getctime)
+                safetensors_files.sort(key=lambda p: (get_step_num(p), os.path.getctime(p)))
             if pt_files:
-                pt_files.sort(key=os.path.getctime)
+                pt_files.sort(key=lambda p: (get_step_num(p), os.path.getctime(p)))
             if directories:
-                directories.sort(key=os.path.getctime)
+                directories.sort(key=lambda p: (get_step_num(p), os.path.getctime(p)))
             if embed_files:
-                embed_files.sort(key=os.path.getctime)
+                embed_files.sort(key=lambda p: (get_step_num(p), os.path.getctime(p)))
             if critic_items:
-                critic_items.sort(key=os.path.getctime)
+                critic_items.sort(key=lambda p: (get_step_num(p), os.path.getctime(p)))
 
             # Combine and sort the lists
             combined_items = safetensors_files + directories + pt_files
-            combined_items.sort(key=os.path.getctime)
+            combined_items.sort(key=lambda p: (get_step_num(p), os.path.getctime(p)))
             
             num_saves_to_keep = self.save_config.max_step_saves_to_keep
             
@@ -854,7 +868,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     paths = [p for p in paths if '_cn' not in p]
 
                 if len(paths) > 0:
-                    latest_path = max(paths, key=os.path.getctime)
+                    def get_step_num(p):
+                        try:
+                            # matches digits after last underscore before extension
+                            f_name = os.path.basename(p)
+                            # remove extension if present
+                            f_name = os.path.splitext(f_name)[0]
+                            # match last digits
+                            match = re.search(r'_(\d+)$', f_name)
+                            if match:
+                                return int(match.group(1))
+                        except Exception:
+                            pass
+                        return -1
+
+                    latest_path = max(paths, key=lambda p: (get_step_num(p), os.path.getctime(p)))
         
         if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
             # set pretrained lora path as load path if we do not have a checkpoint to resume from
