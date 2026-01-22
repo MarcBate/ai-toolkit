@@ -155,6 +155,24 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self.update_db_key("save", False)
 
+    def should_sample(self):
+        if not self.is_ui_trainer:
+            return False
+
+        def _check_sample():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT sample FROM Job WHERE id = ?", (self.job_id,))
+                sample = cursor.fetchone()
+                return False if sample is None else sample[0] == 1
+
+        return _check_sample()
+
+    def reset_sample(self):
+        if self.accelerator.is_main_process and self.is_ui_trainer:
+            self.update_db_key("sample", False)
+
     def maybe_stop(self):
         if not self.is_ui_trainer:
             return
@@ -175,6 +193,16 @@ class DiffusionTrainer(SDTrainer):
         if self.should_save():
             self.reset_save()
             self.save(self.step_num)
+
+    def maybe_sample(self):
+        if not self.is_ui_trainer:
+            return
+        if self.should_sample():
+            self.reset_sample()
+            # save model and optimizer first as requested
+            self.save(self.step_num)
+            # then sample
+            self.sample(self.step_num)
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:
@@ -287,6 +315,7 @@ class DiffusionTrainer(SDTrainer):
         if self.is_ui_trainer:
             self.update_step()
             self.maybe_save()
+            self.maybe_sample()
             self.maybe_stop()
 
     def hook_before_model_load(self):

@@ -3,20 +3,23 @@ import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
 import { JobConfig } from '@/types';
-import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
+import { LuImageOff, LuLoader, LuBan, LuCamera } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
+import { getAvaliableJobActions, sampleJob } from '@/utils/jobs';
 
 interface SampleImagesMenuProps {
-  job?: Job | null;
+  job: Job;
+  onRefresh?: () => void;
 }
 
-export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
+export const SampleImagesMenu = ({ job, onRefresh }: SampleImagesMenuProps) => {
   const [isZipping, setIsZipping] = useState(false);
+  const { canSample } = getAvaliableJobActions(job);
 
   const downloadZip = async () => {
     if (isZipping) return;
@@ -46,19 +49,34 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
     }
   };
   return (
-    <Button
-      onClick={downloadZip}
-      className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
-        'opacity-50 cursor-not-allowed': isZipping,
-      })}
-    >
-      {isZipping ? (
-        <LuLoader className="animate-spin inline-block mr-2" />
-      ) : (
-        <FaDownload className="inline-block mr-2" />
+    <div className="flex items-center">
+      {canSample && (
+        <Button
+          onClick={async () => {
+            if (!canSample) return;
+            await sampleJob(job.id);
+            if (onRefresh) onRefresh();
+          }}
+          className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 mr-2`)}
+        >
+          <LuCamera className="inline-block mr-2" />
+          Generate Samples Now
+        </Button>
       )}
-      {isZipping ? 'Preparing' : 'Download'}
-    </Button>
+      <Button
+        onClick={downloadZip}
+        className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
+          'opacity-50 cursor-not-allowed': isZipping,
+        })}
+      >
+        {isZipping ? (
+          <LuLoader className="animate-spin inline-block mr-2" />
+        ) : (
+          <FaDownload className="inline-block mr-2" />
+        )}
+        {isZipping ? 'Preparing' : 'Download'}
+      </Button>
+    </div>
   );
 };
 

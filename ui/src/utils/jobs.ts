@@ -50,6 +50,22 @@ export const saveJob = (jobID: string) => {
   });
 };
 
+export const sampleJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/sample`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job sample requested:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error requesting job sample:', error);
+        reject(error);
+      });
+  });
+};
+
 export const deleteJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
@@ -94,12 +110,13 @@ export const getAvaliableJobActions = (job: Job) => {
   const canRemoveFromQueue = job.status === 'queued';
   const canStop = job.status === 'running' && !isStopping;
   const canSave = job.status === 'running' && !job.save && !isStopping;
+  const canSample = job.status === 'running' && !job.sample && !isStopping;
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
   // can resume if more steps were added
   if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
     canStart = true;
   }
-  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue, canSave };
+  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue, canSave, canSample };
 };
 
 export const getNumberOfSamples = (job: Job) => {

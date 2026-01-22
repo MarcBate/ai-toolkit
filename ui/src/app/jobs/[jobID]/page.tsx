@@ -19,7 +19,7 @@ interface Page {
   name: string;
   value: PageKey;
   component: React.ComponentType<{ job: Job }>;
-  menuItem?: React.ComponentType<{ job?: Job | null }> | null;
+  menuItem?: React.ComponentType<{ job: Job; onRefresh?: () => void }> | null;
   mainCss?: string;
 }
 
@@ -106,10 +106,10 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             {page.name}
           </Button>
         ))}
-        {page?.menuItem && (
+        {page?.menuItem && job && (
           <>
             <div className="flex-grow"></div>
-            <page.menuItem job={job} />
+            <page.menuItem job={job} onRefresh={refreshJob} />
           </>
         )}
       </div>
