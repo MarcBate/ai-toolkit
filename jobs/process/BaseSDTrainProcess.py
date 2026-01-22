@@ -513,6 +513,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def done_hook(self):
         pass
     
+    def should_save(self):
+        return False
+    
+    def reset_save(self):
+        pass
+    
     def end_step_hook(self):
         pass
 
@@ -526,7 +532,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if not os.path.exists(self.save_root):
             os.makedirs(self.save_root, exist_ok=True)
-
+        
+        previous_save_step = self.last_save_step
         step_num = ''
         if step is not None:
             self.last_save_step = step
@@ -696,28 +703,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.save_config.archive_optimizer:
                 try:
                     if os.path.exists(optimizer_path):
-                        # 1. List all safetensors files
-                        checkpoint_files = glob.glob(os.path.join(self.save_root, "*.safetensors"))
+                        # Archive the existing optimizer.pt (which belongs to the previous save)
+                        archive_name = f"optimizer_{previous_save_step:09d}.pt"
+                        archive_path = os.path.join(self.save_root, archive_name)
 
-                        if checkpoint_files:
-                            step_numbers = []
-                            for f in checkpoint_files:
-                                # Matches digits after the last underscore (e.g., 'my_model_000001000.safetensors')
-                                match = re.search(r'_(\d+)\.safetensors$', f)
-                                if match:
-                                    step_numbers.append(int(match.group(1)))
-
-                            if step_numbers:
-                                # 2. Find the highest step count currently on disk
-                                max_step = max(step_numbers)
-
-                                # Format with leading zeros to match common toolkit naming (e.g., 9 digits)
-                                archive_name = f"optimizer_{max_step:09d}.pt"
-                                archive_path = os.path.join(self.save_root, archive_name)
-
-                                # 3. Archive the existing optimizer if not already archived
-                                if not os.path.exists(archive_path):
-                                    os.rename(optimizer_path, archive_path)
+                        # Archive the existing optimizer if not already archived
+                        if not os.path.exists(archive_path):
+                            print_acc(f"Archiving optimizer to {archive_name}")
+                            os.rename(optimizer_path, archive_path)
                 except Exception as e:
                     print_acc(f"Error archiving optimizer: {e}")
 
@@ -917,6 +910,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if 'epoch' in meta['training_info']:
                 self.epoch_num = meta['training_info']['epoch']
             self.start_step = self.step_num
+            self.last_save_step = self.step_num
             print_acc(f"Found step {self.step_num} in metadata, starting from there")
 
     def load_weights(self, path):
