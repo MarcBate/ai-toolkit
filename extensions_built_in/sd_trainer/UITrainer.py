@@ -148,8 +148,10 @@ class UITrainer(SDTrainer):
                 cursor = conn.cursor()
                 cursor.execute("BEGIN IMMEDIATE")
                 try:
-                    # Convert the value to string if it's not already
-                    if isinstance(value, str):
+                    # Convert the value to appropriate SQLite type
+                    if isinstance(value, bool):
+                        value_to_insert = 1 if value else 0
+                    elif isinstance(value, (int, float, str)) or value is None:
                         value_to_insert = value
                     else:
                         value_to_insert = str(value)
