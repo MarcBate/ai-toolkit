@@ -261,7 +261,19 @@ class StableDiffusion:
     @property
     def is_flux(self):
         return self.arch == 'flux'
-    
+
+    @property
+    def is_ltx2(self):
+        return self.arch == 'ltx2'
+
+    @property
+    def is_wan21(self):
+        return self.arch == 'wan21'
+
+    @property
+    def is_z_image(self):
+        return self.arch == 'z_image'
+
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
@@ -2783,6 +2795,30 @@ class StableDiffusion:
                     save_directory=os.path.join(output_file, 'transformer'),
                     safe_serialization=True,
                 )
+            elif self.is_ltx2:
+                # only save the unet
+                from extensions_built_in.diffusion_models.ltx2.ltx2_video_transformer import LTX2VideoTransformer
+                transformer: LTX2VideoTransformer = unwrap_model(self.unet)
+                transformer.save_pretrained(
+                    save_directory=os.path.join(output_file, 'transformer'),
+                    safe_serialization=True,
+                )
+            elif self.is_wan21:
+                # only save the unet
+                from toolkit.models.wan21.wan21_transformer import WanTransformer3DModel
+                transformer: WanTransformer3DModel = unwrap_model(self.unet)
+                transformer.save_pretrained(
+                    save_directory=os.path.join(output_file, 'transformer'),
+                    safe_serialization=True,
+                )
+            elif self.is_z_image:
+                # only save the unet
+                from extensions_built_in.diffusion_models.z_image.z_image_transformer import ZImageTransformer2DModel
+                transformer: ZImageTransformer2DModel = unwrap_model(self.unet)
+                transformer.save_pretrained(
+                    save_directory=os.path.join(output_file, 'transformer'),
+                    safe_serialization=True,
+                )
             elif self.is_lumina2:
                 # only save the unet
                 transformer: Lumina2Transformer2DModel = unwrap_model(self.unet)
@@ -2847,7 +2883,7 @@ class StableDiffusion:
             named_params = self.named_parameters(vae=False, unet=unet, text_encoder=False, state_dict_keys=True)
             unet_lr = unet_lr if unet_lr is not None else default_lr
             params = []
-            if self.is_pixart or self.is_auraflow or self.is_flux or self.is_v3 or self.is_lumina2:
+            if self.is_pixart or self.is_auraflow or self.is_flux or self.is_ltx2 or self.is_wan21 or self.is_z_image or self.is_v3 or self.is_lumina2:
                 for param in named_params.values():
                     if param.requires_grad:
                         params.append(param)
@@ -3137,6 +3173,12 @@ class StableDiffusion:
             return 'auraflow'
         if self.is_flux:
             return 'flux.1'
+        if self.is_ltx2:
+            return 'ltx2'
+        if self.is_wan21:
+            return 'wan21'
+        if self.is_z_image:
+            return 'z_image'
         if self.is_lumina2:
             return 'lumina2'
         if self.is_ssd:

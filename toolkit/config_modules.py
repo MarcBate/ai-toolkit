@@ -30,6 +30,7 @@ class SaveConfig:
         self.hf_repo_id: Optional[str] = kwargs.get("hf_repo_id", None)
         self.hf_private: Optional[str] = kwargs.get("hf_private", False)
         self.archive_optimizer: bool = kwargs.get("archive_optimizer", False)
+        self.save_with_step_num: bool = kwargs.get("save_with_step_num", True)
 
 class LoggingConfig:
     def __init__(self, **kwargs):
@@ -576,6 +577,9 @@ class ModelConfig:
         self.is_auraflow: bool = kwargs.get('is_auraflow', False)
         self.is_v3: bool = kwargs.get('is_v3', False)
         self.is_flux: bool = kwargs.get('is_flux', False)
+        self.is_ltx2: bool = kwargs.get('is_ltx2', False)
+        self.is_wan21: bool = kwargs.get('is_wan21', False)
+        self.is_z_image: bool = kwargs.get('is_z_image', False)
         self.is_lumina2: bool = kwargs.get('is_lumina2', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
@@ -706,6 +710,12 @@ class ModelConfig:
                 self.is_auraflow = True
             elif self.arch == 'flux':
                 self.is_flux = True
+            elif self.arch == 'ltx2':
+                self.is_ltx2 = True
+            elif self.arch == 'wan21':
+                self.is_wan21 = True
+            elif self.arch == 'z_image':
+                self.is_z_image = True
             elif self.arch == 'lumina2':
                 self.is_lumina2 = True
             elif self.arch == 'vega':
@@ -729,6 +739,12 @@ class ModelConfig:
                 self.arch = 'auraflow'
             elif kwargs.get('is_flux', False):
                 self.arch = 'flux'
+            elif kwargs.get('is_ltx2', False):
+                self.arch = 'ltx2'
+            elif kwargs.get('is_wan21', False):
+                self.arch = 'wan21'
+            elif kwargs.get('is_z_image', False):
+                self.arch = 'z_image'
             elif kwargs.get('is_lumina2', False):
                 self.arch = 'lumina2'
             elif kwargs.get('is_vega', False):

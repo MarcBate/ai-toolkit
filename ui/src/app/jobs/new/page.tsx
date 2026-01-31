@@ -48,7 +48,7 @@ export default function TrainingForm() {
     for (let i = 0; i < jobConfig.config.process[0].datasets.length; i++) {
       const dataset = jobConfig.config.process[0].datasets[i];
       if (dataset.folder_path === defaultDatasetPath) {
-        if (datasetOptions.length > 0) {
+        if (datasetOptions.length > 0 && i === 0) {
           setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
         }
       }

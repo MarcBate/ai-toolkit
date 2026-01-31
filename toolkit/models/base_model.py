@@ -250,6 +250,18 @@ class BaseModel:
         return self.arch == 'flux'
 
     @property
+    def is_ltx2(self):
+        return self.arch == 'ltx2'
+
+    @property
+    def is_wan21(self):
+        return self.arch == 'wan21'
+
+    @property
+    def is_z_image(self):
+        return self.arch == 'z_image'
+
+    @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
 

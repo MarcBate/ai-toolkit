@@ -753,7 +753,7 @@ export default function SimpleJob({
                         label="Target Dataset"
                         value={dataset.folder_path}
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
-                        options={datasetOptions}
+                        options={[{ value: defaultDatasetConfig.folder_path, label: 'Please select...' }, ...datasetOptions]}
                       />
                       {modelArch?.additionalSections?.includes('datasets.control_path') && (
                         <SelectInput
@@ -764,7 +764,7 @@ export default function SimpleJob({
                           onChange={value =>
                             setJobConfig(value == '' ? null : value, `config.process[0].datasets[${i}].control_path`)
                           }
-                          options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                          options={[{ value: '', label: 'None' }, ...datasetOptions]}
                         />
                       )}
                       {modelArch?.additionalSections?.includes('datasets.multi_control_paths') && (
@@ -780,7 +780,7 @@ export default function SimpleJob({
                                 `config.process[0].datasets[${i}].control_path_1`,
                               )
                             }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                            options={[{ value: '', label: 'None' }, ...datasetOptions]}
                           />
                           <SelectInput
                             label="Control Dataset 2"
@@ -793,7 +793,7 @@ export default function SimpleJob({
                                 `config.process[0].datasets[${i}].control_path_2`,
                               )
                             }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                            options={[{ value: '', label: 'None' }, ...datasetOptions]}
                           />
                           <SelectInput
                             label="Control Dataset 3"
@@ -806,7 +806,7 @@ export default function SimpleJob({
                                 `config.process[0].datasets[${i}].control_path_3`,
                               )
                             }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                            options={[{ value: '', label: 'None' }, ...datasetOptions]}
                           />
                         </>
                       )}

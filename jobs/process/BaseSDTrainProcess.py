@@ -539,6 +539,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.last_save_step = step
             # zeropad 9 digits
             step_num = f"_{str(step).zfill(9)}"
+        elif self.save_config.save_with_step_num:
+            # if step is None, use current step
+            step_num = f"_{str(self.step_num).zfill(9)}"
 
         self.update_training_metadata()
         filename = f'{self.job.name}{step_num}.safetensors'
@@ -554,6 +557,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # prepare meta
         save_meta = get_meta_for_safetensors(save_meta, self.job.name)
+        
+        # set filename again just in case it was changed above (eg. lora, adapter)
+        # but only if it's not fine tuning as that has its own logic
+        if not self.is_fine_tuning:
+            # check if we have a filename already (from lora or adapter)
+            # if not, use the default one
+            if 'filename' not in locals():
+                filename = f'{self.job.name}{step_num}.safetensors'
+                file_path = os.path.join(self.save_root, filename)
+            else:
+                # filename was set by lora or adapter, but we might need to ensure step_num is there
+                # actually lora and adapter logic above already uses step_num
+                pass
+        else:
+            # for fine tuning, we use the original filename and file_path
+            pass
+
         if not self.is_fine_tuning:
             if self.network is not None:
                 lora_name = self.job.name
@@ -2398,6 +2418,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 # update various steps
                 self.step_num = step + 1
+                self.step = self.step_num
                 self.grad_accumulation_step += 1
                 self.end_step_hook()
 
