@@ -11,6 +11,7 @@ interface DatasetImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onCaptionSave?: (newCaption: string, imageUrl: string) => void;
   initialCaption?: string;
 }
 
@@ -20,6 +21,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   children,
   className = '',
   onDelete = () => {},
+  onCaptionSave = () => {},
   initialCaption = '',
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
@@ -31,6 +33,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [savedCaption, setSavedCaption] = useState<string>(initialCaption);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
+
+  useEffect(() => {
+    setCaption(initialCaption);
+    setSavedCaption(initialCaption);
+    setIsCaptionLoaded(!!initialCaption);
+  }, [initialCaption]);
 
   const fetchCaption = async () => {
     if (isGettingCaption.current || (isCaptionLoaded && caption)) return;
@@ -56,18 +64,24 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       });
   };
 
-  const saveCaption = () => {
-    const trimmedCaption = caption.trim();
-    if (trimmedCaption === savedCaption) return;
+  const saveCaption = (valueToSave?: string) => {
+    const targetCaption = (valueToSave !== undefined ? valueToSave : caption).trim();
+    if (targetCaption === savedCaption) return;
+    
+    // update savedCaption immediately to prevent duplicate calls
+    setSavedCaption(targetCaption);
+    
     apiClient
-      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
+      .post('/api/img/caption', { imgPath: imageUrl, caption: targetCaption })
       .then(res => res.data)
       .then(data => {
         console.log('Caption saved:', data);
-        setSavedCaption(trimmedCaption);
+        onCaptionSave(targetCaption, imageUrl);
       })
       .catch(error => {
         console.error('Error saving caption:', error);
+        // revert savedCaption on error to allow retry
+        setSavedCaption(prev => prev === targetCaption ? caption.trim() : prev);
       });
   };
 
@@ -119,7 +133,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     // If Enter is pressed without Shift, prevent default behavior and save
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      saveCaption();
+      saveCaption(e.currentTarget.value);
       setIsEditing(false);
       (e.target as HTMLTextAreaElement).blur();
     }
@@ -214,8 +228,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               e.preventDefault();
               saveCaption();
             }}
-            onBlur={() => {
-              saveCaption();
+            onBlur={e => {
+              saveCaption(e.currentTarget.querySelector('textarea')?.value);
               setIsEditing(false);
             }}
           >

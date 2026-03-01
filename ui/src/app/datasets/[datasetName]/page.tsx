@@ -284,6 +284,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 alt="image"
                 imageUrl={img.img_path}
                 onDelete={() => refreshImageList(datasetName)}
+                onCaptionSave={(newCaption, imgPath) => {
+                  setImgList(prev =>
+                    prev.map(item => (item.img_path === imgPath ? { ...item, caption: newCaption } : item)),
+                  );
+                }}
                 initialCaption={img.caption}
               />
             ))}
