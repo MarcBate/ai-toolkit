@@ -221,8 +221,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           >
             <textarea
               className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
+              style={isEditing ? { fieldSizing: 'content' } as any : {}}
               value={caption}
-              rows={isEditing ? Math.max(3, caption.split('\n').length) : 3}
+              rows={isEditing ? undefined : 3}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
               onFocus={() => setIsEditing(true)}
