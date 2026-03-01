@@ -11,6 +11,7 @@ interface DatasetImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  initialCaption?: string;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -19,18 +20,20 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   children,
   className = '',
   onDelete = () => {},
+  initialCaption = '',
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [inViewport, setInViewport] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
-  const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
-  const [caption, setCaption] = useState<string>('');
-  const [savedCaption, setSavedCaption] = useState<string>('');
+  const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(!!initialCaption);
+  const [caption, setCaption] = useState<string>(initialCaption);
+  const [savedCaption, setSavedCaption] = useState<string>(initialCaption);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
 
   const fetchCaption = async () => {
-    if (isGettingCaption.current || isCaptionLoaded) return;
+    if (isGettingCaption.current || (isCaptionLoaded && caption)) return;
     isGettingCaption.current = true;
     apiClient
       .post(`/api/caption/get`, { imgPath: imageUrl })
@@ -117,6 +120,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       saveCaption();
+      setIsEditing(false);
+      (e.target as HTMLTextAreaElement).blur();
     }
   };
 
@@ -196,9 +201,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         )}
       </div>
       <div
-        className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px]', {
+        className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg', {
           'border-blue-500 border-2': !isCaptionCurrent,
           'border-transparent border-2': isCaptionCurrent,
+          'h-[75px] overflow-hidden': !isEditing,
+          'min-h-[75px] z-10': isEditing,
         })}
       >
         {inViewport && isVisible && isCaptionLoaded && (
@@ -207,14 +214,18 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               e.preventDefault();
               saveCaption();
             }}
-            onBlur={saveCaption}
+            onBlur={() => {
+              saveCaption();
+              setIsEditing(false);
+            }}
           >
             <textarea
               className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
               value={caption}
-              rows={3}
+              rows={isEditing ? Math.max(3, caption.split('\n').length) : 3}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
+              onFocus={() => setIsEditing(true)}
             />
           </form>
         )}
