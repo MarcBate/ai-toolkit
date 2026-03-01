@@ -52,10 +52,28 @@ export const FloatingWindow: React.FC<FloatingWindowProps> = ({
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (isDragging) {
+      if (isDragging && windowRef.current) {
+        const newX = e.clientX - dragOffset.x;
+        const newY = e.clientY - dragOffset.y;
+
+        // Get window dimensions
+        const rect = windowRef.current.getBoundingClientRect();
+        const windowWidth = rect.width;
+        const windowHeight = rect.height;
+
+        // Get viewport dimensions
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        // Calculate bounded position
+        // Keep at least some part of the header visible (top >= 0)
+        // and prevent the window from being moved completely out of view
+        const boundedX = Math.max(-windowWidth + 50, Math.min(newX, viewportWidth - 50));
+        const boundedY = Math.max(0, Math.min(newY, viewportHeight - 50));
+
         setPosition({
-          x: e.clientX - dragOffset.x,
-          y: e.clientY - dragOffset.y,
+          x: boundedX,
+          y: boundedY,
         });
       }
     };
