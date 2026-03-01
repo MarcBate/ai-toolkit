@@ -451,15 +451,9 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               <>
                 <Button
                   className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md transition-colors"
-                  onClick={() => handleReplace(false)}
-                >
-                  Replace
-                </Button>
-                <Button
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md transition-colors"
                   onClick={() => handleReplace(true)}
                 >
-                  Replace Next
+                  Replace
                 </Button>
               </>
             )}
