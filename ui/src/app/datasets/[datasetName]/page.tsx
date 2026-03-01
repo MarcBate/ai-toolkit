@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, use, useMemo } from 'react';
-import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
+import { useEffect, useState, use, useMemo, useRef } from 'react';
+import { LuImageOff, LuLoader, LuBan, LuSearch } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
@@ -9,6 +9,10 @@ import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
+import { Modal } from '@/components/Modal';
+import { FloatingWindow } from '@/components/FloatingWindow';
+import { TextInput, Checkbox } from '@/components/formInputs';
+import classNames from 'classnames';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string; caption: string }[]>([]);
@@ -18,6 +22,13 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [filter, setFilter] = useState('');
   const [filterHistory, setFilterHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [wholeWord, setWholeWord] = useState(false);
+  const [matchCase, setMatchCase] = useState(false);
+  const [findNextIndex, setFindNextIndex] = useState(-1);
+  const findInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('filterHistory');
@@ -150,6 +161,88 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
   }, [datasetName]);
 
+  const escapeRegExp = (string: string) => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  };
+
+  const getSearchRegex = (text: string, isWholeWord: boolean, isMatchCase: boolean, global: boolean = false) => {
+    if (!text) return null;
+    let pattern = escapeRegExp(text);
+    if (isWholeWord) {
+      pattern = `(^|[^a-zA-Z0-9_])${pattern}([^a-zA-Z0-9_]|$)`;
+    }
+    return new RegExp(pattern, (isMatchCase ? '' : 'i') + (global ? 'g' : ''));
+  };
+
+  const handleFind = (startIndex: number = 0, isNext: boolean = false) => {
+    if (!findText) return;
+
+    const regex = getSearchRegex(findText, wholeWord, matchCase);
+    if (!regex) return;
+
+    let searchIdx = isNext ? (findNextIndex + 1) % imgList.length : startIndex;
+    let found = false;
+
+    // Search from searchIdx to end
+    for (let i = 0; i < imgList.length; i++) {
+      const idx = (searchIdx + i) % imgList.length;
+      if (regex.test(imgList[idx].caption || '')) {
+        setFindNextIndex(idx);
+        found = true;
+        // Scroll to the image
+        const element = document.getElementById(`image-card-${idx}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        break;
+      }
+    }
+
+    if (!found && isNext) {
+      // If not found and we were looking for next, maybe we are already at the only match
+      // or no matches at all.
+    }
+  };
+
+  const handleReplace = (moveNext: boolean = false) => {
+    if (findNextIndex === -1 || !findText) return;
+
+    const currentImg = imgList[findNextIndex];
+    const regex = getSearchRegex(findText, wholeWord, matchCase, true); // Replace all in this caption
+    if (!regex) return;
+
+    const oldCaption = currentImg.caption || '';
+    let newCaption = oldCaption;
+
+    if (wholeWord) {
+      // For whole word replacement with regex that has captures, we need to be careful
+      // to preserve the boundaries.
+      newCaption = oldCaption.replace(regex, (match, p1, p2) => {
+        // match might include boundaries if wholeWord is true
+        // My pattern for wholeWord: (^|[^a-zA-Z0-9_])PATTERN([^a-zA-Z0-9_]|$)
+        return (p1 || '') + replaceText + (p2 || '');
+      });
+    } else {
+      newCaption = oldCaption.replace(regex, replaceText);
+    }
+
+    if (newCaption !== oldCaption) {
+      // Save to backend
+      apiClient
+        .post('/api/img/caption', { imgPath: currentImg.img_path, caption: newCaption })
+        .then(() => {
+          setImgList(prev =>
+            prev.map((item, idx) => (idx === findNextIndex ? { ...item, caption: newCaption } : item)),
+          );
+        })
+        .catch(err => console.error('Error replacing caption:', err));
+    }
+
+    if (moveNext) {
+      handleFind(findNextIndex + 1, true);
+    }
+  };
+
   const PageInfoContent = useMemo(() => {
     let icon = null;
     let text = '';
@@ -259,6 +352,14 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             </div>
           )}
         </div>
+        <div>
+          <Button
+            className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md mr-2 flex items-center gap-2"
+            onClick={() => setIsFindReplaceOpen(true)}
+          >
+            <LuSearch size={16} /> Find/Replace
+          </Button>
+        </div>
         <div className="flex-1"></div>
         {status === 'success' && totalCount > 0 && (
           <div className="text-sm text-gray-400 mr-4">
@@ -278,20 +379,27 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         {PageInfoContent}
         {status === 'success' && filteredImgList.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {filteredImgList.map(img => (
-              <DatasetImageCard
-                key={img.img_path}
-                alt="image"
-                imageUrl={img.img_path}
-                onDelete={() => refreshImageList(datasetName)}
-                onCaptionSave={(newCaption, imgPath) => {
-                  setImgList(prev =>
-                    prev.map(item => (item.img_path === imgPath ? { ...item, caption: newCaption } : item)),
-                  );
-                }}
-                initialCaption={img.caption}
-              />
-            ))}
+            {filteredImgList.map((img, index) => {
+              const globalIndex = imgList.findIndex(i => i.img_path === img.img_path);
+              return (
+                <div key={img.img_path} id={`image-card-${globalIndex}`}>
+                  <DatasetImageCard
+                    alt="image"
+                    imageUrl={img.img_path}
+                    className={classNames({
+                      'ring-4 ring-blue-500 rounded-lg': globalIndex === findNextIndex,
+                    })}
+                    onDelete={() => refreshImageList(datasetName)}
+                    onCaptionSave={(newCaption, imgPath) => {
+                      setImgList(prev =>
+                        prev.map(item => (item.img_path === imgPath ? { ...item, caption: newCaption } : item)),
+                      );
+                    }}
+                    initialCaption={img.caption}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
       </MainContent>
@@ -300,6 +408,64 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         datasetName={datasetName}
         onComplete={() => refreshImageList(datasetName)}
       />
+
+      <FloatingWindow
+        isOpen={isFindReplaceOpen}
+        onClose={() => setIsFindReplaceOpen(false)}
+        title="Find and Replace"
+      >
+        <div className="space-y-4">
+          <TextInput
+            label="Find"
+            value={findText}
+            onChange={setFindText}
+            placeholder="Text to find..."
+            ref={findInputRef}
+          />
+          <TextInput
+            label="Replace"
+            value={replaceText}
+            onChange={setReplaceText}
+            placeholder="Replacement text..."
+          />
+
+          <div className="flex gap-4">
+            <Checkbox label="Whole Word" checked={wholeWord} onChange={setWholeWord} />
+            <Checkbox label="Match Case" checked={matchCase} onChange={setMatchCase} />
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-4">
+            <Button
+              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md transition-colors"
+              onClick={() => handleFind(0)}
+            >
+              Find
+            </Button>
+            <Button
+              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md transition-colors"
+              onClick={() => handleFind(findNextIndex, true)}
+            >
+              Find Next
+            </Button>
+            {replaceText !== '' && (
+              <>
+                <Button
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md transition-colors"
+                  onClick={() => handleReplace(false)}
+                >
+                  Replace
+                </Button>
+                <Button
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md transition-colors"
+                  onClick={() => handleReplace(true)}
+                >
+                  Replace Next
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </FloatingWindow>
     </>
   );
 }
