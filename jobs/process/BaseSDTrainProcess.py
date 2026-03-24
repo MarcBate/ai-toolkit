@@ -512,13 +512,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
     
     def done_hook(self):
         pass
-    
+
     def should_save(self):
         return False
-    
+
     def reset_save(self):
         pass
-    
+
     def end_step_hook(self):
         pass
 
@@ -532,7 +532,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if not os.path.exists(self.save_root):
             os.makedirs(self.save_root, exist_ok=True)
-        
+
         previous_save_step = self.last_save_step
         step_num = ''
         if step is not None:
@@ -557,7 +557,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # prepare meta
         save_meta = get_meta_for_safetensors(save_meta, self.job.name)
-        
+
         # set filename again just in case it was changed above (eg. lora, adapter)
         # but only if it's not fine tuning as that has its own logic
         if not self.is_fine_tuning:
@@ -680,6 +680,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         direct_save=direct_save
                     )
         else:
+            if self.network is not None and self.train_config.merge_network_on_save:
+                # merge the network weights into a full model and save that
+                if not self.network.can_merge_in:
+                    raise ValueError("Network cannot merge in weights. Cannot save full model.")
+
+                print_acc("Merging network weights into full model for saving...")
+
+                self.network.merge_in(merge_weight=1.0)
+                # reset weights to zero
+                self.network.reset_weights()
+                self.network.is_merged_in = False
+
+                print_acc("Done merging network weights.")
+
             if self.save_config.save_format == "diffusers":
                 # saving as a folder path
                 file_path = file_path.replace('.safetensors', '')
@@ -1384,29 +1398,49 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if len(noise.shape) == 5:
                     # if we have a 5d tensor, then we need to do it on a per batch item, per channel basis, per frame
                     s = (noise.shape[0], noise.shape[1], noise.shape[2], 1, 1)
-                
-                if self.train_config.random_noise_multiplier > 0.0:
-                    
-                    # do it on a per batch item, per channel basis
-                    noise_multiplier = 1 + torch.randn(
-                        s,
-                        device=noise.device,
-                        dtype=noise.dtype
-                    ) * self.train_config.random_noise_multiplier
-                
-            with self.timer('make_noisy_latents'):
 
                 noise = noise * noise_multiplier
                 
+                if self.train_config.do_signal_correction_noise:
+                    batch_noise = latents.clone().to(noise.device, dtype=noise.dtype)
+                    scn_scale = torch.randn(
+                        batch_noise.shape[0], batch_noise.shape[1], 1, 1,
+                        device=batch_noise.device,
+                        dtype=batch_noise.dtype
+                    ) * self.train_config.signal_correction_noise_scale
+                    batch_noise = batch_noise * scn_scale
+                    noise = noise + batch_noise
+
+                if self.train_config.do_batch_noise_correction:
+                    if latents.shape[0] == 1:
+                        # if we only have a batch size of 1, then we cant do batch noise correction, so we skip it
+                        print_acc("Skipping batch noise correction because batch size is 1, increase batch size and num_repeats to use this feature")
+                    else:
+                        # shuffle tensors ensuring that no tensor is in the same position as before
+                        batch_noise = latents.clone().roll(shifts=torch.randint(1, latents.shape[0], (1,)).item(), dims=0).to(noise.device, dtype=noise.dtype)
+                        batch_noise_scale = torch.randn(
+                            batch_noise.shape[0], batch_noise.shape[1], 1, 1,
+                            device=batch_noise.device,
+                            dtype=batch_noise.dtype
+                        ) * self.train_config.batch_noise_correction_scale
+                        batch_noise = batch_noise * batch_noise_scale
+                        noise = noise + batch_noise
+
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
-                        s,  
+                        batch_size, latents.shape[1], 1, 1,
                         device=noise.device,
                         dtype=noise.dtype
                     ) * self.train_config.random_noise_shift
                     # add to noise
                     noise += noise_shift
+
+                if self.train_config.random_noise_multiplier > 0.0:
+                    sigma = self.train_config.random_noise_multiplier
+                    noise_multiplier = torch.exp(torch.randn(s, device=noise.device, dtype=noise.dtype) * sigma)
+                    noise = noise * noise_multiplier
+            with self.timer('make_noisy_latents'):
 
                 latent_multiplier = self.train_config.latent_multiplier
 
@@ -1417,6 +1451,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     latent_multiplier = normalizer
 
                 latents = latents * latent_multiplier
+
+                if self.train_config.do_blank_stabilization:
+                    # zero out latents with blank prompts
+                    blank_latent = torch.zeros_like(latents)
+                    for i, prompt in enumerate(conditioned_prompts):
+                        if prompt.strip() == '':
+                            latents[i] = blank_latent[i]
+
                 batch.latents = latents
 
                 # normalize latents to a mean of 0 and an std of 1
@@ -1606,7 +1648,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.hook_before_model_load()
         model_config_to_load = copy.deepcopy(self.model_config)
 
-        if self.is_fine_tuning:
+        if self.is_fine_tuning or self.train_config.merge_network_on_save:
             # get the latest checkpoint
             # check to see if we have a latest save
             latest_save_path = self.get_latest_save_path()
@@ -1900,7 +1942,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 latest_save_path = self.get_latest_save_path(lora_name)
                 extra_weights = None
-                if latest_save_path is not None:
+                if latest_save_path is not None and not self.train_config.merge_network_on_save:
                     print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)

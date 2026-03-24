@@ -558,6 +558,17 @@ export default function SimpleJob({
                     { value: 'stepped', label: 'Stepped Recovery' },
                   ]}
                 />
+                {modelArch?.additionalSections?.includes('train.audio_loss_multiplier') && (
+                  <NumberInput
+                    label="Audio Loss Multiplier"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.audio_loss_multiplier ?? 1.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.audio_loss_multiplier')}
+                    placeholder="eg. 1.0"
+                    docKey={'train.audio_loss_multiplier'}
+                    min={0}
+                  />
+                )}
               </div>
               <div>
                 <FormGroup label="EMA (Exponential Moving Average)">
@@ -842,7 +853,7 @@ export default function SimpleJob({
                         min={0}
                         required
                       />
-                      {modelArch?.additionalSections?.includes('datasets.num_frames') && (
+                      {modelArch?.additionalSections?.includes('datasets.num_frames') && !dataset.auto_frame_count && (
                         <NumberInput
                           label="Num Frames"
                           className="pt-2"
@@ -869,6 +880,14 @@ export default function SimpleJob({
                           checked={dataset.is_reg || false}
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].is_reg`)}
                         />
+                        {modelArch?.additionalSections?.includes('datasets.auto_frame_count') && (
+                          <Checkbox
+                            label="Auto Frame Count"
+                            checked={dataset.auto_frame_count || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].auto_frame_count`)}
+                            docKey="datasets.auto_frame_count"
+                          />
+                        )}
                         {modelArch?.additionalSections?.includes('datasets.do_i2v') && (
                           <Checkbox
                             label="Do I2V"
