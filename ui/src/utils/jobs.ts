@@ -102,7 +102,7 @@ export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
 
-export const getAvaliableJobActions = (job: Job) => {
+export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = false, hasSamples: boolean = false) => {
   const jobConfig = getJobConfig(job);
   const isStopping = job.stop && job.status === 'running';
   const canDelete = ['queued', 'completed', 'stopped', 'error'].includes(job.status) && !isStopping;
@@ -110,7 +110,11 @@ export const getAvaliableJobActions = (job: Job) => {
   const canRemoveFromQueue = job.status === 'queued';
   const canStop = job.status === 'running' && !isStopping;
   const canSave = job.status === 'running' && !job.save && !isStopping;
-  const canSample = job.status === 'running' && !job.sample && !isStopping;
+
+  // allows sample if running OR if stopped and no other jobs are running AND has samples
+  const canSample = (job.status === 'running' && !job.sample && !isStopping) ||
+                    (!['running', 'queued'].includes(job.status) && !isAnyJobRunning && hasSamples && !job.sample);
+
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
   // can resume if more steps were added
   if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {

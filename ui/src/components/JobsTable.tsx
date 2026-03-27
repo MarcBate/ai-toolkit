@@ -21,6 +21,8 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
 
+  const isAnyJobRunning = jobs.some(j => j.status === 'running');
+
   const refresh = () => {
     refreshJobs();
     refreshQueues();
@@ -87,7 +89,14 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
       key: 'actions',
       className: 'text-right',
       render: row => {
-        return <JobActionBar job={row} onRefresh={refreshJobs} autoStartQueue={false} />;
+        return (
+          <JobActionBar
+            job={row}
+            onRefresh={refreshJobs}
+            autoStartQueue={false}
+            isAnyJobRunning={isAnyJobRunning}
+          />
+        );
       },
     },
   ];

@@ -15,11 +15,13 @@ import { getAvaliableJobActions, sampleJob } from '@/utils/jobs';
 interface SampleImagesMenuProps {
   job: Job;
   onRefresh?: () => void;
+  hasSamples?: boolean;
+  isAnyJobRunning?: boolean;
 }
 
-export const SampleImagesMenu = ({ job, onRefresh }: SampleImagesMenuProps) => {
+export const SampleImagesMenu = ({ job, onRefresh, hasSamples, isAnyJobRunning }: SampleImagesMenuProps) => {
   const [isZipping, setIsZipping] = useState(false);
-  const { canSample } = getAvaliableJobActions(job);
+  const { canSample } = getAvaliableJobActions(job, isAnyJobRunning, hasSamples);
 
   const downloadZip = async () => {
     if (isZipping) return;

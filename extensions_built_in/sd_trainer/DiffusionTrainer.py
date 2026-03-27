@@ -362,7 +362,11 @@ class DiffusionTrainer(SDTrainer):
         self.update_status("running", f"Generating images - 0/{total_imgs}")
         super().sample(step, is_first)
         self.maybe_stop()
-        self.update_status("running", "Training")
+        if self.sample_only:
+            # reset sample flag in DB
+            self.update_db_key("sample", False)
+        else:
+            self.update_status("running", "Training")
 
     def save(self, step=None):
         self.maybe_stop()

@@ -1,9 +1,17 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Camera } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Camera, Image } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, saveJob } from '@/utils/jobs';
+import {
+  startJob,
+  stopJob,
+  deleteJob,
+  getAvaliableJobActions,
+  markJobAsStopped,
+  saveJob,
+  sampleJob,
+} from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
@@ -15,6 +23,8 @@ interface JobActionBarProps {
   hideView?: boolean;
   className?: string;
   autoStartQueue?: boolean;
+  isAnyJobRunning?: boolean;
+  hasSamples?: boolean;
 }
 
 export default function JobActionBar({
@@ -24,8 +34,14 @@ export default function JobActionBar({
   className,
   hideView,
   autoStartQueue = false,
+  isAnyJobRunning = false,
+  hasSamples = false,
 }: JobActionBarProps) {
-  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue, canSave } = getAvaliableJobActions(job);
+  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue, canSave, canSample } = getAvaliableJobActions(
+    job,
+    isAnyJobRunning,
+    hasSamples,
+  );
 
   if (!afterDelete) afterDelete = onRefresh;
 
@@ -69,6 +85,19 @@ export default function JobActionBar({
           className={`ml-2 opacity-100`}
         >
           <Camera />
+        </Button>
+      )}
+      {canSample && (
+        <Button
+          onClick={async () => {
+            if (!canSample) return;
+            await sampleJob(job.id);
+            if (onRefresh) onRefresh();
+          }}
+          className={`ml-2 opacity-100`}
+          title="Generate Samples Now"
+        >
+          <Image />
         </Button>
       )}
       {canStop && (

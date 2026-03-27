@@ -92,7 +92,8 @@ def main():
 
     for config_file in config_file_list:
         try:
-            job = get_job(config_file, args.name)
+            sample_only = os.environ.get("AITK_SAMPLE_ONLY", "0") == "1"
+            job = get_job(config_file, args.name, sample_only=sample_only)
             job.run()
             job.cleanup()
             jobs_completed += 1

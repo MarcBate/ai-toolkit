@@ -5,6 +5,8 @@ import { FaChevronLeft } from 'react-icons/fa';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
+import useJobsList from '@/hooks/useJobsList';
+import useSampleImages from '@/hooks/useSampleImages';
 import SampleImages, { SampleImagesMenu } from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
@@ -55,7 +57,12 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const usableParams = use(params as any) as { jobID: string };
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
+  const { jobs } = useJobsList(true, 5000); // Only active jobs
+  const { sampleImages } = useSampleImages(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
+
+  const isAnyJobRunning = jobs.some(j => j.status === 'running');
+  const hasSamples = sampleImages.length > 0;
 
   const page = pages.find(p => p.value === pageKey);
 
@@ -81,6 +88,8 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
               redirect('/jobs');
             }}
             autoStartQueue={true}
+            isAnyJobRunning={isAnyJobRunning}
+            hasSamples={hasSamples}
           />
         )}
       </TopBar>
@@ -109,7 +118,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
         {page?.menuItem && job && (
           <>
             <div className="flex-grow"></div>
-            <page.menuItem job={job} onRefresh={refreshJob} />
+            <page.menuItem job={job} onRefresh={refreshJob} hasSamples={hasSamples} isAnyJobRunning={isAnyJobRunning} />
           </>
         )}
       </div>

@@ -2138,6 +2138,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ### HOOK ###
         self.hook_before_train_loop()
 
+        if self.sample_only:
+            print_acc("#### RUNNING IN SAMPLE ONLY MODE ####")
+            self.sample(self.step_num, is_first=True)
+            print_acc("#### SAMPLE ONLY MODE COMPLETE ####")
+            self.done_hook()
+            return
+
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")
             self.sample(0, is_first=True)

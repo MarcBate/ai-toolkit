@@ -6,9 +6,9 @@ import fs from 'fs';
 import { TOOLKIT_ROOT, getTrainingFolder, getHFToken } from '../paths';
 const isWindows = process.platform === 'win32';
 
-const startAndWatchJob = (job: Job) => {
+const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
   // starts and watches the job asynchronously
-  return new Promise<void>(async (resolve) => {
+  return new Promise<void>(async resolve => {
     const jobID = job.id;
 
     // setup the training
@@ -129,6 +129,10 @@ const startAndWatchJob = (job: Job) => {
       IS_AI_TOOLKIT_UI: '1',
     };
 
+    if (sampleOnly) {
+      additionalEnv.AITK_SAMPLE_ONLY = '1';
+    }
+
     // HF_TOKEN
     const hfToken = await getHFToken();
     if (hfToken && hfToken.trim() !== '') {
@@ -205,7 +209,7 @@ const startAndWatchJob = (job: Job) => {
   });
 };
 
-export default async function startJob(jobID: string) {
+export default async function startJob(jobID: string, sampleOnly: boolean = false) {
   const job: Job | null = await prisma.job.findUnique({
     where: { id: jobID },
   });
@@ -219,9 +223,9 @@ export default async function startJob(jobID: string) {
     data: {
       status: 'running',
       stop: false,
-      info: 'Starting job...',
+      info: sampleOnly ? 'Generating samples...' : 'Starting job...',
     },
   });
   // start and watch the job asynchronously so the cron can continue
-  startAndWatchJob(job);
+  startAndWatchJob(job, sampleOnly);
 }
