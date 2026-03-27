@@ -270,7 +270,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return generate_image_config_list
 
     def sample(self, step=None, is_first=False):
-        if not self.accelerator.is_main_process:
+        if not self.accelerator.is_main_process and not self.sample_only:
             return
         flush()
         sample_folder = os.path.join(self.save_root, 'samples')
@@ -818,7 +818,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.modules_being_trained.append(self.adapter)
         
         # prepare other things
-        self.optimizer = self.accelerator.prepare(self.optimizer)
+        if self.optimizer is not None:
+            self.optimizer = self.accelerator.prepare(self.optimizer)
         if self.lr_scheduler is not None:
             self.lr_scheduler = self.accelerator.prepare(self.lr_scheduler)
         # self.data_loader = self.accelerator.prepare(self.data_loader)
@@ -923,8 +924,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return latest_path
 
     def load_training_state_from_metadata(self, path):
-        if not self.accelerator.is_main_process:
-            return
         if path is not None and self.network_config is not None and path == self.network_config.pretrained_lora_path:
             # dont load metadata from pretrained lora
             return
@@ -1946,6 +1945,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)
+                    self.load_training_state_from_metadata(latest_save_path)
                     self.network.multiplier = 1.0
                 
                 if self.network_config.layer_offloading:
@@ -1964,6 +1964,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # load last saved weights
                 if latest_save_path is not None:
                     self.embedding.load_embedding_from_file(latest_save_path, self.device_torch)
+                    self.load_training_state_from_metadata(latest_save_path)
                     if self.embedding.step > 1:
                         self.step_num = self.embedding.step
                         self.start_step = self.step_num
@@ -2044,6 +2045,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.setup_adapter()
         flush()
         ### HOOK ###
+        if self.sample_only:
+            self.hook_before_train_loop()
+            print_acc("#### RUNNING IN SAMPLE ONLY MODE ####")
+            # explicit status update for UI if it has update_status method
+            if hasattr(self, "update_status"):
+                self.update_status("running", "Generating samples")
+            self.sample(self.step_num, is_first=True)
+            print_acc("#### SAMPLE ONLY MODE COMPLETE ####")
+            self.done_hook()
+            return
+
         params = self.hook_add_extra_train_params(params)
         self.params = params
         # self.params = []
@@ -2127,9 +2139,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ### HOOk ###
         self.before_dataset_load()
         # load datasets if passed in the root process
-        if self.datasets is not None:
+        if self.datasets is not None and not self.sample_only:
             self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd)
-        if self.datasets_reg is not None:
+        if self.datasets_reg is not None and not self.sample_only:
             self.data_loader_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size,
                                                                 self.sd)
 
@@ -2137,13 +2149,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
-
-        if self.sample_only:
-            print_acc("#### RUNNING IN SAMPLE ONLY MODE ####")
-            self.sample(self.step_num, is_first=True)
-            print_acc("#### SAMPLE ONLY MODE COMPLETE ####")
-            self.done_hook()
-            return
 
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")
