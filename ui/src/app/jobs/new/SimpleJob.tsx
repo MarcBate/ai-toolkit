@@ -594,7 +594,7 @@ export default function SimpleJob({
                     label="EMA Decay"
                     className="pt-2"
                     value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
                     placeholder="eg. 0.99"
                     min={0}
                   />
@@ -974,8 +974,8 @@ export default function SimpleJob({
                       <FormGroup label="Resolutions" className="pt-2">
                         <div className="grid grid-cols-2 gap-2">
                           {[
-                            [256, 512, 768],
-                            [1024, 1280, 1536],
+                            [256, 512, 768, 1024],
+                            [1280, 1328, 1536],
                           ].map(resGroup => (
                             <div key={resGroup[0]} className="space-y-2">
                               {resGroup.map(res => (
