@@ -59,6 +59,7 @@ export default function JobActionBar({
             if (onRefresh) onRefresh();
           }}
           className={`ml-2 opacity-100`}
+          title="Start Job"
         >
           <Play />
         </Button>
@@ -71,6 +72,7 @@ export default function JobActionBar({
             if (onRefresh) onRefresh();
           }}
           className={`ml-2 opacity-100`}
+          title="Remove from Queue"
         >
           <X />
         </Button>
@@ -83,6 +85,7 @@ export default function JobActionBar({
             if (onRefresh) onRefresh();
           }}
           className={`ml-2 opacity-100`}
+          title="Save Snapshot"
         >
           <Camera />
         </Button>
@@ -106,27 +109,34 @@ export default function JobActionBar({
             if (!canStop) return;
             openConfirm({
               title: 'Stop Job',
-              message: `Are you sure you want to stop the job "${job.name}"? You CAN resume later.`,
+              message: `Are you sure you want to stop the job "${job.name}"? This will save a snapshot and stop. You CAN resume later.`,
               type: 'info',
               confirmText: 'Stop',
               onConfirm: async () => {
+                try {
+                  // Save snapshot before stopping
+                  await saveJob(job.id);
+                } catch (e) {
+                  console.error('Error saving snapshot before stopping:', e);
+                }
                 await stopJob(job.id);
                 if (onRefresh) onRefresh();
               },
             });
           }}
           className={`ml-2 opacity-100`}
+          title="Stop Job"
         >
           <Pause />
         </Button>
       )}
       {!hideView && (
-        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block" title="View Job Details">
           <Eye />
         </Link>
       )}
       {canEdit && (
-        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Job Config">
           <Pen />
         </Link>
       )}
@@ -155,12 +165,13 @@ export default function JobActionBar({
           });
         }}
         className={`ml-2 opacity-100`}
+        title="Delete Job"
       >
         <Trash2 />
       </Button>
       <div className="border-r border-1 border-gray-700 ml-2 inline"></div>
       <Menu>
-        <MenuButton className={'ml-2'}>
+        <MenuButton className={'ml-2'} title="More Actions">
           <Cog />
         </MenuButton>
         <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
