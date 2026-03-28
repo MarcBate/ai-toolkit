@@ -14,6 +14,7 @@ interface DatasetImageCardProps {
   onDelete?: () => void;
   onCaptionSave?: (newCaption: string, imageUrl: string) => void;
   initialCaption?: string;
+  isHighlighted?: boolean;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -24,6 +25,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onDelete = () => {},
   onCaptionSave = () => {},
   initialCaption = '',
+  isHighlighted = false,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -146,6 +148,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const isItAudio = isAudio(imageUrl);
   const isItImage = !isItAVideo && !isItAudio;
 
+  const effectivelyEditing = isEditing || isHighlighted;
+
   return (
     <div className={`flex flex-col ${className}`}>
       {/* Square image container */}
@@ -228,8 +232,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg', {
           'border-blue-500 border-2': !isCaptionCurrent,
           'border-transparent border-2': isCaptionCurrent,
-          'h-[75px] overflow-hidden': !isEditing,
-          'min-h-[75px] z-10': isEditing,
+          'h-[75px] overflow-hidden': !effectivelyEditing,
+          'min-h-[75px] z-10': effectivelyEditing,
         })}
       >
         {inViewport && isVisible && isCaptionLoaded && (
@@ -245,9 +249,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           >
             <textarea
               className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
-              style={isEditing ? { fieldSizing: 'content' } as any : {}}
+              style={effectivelyEditing ? { fieldSizing: 'content' } as any : {}}
               value={caption}
-              rows={isEditing ? undefined : 3}
+              rows={effectivelyEditing ? undefined : 3}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
               onFocus={() => setIsEditing(true)}

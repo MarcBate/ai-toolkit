@@ -243,6 +243,51 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
   };
 
+  const handleReplaceAll = () => {
+    if (!findText) return;
+
+    const regex = getSearchRegex(findText, wholeWord, matchCase, true);
+    if (!regex) return;
+
+    const updates: { img_path: string; caption: string }[] = [];
+    const newList = imgList.map(img => {
+      const oldCaption = img.caption || '';
+      let newCaption = oldCaption;
+
+      if (wholeWord) {
+        newCaption = oldCaption.replace(regex, (match, p1, p2) => {
+          return (p1 || '') + replaceText + (p2 || '');
+        });
+      } else {
+        newCaption = oldCaption.replace(regex, replaceText);
+      }
+
+      if (newCaption !== oldCaption) {
+        updates.push({ img_path: img.img_path, caption: newCaption });
+        return { ...img, caption: newCaption };
+      }
+      return img;
+    });
+
+    if (updates.length === 0) return;
+
+    // Send all updates to backend
+    // Assuming backend can handle multiple or we do them in sequence
+    // For now, let's do them in sequence or check if there's a bulk API
+    // Since there isn't a known bulk API, we'll do them one by one but update UI immediately
+    setImgList(newList);
+
+    Promise.all(
+      updates.map(update =>
+        apiClient.post('/api/img/caption', { imgPath: update.img_path, caption: update.caption }),
+      ),
+    ).catch(err => {
+      console.error('Error during replace all:', err);
+      // Optional: refresh list if something failed to be sure UI is in sync
+      refreshImageList(datasetName);
+    });
+  };
+
   const PageInfoContent = useMemo(() => {
     let icon = null;
     let text = '';
@@ -389,6 +434,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                     className={classNames({
                       'ring-4 ring-blue-500 rounded-lg': globalIndex === findNextIndex,
                     })}
+                    isHighlighted={globalIndex === findNextIndex}
                     onDelete={() => refreshImageList(datasetName)}
                     onCaptionSave={(newCaption, imgPath) => {
                       setImgList(prev =>
@@ -454,6 +500,12 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   onClick={() => handleReplace(true)}
                 >
                   Replace
+                </Button>
+                <Button
+                  className="bg-blue-700 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition-colors"
+                  onClick={() => handleReplaceAll()}
+                >
+                  Replace All
                 </Button>
               </>
             )}
