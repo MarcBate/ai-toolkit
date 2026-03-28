@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { defaultTrainFolder, defaultDatasetsFolder } from '@/paths';
 import { flushCache } from '@/server/settings';
+import fs from 'fs';
+import path from 'path';
 
 const prisma = new PrismaClient();
 
@@ -20,6 +22,21 @@ export async function GET() {
     if (!settingsObject.DATASETS_FOLDER || settingsObject.DATASETS_FOLDER === '') {
       settingsObject.DATASETS_FOLDER = defaultDatasetsFolder;
     }
+
+    // Read version from version.py in root
+    let version = 'unknown';
+    try {
+      const versionPath = path.join(process.cwd(), '..', 'version.py');
+      const versionContent = fs.readFileSync(versionPath, 'utf8');
+      const match = versionContent.match(/VERSION = ["']([^"']+)["']/);
+      if (match) {
+        version = match[1];
+      }
+    } catch (e) {
+      console.error('Error reading version.py:', e);
+    }
+    settingsObject.VERSION = version;
+
     return NextResponse.json(settingsObject);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });

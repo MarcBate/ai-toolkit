@@ -14,9 +14,10 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 interface JobsTableProps {
   autoStartQueue?: boolean;
   onlyActive?: boolean;
+  filter?: string;
 }
 
-export default function JobsTable({ onlyActive = false }: JobsTableProps) {
+export default function JobsTable({ onlyActive = false, filter = '' }: JobsTableProps) {
   const { jobs, status, refreshJobs } = useJobsList(onlyActive, 5000);
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
@@ -27,6 +28,74 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
     refreshJobs();
     refreshQueues();
   };
+
+  const filteredJobs = useMemo(() => {
+    if (!filter) return jobs;
+
+    const escapeRegExp = (string: string) => {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    };
+
+    const matchesTerm = (job: Job, term: string) => {
+      term = term.trim();
+      if (!term) return true;
+
+      const jobConfig: JobConfig = JSON.parse(job.job_config);
+      const modelName = jobConfig.config.process[0].model.name_or_path || '';
+      const searchableText = `${job.name} ${modelName}`.toLowerCase();
+
+      // Check if term is quoted
+      if (term.startsWith('"') && term.endsWith('"')) {
+        const exactTerm = term.slice(1, -1);
+        if (!exactTerm) return true;
+        const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escapeRegExp(exactTerm)}([^a-zA-Z0-9_]|$)`, 'i');
+        return regex.test(searchableText);
+      }
+
+      // Default partial match
+      return searchableText.includes(term.toLowerCase());
+    };
+
+    const splitByOperator = (input: string, operator: 'and' | 'or') => {
+      const regex = new RegExp(`\\s+${operator}\\s+`, 'gi');
+      const parts: string[] = [];
+      let lastIndex = 0;
+      let match;
+
+      while ((match = regex.exec(input)) !== null) {
+        const part = input.slice(lastIndex, match.index).trim();
+        const quoteCount = (part.match(/"/g) || []).length;
+        if (quoteCount % 2 === 0) {
+          parts.push(part);
+          lastIndex = regex.lastIndex;
+        }
+      }
+      parts.push(input.slice(lastIndex).trim());
+      return parts.filter(p => p !== '');
+    };
+
+    const orParts = splitByOperator(filter, 'or');
+    if (orParts.length > 1) {
+      return jobs.filter(job => {
+        return orParts.some(part => {
+          const andParts = splitByOperator(part, 'and');
+          if (andParts.length > 1) {
+            return andParts.every(subPart => matchesTerm(job, subPart));
+          }
+          return matchesTerm(job, part);
+        });
+      });
+    }
+
+    const andParts = splitByOperator(filter, 'and');
+    if (andParts.length > 1) {
+      return jobs.filter(job => {
+        return andParts.every(part => matchesTerm(job, part));
+      });
+    }
+
+    return jobs.filter(job => matchesTerm(job, filter));
+  }, [jobs, filter]);
 
   const columns: TableColumn[] = [
     {
@@ -103,13 +172,13 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
 
   const jobsDict = useMemo(() => {
     if (!isGPUInfoLoaded) return {};
-    if (jobs.length === 0) return {};
+    if (filteredJobs.length === 0) return {};
     let jd: { [key: string]: { name: string; jobs: Job[] } } = {};
     gpuList.forEach(gpu => {
       jd[`${gpu.index}`] = { name: `${gpu.name}`, jobs: [] };
     });
     jd['Idle'] = { name: 'Idle', jobs: [] };
-    jobs.forEach(job => {
+    filteredJobs.forEach(job => {
       const gpu = gpuList.find(gpu => job.gpu_ids?.split(',').includes(gpu.index.toString())) as GpuInfo;
       const key = `${gpu?.index || '0'}`;
       if (['queued', 'running', 'stopping'].includes(job.status) && key in jd) {
@@ -134,7 +203,7 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
       }
     });
     return jd;
-  }, [jobs, queues, isGPUInfoLoaded]);
+  }, [filteredJobs, queues, isGPUInfoLoaded]);
 
   let isLoading = status === 'loading' || queueStatus === 'loading' || !isGPUInfoLoaded;
 
