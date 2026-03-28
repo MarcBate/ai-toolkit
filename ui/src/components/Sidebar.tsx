@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import { Home, Settings, BrainCircuit, Images, Plus } from 'lucide-react';
 import { FaXTwitter, FaDiscord, FaYoutube } from 'react-icons/fa6';
@@ -18,7 +20,7 @@ const Sidebar = () => {
   const socialIconClass = 'w-5 h-5 text-gray-400 hover:text-white';
 
   return (
-    <div className="flex flex-col w-59 bg-gray-900 text-gray-100">
+    <div className="flex flex-col w-59 bg-gray-900 text-gray-100 h-full overflow-y-auto">
       <div className="px-4 py-3">
         <h1 className="text-l">
           <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-7 mr-3 inline" />
