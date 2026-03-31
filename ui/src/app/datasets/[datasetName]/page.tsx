@@ -5,7 +5,7 @@ import { LuImageOff, LuLoader, LuBan, LuSearch } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
-import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
+import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
@@ -96,7 +96,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         const exactTerm = term.slice(1, -1);
         if (!exactTerm) return true;
         // Whole word search using regex with word boundaries
-        // Ensure we support Unicode word boundaries if needed, 
+        // Ensure we support Unicode word boundaries if needed,
         // but for "he" standard \b should work unless there are punctuation issues
         const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escapeRegExp(exactTerm)}([^a-zA-Z0-9_]|$)`, 'i');
         return regex.test(caption);
@@ -155,6 +155,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     // default simple search
     return imgList.filter(img => matchesTerm(img.caption || '', filter));
   }, [imgList, filter]);
+  useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
+
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
