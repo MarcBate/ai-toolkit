@@ -392,6 +392,7 @@ class TrainConfig:
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
         self.weight_jitter = kwargs.get('weight_jitter', 0.0)
         self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
+        self.merge_network_on_save_strength = kwargs.get('merge_network_on_save_strength', 1.0)
         self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
@@ -699,6 +700,10 @@ class ModelConfig:
 
         # compile the model with torch compile
         self.compile = kwargs.get("compile", False)
+        
+        if self.compile and self.quantize:
+            print("Warning: You cannot compile a quantized model. Disabling compile.")
+            self.compile = False
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
