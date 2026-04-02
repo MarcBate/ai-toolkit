@@ -91,7 +91,8 @@ export default function SampleImages({ job }: SampleImagesProps) {
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const didFirstScroll = useRef(false);
-  const numSamples = useMemo(() => {
+
+  const configNumSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
@@ -101,6 +102,58 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
     return 10;
   }, [job]);
+
+  const { sampleSlots, numSamples } = useMemo(() => {
+    const defaultRes = { sampleSlots: sampleImages as (string | null)[], numSamples: configNumSamples };
+    if (sampleImages.length === 0) return defaultRes;
+
+    // 1. Parse all images
+    const parsedImages = sampleImages.map(path => {
+      let filename: string | null = null;
+      if (path.includes('\\')) {
+        const parts = path.split('\\');
+        filename = parts[parts.length - 1];
+      } else {
+        filename = path.split('/').pop() || null;
+      }
+
+      if (!filename) return { path, step: -1, promptIdx: -1 };
+
+      const parts = filename
+        .split('.')[0]
+        .split('_')
+        .filter(p => p !== '');
+      if (parts.length >= 2) {
+        const promptIdx = parseInt(parts[parts.length - 1]);
+        const step = parseInt(parts[parts.length - 2]);
+        return { path, step, promptIdx };
+      }
+      return { path, step: -1, promptIdx: -1 };
+    });
+
+    const validParsed = parsedImages.filter(
+      img => !isNaN(img.step) && img.step !== -1 && !isNaN(img.promptIdx) && img.promptIdx !== -1,
+    );
+
+    if (validParsed.length === 0) return defaultRes;
+
+    // 2. Identify all unique steps
+    const steps = Array.from(new Set(validParsed.map(img => img.step))).sort((a, b) => a - b);
+    const maxIdxInFiles = Math.max(...validParsed.map(img => img.promptIdx));
+    const eNumSamples = Math.max(configNumSamples, maxIdxInFiles + 1);
+
+    // 3. Create slots
+    const slots: (string | null)[] = [];
+    steps.forEach(step => {
+      const stepImages = validParsed.filter(img => img.step === step);
+      for (let i = 0; i < eNumSamples; i++) {
+        const found = stepImages.find(img => img.promptIdx === i);
+        slots.push(found ? found.path : null);
+      }
+    });
+
+    return { sampleSlots: slots, numSamples: eNumSamples };
+  }, [sampleImages, configNumSamples]);
 
   const scrollToBottom = () => {
     if (containerRef.current) {
@@ -278,13 +331,13 @@ export default function SampleImages({ job }: SampleImagesProps) {
     <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
         {PageInfoContent}
-        {sampleImages && (
+        {sampleSlots && (
           <div className={`grid ${gridColsClass} gap-1`}>
-            {sampleImages.map((sample: string, idx: number) => {
+            {sampleSlots.map((sample: string | null, idx: number) => {
               // Compute current group (groups are size = numSamples)
               const groupIndex = Math.floor(idx / numSamples);
               const groupStart = groupIndex * numSamples;
-              const groupEnd = Math.min(groupStart + numSamples, sampleImages.length);
+              const groupEnd = Math.min(groupStart + numSamples, sampleSlots.length);
               const groupSize = groupEnd - groupStart;
               const isEndOfGroup = idx === groupEnd - 1;
 
@@ -294,15 +347,25 @@ export default function SampleImages({ job }: SampleImagesProps) {
               const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
 
               return (
-                <div key={sample} className="contents">
-                  <SampleImageCard
-                    imageUrl={sample}
-                    numSamples={numSamples}
-                    sampleImages={sampleImages}
-                    alt="Sample Image"
-                    onClick={() => setSelectedSamplePath(sample)}
-                    observerRoot={containerRef.current}
-                  />
+                <div key={sample || `empty-${idx}`} className="contents">
+                  {sample ? (
+                    <SampleImageCard
+                      imageUrl={sample}
+                      numSamples={numSamples}
+                      sampleImages={sampleImages}
+                      alt="Sample Image"
+                      onClick={() => setSelectedSamplePath(sample)}
+                      observerRoot={containerRef.current}
+                    />
+                  ) : (
+                    <div className="flex flex-col">
+                      <div className="relative w-full" style={{ paddingBottom: '100%' }}>
+                        <div className="absolute inset-0 rounded-t-lg shadow-md bg-gray-950 flex items-center justify-center border border-gray-800">
+                          <span className="text-[10px] text-gray-500 font-mono">NOT SAMPLED</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {isEndOfGroup &&
                     padsNeeded > 0 &&
@@ -318,7 +381,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
       <SampleImageViewer
         imgPath={selectedSamplePath}
         numSamples={numSamples}
-        sampleImages={sampleImages}
+        sampleImages={sampleSlots}
         onChange={setPath => setSelectedSamplePath(setPath)}
         sampleConfig={sampleConfig}
         refreshSampleImages={refreshSampleImages}
