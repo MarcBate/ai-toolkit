@@ -587,15 +587,20 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             # do not call for now
             if self.dataset_config.buckets:
                 # setup buckets
+                print_acc(" - Setting up buckets...")
                 self.setup_buckets()
             if self.is_caching_latents:
+                print_acc(" - Caching latents...")
                 self.cache_latents_all_latents()
             if self.is_caching_clip_vision_to_disk:
+                print_acc(" - Caching CLIP vision...")
                 self.cache_clip_vision_to_disk()
             if self.is_caching_text_embeddings:
+                print_acc(" - Caching text embeddings...")
                 self.cache_text_embeddings()
             if self.is_generating_controls:
                 # always do this last
+                print_acc(" - Setting up controls...")
                 self.setup_controls()
         else:
             if self.dataset_config.poi is not None:
