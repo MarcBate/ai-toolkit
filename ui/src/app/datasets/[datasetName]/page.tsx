@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState, use, useMemo, useRef } from 'react';
-import { LuImageOff, LuLoader, LuBan, LuSearch } from 'react-icons/lu';
-import { FaChevronLeft } from 'react-icons/fa';
+import { useEffect, useState, use, useMemo, useRef, useCallback } from 'react';
+import { LuImageOff, LuLoader, LuBan, LuSearch, LuAlertCircle } from 'react-icons/lu';
+import { FaChevronLeft, FaChevronUp, FaChevronDown } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
@@ -14,10 +14,9 @@ import { FloatingWindow } from '@/components/FloatingWindow';
 import { TextInput, Checkbox } from '@/components/formInputs';
 import classNames from 'classnames';
 
-export default function DatasetPage({ params }: { params: { datasetName: string } }) {
+export default function DatasetPage({ params }: { params: Promise<{ datasetName: string }> }) {
+  const { datasetName } = use(params);
   const [imgList, setImgList] = useState<{ img_path: string; caption: string }[]>([]);
-  const usableParams = use(params as any) as { datasetName: string };
-  const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [filter, setFilter] = useState('');
   const [filterHistory, setFilterHistory] = useState<string[]>([]);
@@ -28,6 +27,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [wholeWord, setWholeWord] = useState(false);
   const [matchCase, setMatchCase] = useState(false);
   const [findNextIndex, setFindNextIndex] = useState(-1);
+  const [findMatchCharIndex, setFindMatchCharIndex] = useState(-1);
+  const [findResultStatus, setFindResultStatus] = useState<'none' | 'found' | 'not-found'>('none');
   const findInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -176,20 +177,39 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     return new RegExp(pattern, (isMatchCase ? '' : 'i') + (global ? 'g' : ''));
   };
 
-  const handleFind = (startIndex: number = 0, isNext: boolean = false) => {
+  const handleFind = (startIndex: number = 0, direction: 'next' | 'prev' | 'start' = 'start') => {
     if (!findText) return;
 
     const regex = getSearchRegex(findText, wholeWord, matchCase);
     if (!regex) return;
 
-    let searchIdx = isNext ? (findNextIndex + 1) % imgList.length : startIndex;
+    let searchIdx = startIndex;
+    if (direction === 'next') {
+        searchIdx = (findNextIndex + 1) % imgList.length;
+    } else if (direction === 'prev') {
+        searchIdx = (findNextIndex - 1 + imgList.length) % imgList.length;
+    }
+
     let found = false;
 
     // Search from searchIdx to end
     for (let i = 0; i < imgList.length; i++) {
-      const idx = (searchIdx + i) % imgList.length;
-      if (regex.test(imgList[idx].caption || '')) {
+      const idx = direction === 'prev'
+        ? (searchIdx - i + imgList.length) % imgList.length
+        : (searchIdx + i) % imgList.length;
+
+      const caption = imgList[idx].caption || '';
+      const match = caption.match(regex);
+      if (match) {
+        let charIndex = match.index || 0;
+        // If wholeWord, match[1] might be the prefix boundary, so skip it
+        if (wholeWord && match[1]) {
+            charIndex += match[1].length;
+        }
+
         setFindNextIndex(idx);
+        setFindMatchCharIndex(charIndex);
+        setFindResultStatus('found');
         found = true;
         // Scroll to the image
         const element = document.getElementById(`image-card-${idx}`);
@@ -200,9 +220,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       }
     }
 
-    if (!found && isNext) {
-      // If not found and we were looking for next, maybe we are already at the only match
-      // or no matches at all.
+    if (!found) {
+        setFindResultStatus('not-found');
     }
   };
 
@@ -210,7 +229,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     if (findNextIndex === -1 || !findText) return;
 
     const currentImg = imgList[findNextIndex];
-    const regex = getSearchRegex(findText, wholeWord, matchCase, true); // Replace all in this caption
+    const regex = getSearchRegex(findText, wholeWord, matchCase, true);
     if (!regex) return;
 
     const oldCaption = currentImg.caption || '';
@@ -241,7 +260,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
 
     if (moveNext) {
-      handleFind(findNextIndex + 1, true);
+      handleFind(findNextIndex, 'next');
     }
   };
 
@@ -289,6 +308,27 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       refreshImageList(datasetName);
     });
   };
+
+  const openFindReplace = useCallback(() => {
+    setIsFindReplaceOpen(true);
+    setFindResultStatus('none');
+    // Focus the input in the next tick
+    setTimeout(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    }, 100);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        openFindReplace();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [openFindReplace]);
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -402,7 +442,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         <div>
           <Button
             className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md mr-2 flex items-center gap-2"
-            onClick={() => setIsFindReplaceOpen(true)}
+            onClick={openFindReplace}
           >
             <LuSearch size={16} /> Find/Replace
           </Button>
@@ -428,15 +468,18 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {filteredImgList.map((img, index) => {
               const globalIndex = imgList.findIndex(i => i.img_path === img.img_path);
+              const isMatch = globalIndex === findNextIndex;
               return (
                 <div key={img.img_path} id={`image-card-${globalIndex}`}>
                   <DatasetImageCard
                     alt="image"
                     imageUrl={img.img_path}
                     className={classNames({
-                      'ring-4 ring-blue-500 rounded-lg': globalIndex === findNextIndex,
+                      'ring-4 ring-blue-500 rounded-lg': isMatch,
                     })}
-                    isHighlighted={globalIndex === findNextIndex}
+                    isHighlighted={isMatch}
+                    highlightText={isMatch ? findText : undefined}
+                    highlightCharIndex={isMatch ? findMatchCharIndex : -1}
                     onDelete={() => refreshImageList(datasetName)}
                     onCaptionSave={(newCaption, imgPath) => {
                       setImgList(prev =>
@@ -466,9 +509,17 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           <TextInput
             label="Find"
             value={findText}
-            onChange={setFindText}
+            onChange={(val) => {
+                setFindText(val);
+                setFindResultStatus('none');
+            }}
             placeholder="Text to find..."
             ref={findInputRef}
+            onKeyDown={e => {
+                if (e.key === 'Enter') {
+                    handleFind(findNextIndex === -1 ? 0 : findNextIndex, 'next');
+                }
+            }}
           />
           <TextInput
             label="Replace"
@@ -482,18 +533,20 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             <Checkbox label="Match Case" checked={matchCase} onChange={setMatchCase} />
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-4">
+          <div className="flex flex-wrap gap-2 pt-2">
             <Button
-              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md transition-colors"
-              onClick={() => handleFind(0)}
+              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md transition-colors flex items-center gap-2"
+              onClick={() => handleFind(findNextIndex === -1 ? 0 : findNextIndex, 'prev')}
+              title="Find Previous"
             >
-              Find
+              <FaChevronUp size={12} /> Previous
             </Button>
             <Button
-              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md transition-colors"
-              onClick={() => handleFind(findNextIndex, true)}
+              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md transition-colors flex items-center gap-2"
+              onClick={() => handleFind(findNextIndex === -1 ? 0 : findNextIndex, 'next')}
+              title="Find Next"
             >
-              Find Next
+              <FaChevronDown size={12} /> Next
             </Button>
             {replaceText !== '' && (
               <>
@@ -512,6 +565,13 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               </>
             )}
           </div>
+          
+          {findResultStatus === 'not-found' && (
+            <div className="flex items-center gap-2 text-amber-500 text-sm mt-2 animate-in fade-in slide-in-from-top-1">
+              <LuAlertCircle size={16} />
+              <span>No matches found</span>
+            </div>
+          )}
         </div>
       </FloatingWindow>
     </>

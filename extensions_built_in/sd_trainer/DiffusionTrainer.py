@@ -308,7 +308,11 @@ class DiffusionTrainer(SDTrainer):
         if self.is_ui_trainer:
             try:
                 if self.accelerator.is_main_process and not self.is_stopping:
-                    self.update_status("error", str(e))
+                    # If it's a KeyboardInterrupt, mark as stopped instead of error
+                    if isinstance(e, KeyboardInterrupt) or "Job stopped" in str(e):
+                        self.update_status("stopped", "Job stopped by user")
+                    else:
+                        self.update_status("error", str(e))
                 self.update_db_key("step", self.last_save_step)
                 asyncio.run(self.wait_for_all_async())
             except Exception as db_err:

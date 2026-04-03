@@ -15,6 +15,8 @@ interface DatasetImageCardProps {
   onCaptionSave?: (newCaption: string, imageUrl: string) => void;
   initialCaption?: string;
   isHighlighted?: boolean;
+  highlightText?: string;
+  highlightCharIndex?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -26,8 +28,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onCaptionSave = () => {},
   initialCaption = '',
   isHighlighted = false,
+  highlightText = '',
+  highlightCharIndex = -1,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [inViewport, setInViewport] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
@@ -43,6 +48,19 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     setSavedCaption(initialCaption);
     setIsCaptionLoaded(!!initialCaption);
   }, [initialCaption]);
+
+  useEffect(() => {
+    if (isHighlighted && highlightText && highlightCharIndex !== -1 && isCaptionLoaded) {
+      // Focus and highlight the text in the textarea
+      if (textAreaRef.current) {
+        textAreaRef.current.focus();
+        textAreaRef.current.setSelectionRange(
+            highlightCharIndex,
+            highlightCharIndex + highlightText.length
+        );
+      }
+    }
+  }, [isHighlighted, highlightText, highlightCharIndex, isCaptionLoaded]);
 
   const fetchCaption = async () => {
     if (isGettingCaption.current || (isCaptionLoaded && caption)) return;
@@ -78,7 +96,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     const targetCaption = (valueToSave !== undefined ? valueToSave : caption).trim();
     if (targetCaption === savedCaption) return;
 
-    // update savedCaption immediately to prevent duplicate calls
     setSavedCaption(targetCaption);
 
     apiClient
@@ -90,12 +107,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       })
       .catch(error => {
         console.error('Error saving caption:', error);
-        // revert savedCaption on error to allow retry
         setSavedCaption(prev => prev === targetCaption ? caption.trim() : prev);
       });
   };
 
-  // Only fetch caption when the component is both in viewport and visible
   useEffect(() => {
     if (inViewport && isVisible) {
       fetchCaption();
@@ -103,18 +118,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   }, [inViewport, isVisible]);
 
   useEffect(() => {
-    // Create intersection observer to check viewport visibility
     const observer = new IntersectionObserver(
       entries => {
         if (entries[0].isIntersecting) {
           setInViewport(true);
-          // Initialize isVisible to true when first coming into view
           if (!isVisible) {
             setIsVisible(true);
           }
         } else {
           setInViewport(false);
-          // Cancel any in-flight caption fetch when scrolling away
           abortControllerRef.current?.abort();
         }
       },
@@ -142,7 +154,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    // If Enter is pressed without Shift, prevent default behavior and save
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       saveCaption(e.currentTarget.value);
@@ -161,11 +172,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   return (
     <div className={`flex flex-col ${className}`}>
-      {/* Square image container */}
       <div
         ref={cardRef}
         className="relative w-full"
-        style={{ paddingBottom: '100%' }} // Make it square
+        style={{ paddingBottom: '100%' }}
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
           {inViewport && isVisible && (
@@ -252,6 +262,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             }}
           >
             <textarea
+              ref={textAreaRef}
               className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
               style={effectivelyEditing ? { fieldSizing: 'content' } as any : {}}
               value={caption}
