@@ -1032,7 +1032,7 @@ export default function SimpleJob({
                 type="button"
                 onClick={() => {
                   const newDataset = objectCopy(defaultDatasetConfig);
-                  // automaticallt add the controls for a new dataset
+                  // automatically add the controls for a new dataset
                   const controls = modelArch?.controls ?? [];
                   newDataset.controls = controls;
                   setJobConfig([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
