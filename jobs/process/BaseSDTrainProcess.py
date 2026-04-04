@@ -2637,7 +2637,7 @@ Model trained with [AI Toolkit by Ostris](https://github.com/ostris/ai-toolkit)
 
 ## Download model and use it with ComfyUI, AUTOMATIC1111, SD.Next, Invoke AI, etc.
 
-Weights for this model are available in Safetensors format.
+Weights for this model available in Safetensors format.
 
 [Download](/{repo_id}/tree/main) them in the Files & versions tab.
 
