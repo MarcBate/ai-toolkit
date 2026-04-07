@@ -258,6 +258,10 @@ class UITrainer(SDTrainer):
 
     def on_error(self, e: Exception):
         super(UITrainer, self).on_error(e)
+        # Close the progress bar so it doesn't linger in the console output
+        if getattr(self, "progress_bar", None) is not None:
+            self.progress_bar.close()
+            self.progress_bar = None
         if self.accelerator.is_main_process and not self.is_stopping:
             self.update_status("error", str(e))
             # On actual error, roll back displayed step to last known good save
