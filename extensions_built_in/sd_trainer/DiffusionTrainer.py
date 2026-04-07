@@ -1,9 +1,11 @@
 from collections import OrderedDict
+import json
 import os
 import sqlite3
 import asyncio
 import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
+from toolkit.config_modules import SampleConfig
 from typing import Literal, Optional
 import threading
 import time
@@ -215,10 +217,28 @@ class DiffusionTrainer(SDTrainer):
             self.reset_save()
             self.save(self.step_num)
 
+    def reload_sample_config(self):
+        """Re-read sample config from the DB in case prompts were edited while running."""
+        if not self.is_ui_trainer:
+            return
+        try:
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT job_config FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                if row:
+                    job_cfg = json.loads(row[0])
+                    sample_conf = job_cfg.get('config', {}).get('process', [{}])[0].get('sample', {})
+                    if sample_conf:
+                        self.sample_config = SampleConfig(**sample_conf)
+        except Exception as e:
+            print(f"Warning: Could not reload sample config from DB: {e}")
+
     def maybe_sample(self):
         if not self.is_ui_trainer:
             return
         if self.should_sample():
+            self.reload_sample_config()
             self.reset_sample()
             # save model and optimizer first as requested
             self.save(self.step_num)

@@ -32,6 +32,7 @@ type Props = {
   gpuList: any;
   datasetOptions: any;
   isLoading?: boolean;
+  sampleOnly?: boolean;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -47,6 +48,7 @@ export default function SimpleJob({
   gpuList,
   datasetOptions,
   isLoading,
+  sampleOnly = false,
 }: Props) {
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
@@ -155,7 +157,7 @@ export default function SimpleJob({
         onSubmit={handleSubmit}
         className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
       >
-        {isLoading && (
+        {!sampleOnly && isLoading && (
           <div className="absolute inset-0 z-50 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-400 border-t-blue-500" />
@@ -163,7 +165,7 @@ export default function SimpleJob({
             </div>
           </div>
         )}
-        <div className={topBarClass}>
+        <div className={`${topBarClass} ${sampleOnly ? 'hidden' : ''}`}>
           <Card title="Job">
             <TextInput
               label="Training Name"
@@ -478,7 +480,7 @@ export default function SimpleJob({
             </FormGroup>
           </Card>
         </div>
-        <div>
+        <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Training">
             <div className={trainingBarClass}>
               <div>
@@ -724,7 +726,7 @@ export default function SimpleJob({
             </div>
           </Card>
         </div>
-        <div>
+        <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Advanced" collapsible>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div>
@@ -763,7 +765,7 @@ export default function SimpleJob({
             </div>
           </Card>
         </div>
-        <div>
+        <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Datasets">
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (

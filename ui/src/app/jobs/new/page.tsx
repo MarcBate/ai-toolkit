@@ -28,6 +28,7 @@ export default function TrainingForm() {
   const searchParams = useSearchParams();
   const runId = searchParams.get('id');
   const cloneId = searchParams.get('cloneId');
+  const sampleOnly = searchParams.get('sampleOnly') === 'true';
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
   const { settings, isSettingsLoaded } = useSettings();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
@@ -196,7 +197,7 @@ export default function TrainingForm() {
           </Button>
         </div>
         <div>
-          <h1 className="text-lg">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
+          <h1 className="text-lg">{sampleOnly ? 'Edit Sample Settings' : runId ? 'Edit Training Job' : 'New Training Job'}</h1>
         </div>
         <div className="flex-1"></div>
         {showAdvancedView && (
@@ -217,7 +218,7 @@ export default function TrainingForm() {
             <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
           </>
         )}
-        {!showAdvancedView && (
+        {!showAdvancedView && !sampleOnly && (
           <>
             <div>
               <SelectInput
@@ -250,14 +251,16 @@ export default function TrainingForm() {
           </>
         )}
 
-        <div className="pr-2">
-          <Button
-            className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
-            onClick={() => setShowAdvancedView(!showAdvancedView)}
-          >
-            {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
-          </Button>
-        </div>
+        {!sampleOnly && (
+          <div className="pr-2">
+            <Button
+              className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
+              onClick={() => setShowAdvancedView(!showAdvancedView)}
+            >
+              {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
+            </Button>
+          </div>
+        )}
         <div>
           <Button
             className="text-white bg-green-600 hover:bg-green-700 px-3 py-1 rounded-md"
@@ -312,6 +315,7 @@ export default function TrainingForm() {
               gpuList={gpuList}
               datasetOptions={datasetOptions}
               isLoading={!isSettingsLoaded || !isGPUInfoLoaded || datasetFetchStatus !== 'success'}
+              sampleOnly={sampleOnly}
             />
           </ErrorBoundary>
 

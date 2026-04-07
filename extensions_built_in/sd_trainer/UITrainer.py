@@ -1,9 +1,11 @@
 from collections import OrderedDict
+import json
 import os
 import sqlite3
 import asyncio
 import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
+from toolkit.config_modules import SampleConfig
 from typing import Literal, Optional
 import threading
 import time
@@ -160,8 +162,27 @@ class UITrainer(SDTrainer):
     def reset_sample(self):
         self.update_db_key("sample", False)
 
+    def reload_sample_config(self):
+        """Re-read sample config from the DB in case prompts were edited while running."""
+        try:
+            def _read():
+                with self._db_connect() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT job_config FROM Job WHERE id = ?", (self.job_id,))
+                    row = cursor.fetchone()
+                    return row[0] if row else None
+            raw = _read()
+            if raw:
+                job_cfg = json.loads(raw)
+                sample_conf = job_cfg.get('config', {}).get('process', [{}])[0].get('sample', {})
+                if sample_conf:
+                    self.sample_config = SampleConfig(**sample_conf)
+        except Exception as e:
+            print(f"Warning: Could not reload sample config from DB: {e}")
+
     def maybe_sample(self):
         if self.should_sample():
+            self.reload_sample_config()
             self.reset_sample()
             self.save(self.step_num)
             self.sample(self.step_num)

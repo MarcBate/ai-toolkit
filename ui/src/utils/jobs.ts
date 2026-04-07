@@ -143,12 +143,15 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   const canSample = (job.status === 'running' && !isBusy && !isStopping) ||
                     (!['running', 'queued'].includes(job.status) && !isAnyJobRunning && hasSamples && !job.sample);
 
+  // edit sample prompts while running without reloading the model
+  const canEditSample = job.status === 'running' && !isBusy && !isStopping && job.step > 0;
+
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
   // can resume if more steps were added
   if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
     canStart = true;
   }
-  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping };
+  return { canDelete, canEdit, canEditSample, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping };
 };
 
 export const getNumberOfSamples = (job: Job) => {

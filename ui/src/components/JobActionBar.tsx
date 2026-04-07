@@ -39,7 +39,7 @@ export default function JobActionBar({
   hasSamples = false,
 }: JobActionBarProps) {
   const [isProcessing, setIsProcessing] = useState(false);
-  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue, canSave, canSample, isBusy } = getAvaliableJobActions(
+  const { canStart, canStop, canDelete, canEdit, canEditSample, canRemoveFromQueue, canSave, canSample, isBusy } = getAvaliableJobActions(
     job,
     isAnyJobRunning,
     hasSamples,
@@ -138,6 +138,11 @@ export default function JobActionBar({
       )}
       {canEdit && (
         <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Job Config">
+          <Pen />
+        </Link>
+      )}
+      {canEditSample && (
+        <Link href={`/jobs/new?id=${job.id}&sampleOnly=true`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Sample Prompts">
           <Pen />
         </Link>
       )}
