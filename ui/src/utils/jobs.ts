@@ -50,6 +50,22 @@ export const saveJob = (jobID: string) => {
   });
 };
 
+export const saveAndPauseJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/save_and_pause`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job save-and-pause requested:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error requesting job save-and-pause:', error);
+        reject(error);
+      });
+  });
+};
+
 export const sampleJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

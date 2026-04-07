@@ -333,7 +333,9 @@ class DiffusionTrainer(SDTrainer):
                         self.update_status("stopped", "Job stopped by user")
                     else:
                         self.update_status("error", str(e))
-                self.update_db_key("step", self.last_save_step)
+                    self.update_db_key("step", self.last_save_step)
+                else:
+                    self.update_db_key("step", self.step_num)
                 asyncio.run(self.wait_for_all_async())
             except Exception as db_err:
                 print(f"[AITK] Warning: failed to update DB during error handling: {db_err}")

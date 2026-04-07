@@ -6,7 +6,7 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/re
 import { Save } from 'lucide-react';
 import React from 'react';
 import { Job } from '@prisma/client';
-import { saveJob, stopJob } from '@/utils/jobs';
+import { saveJob, saveAndPauseJob } from '@/utils/jobs';
 import classNames from 'classnames';
 
 export interface SaveSnapshotState {
@@ -50,15 +50,16 @@ export default function SaveSnapshotModal() {
     console.log(`HandleSave: andStop=${andStop}, jobID=${state.job.id}`);
     setIsSaving(true);
     try {
-      // 1. Request the save
-      await saveJob(state.job.id);
-      console.log('Save requested successfully');
-      
-      // 2. If andStop is true, request the stop
       if (andStop) {
-        console.log('Requesting stop...');
-        await stopJob(state.job.id);
-        console.log('Stop requested successfully');
+        // Save and pause: set both flags atomically without sending a kill signal.
+        // Python checks should_save() before should_stop() at the end of each step,
+        // so it will write the .safetensors file before stopping cleanly.
+        await saveAndPauseJob(state.job.id);
+        console.log('Save-and-pause requested successfully');
+      } else {
+        // Save only: just set the save flag, training continues.
+        await saveJob(state.job.id);
+        console.log('Save requested successfully');
       }
       
       // 3. Refresh the UI
