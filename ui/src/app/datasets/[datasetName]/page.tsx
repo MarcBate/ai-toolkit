@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, use, useMemo, useRef, useCallback } from 'react';
-import { LuImageOff, LuLoader, LuBan, LuSearch, LuAlertTriangle } from 'react-icons/lu';
-import { FaChevronLeft, FaChevronUp, FaChevronDown } from 'react-icons/fa';
+import { LuImageOff, LuLoader, LuBan, LuSearch } from 'react-icons/lu';
+import { FaChevronLeft, FaChevronUp, FaChevronDown, FaExclamationTriangle } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
@@ -568,7 +568,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
           
           {findResultStatus === 'not-found' && (
             <div className="flex items-center gap-2 text-amber-500 text-sm mt-2 animate-in fade-in slide-in-from-top-1">
-              <LuAlertTriangle size={16} />
+              <FaExclamationTriangle size={16} />
               <span>No matches found</span>
             </div>
           )}
