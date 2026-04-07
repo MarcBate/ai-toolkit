@@ -336,7 +336,12 @@ class DiffusionTrainer(SDTrainer):
     def done_hook(self):
         super(DiffusionTrainer, self).done_hook()
         if self.is_ui_trainer:
-            self.update_status("completed", "Training completed")
+            if self.sample_only:
+                # Restore the status the job had before sample-only mode started
+                previous_status = os.environ.get("AITK_PREVIOUS_STATUS", "stopped")
+                self.update_status(previous_status, "Sampling complete")
+            else:
+                self.update_status("completed", "Training completed")
             # Wait for all async operations to finish before shutting down
             asyncio.run(self.wait_for_all_async())
             self.thread_pool.shutdown(wait=True)

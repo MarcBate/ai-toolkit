@@ -131,6 +131,8 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
 
     if (sampleOnly) {
       additionalEnv.AITK_SAMPLE_ONLY = '1';
+      // Pass the job's current status so Python can restore it after sample-only completes
+      additionalEnv.AITK_PREVIOUS_STATUS = job.status;
     }
 
     // HF_TOKEN

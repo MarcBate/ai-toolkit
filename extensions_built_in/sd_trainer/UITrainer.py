@@ -287,7 +287,11 @@ class UITrainer(SDTrainer):
 
     def done_hook(self):
         super(UITrainer, self).done_hook()
-        self.update_status("completed", "Training completed")
+        if self.sample_only:
+            previous_status = os.environ.get("AITK_PREVIOUS_STATUS", "stopped")
+            self.update_status(previous_status, "Sampling complete")
+        else:
+            self.update_status("completed", "Training completed")
         # Wait for all async operations to finish before shutting down
         asyncio.run(self.wait_for_all_async())
         self.thread_pool.shutdown(wait=True)
