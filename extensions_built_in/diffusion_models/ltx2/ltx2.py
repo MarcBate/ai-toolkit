@@ -910,7 +910,7 @@ class LTX2Model(BaseModel):
                     conditioning_mask,
                     patch_size=self.pipeline.transformer_spatial_patch_size,
                     patch_size_t=self.pipeline.transformer_temporal_patch_size,
-                )
+                ).squeeze(-1)
 
                 # set video timestep
                 video_timestep = timestep.unsqueeze(-1) * (1 - packed_conditioning_mask)
