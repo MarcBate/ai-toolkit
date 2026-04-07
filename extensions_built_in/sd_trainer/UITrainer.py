@@ -260,7 +260,11 @@ class UITrainer(SDTrainer):
         super(UITrainer, self).on_error(e)
         if self.accelerator.is_main_process and not self.is_stopping:
             self.update_status("error", str(e))
-        self.update_db_key("step", self.last_save_step)
+            # On actual error, roll back displayed step to last known good save
+            self.update_db_key("step", self.last_save_step)
+        else:
+            # On intentional stop/pause, preserve the current step count
+            self.update_db_key("step", self.step_num)
         asyncio.run(self.wait_for_all_async())
         self.thread_pool.shutdown(wait=True)
 
