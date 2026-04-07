@@ -7,6 +7,7 @@ import { Save } from 'lucide-react';
 import React from 'react';
 import { Job } from '@prisma/client';
 import { saveJob, stopJob } from '@/utils/jobs';
+import classNames from 'classnames';
 
 export interface SaveSnapshotState {
   job: Job | null;

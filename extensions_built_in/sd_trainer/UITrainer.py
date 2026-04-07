@@ -127,6 +127,45 @@ class UITrainer(SDTrainer):
 
         return _check_return_to_queue()
 
+    def should_save(self):
+        def _check_save():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT save FROM Job WHERE id = ?", (self.job_id,))
+                save = cursor.fetchone()
+                return False if save is None else save[0] == 1
+
+        return _check_save()
+
+    def reset_save(self):
+        self.update_db_key("save", False)
+
+    def maybe_save(self):
+        if self.should_save():
+            self.reset_save()
+            self.save(self.step_num)
+
+    def should_sample(self):
+        def _check_sample():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT sample FROM Job WHERE id = ?", (self.job_id,))
+                sample = cursor.fetchone()
+                return False if sample is None else sample[0] == 1
+
+        return _check_sample()
+
+    def reset_sample(self):
+        self.update_db_key("sample", False)
+
+    def maybe_sample(self):
+        if self.should_sample():
+            self.reset_sample()
+            self.save(self.step_num)
+            self.sample(self.step_num)
+
     def maybe_stop(self):
         if self.should_stop():
             self._run_async_operation(
@@ -248,6 +287,8 @@ class UITrainer(SDTrainer):
     def end_step_hook(self):
         super(UITrainer, self).end_step_hook()
         self.update_step()
+        self.maybe_save()
+        self.maybe_sample()
         self.maybe_stop()
 
     def hook_before_model_load(self):
