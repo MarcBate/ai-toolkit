@@ -98,6 +98,22 @@ export const markJobAsStopped = (jobID: string) => {
   });
 };
 
+export const reorderJob = (jobID: string, direction: 'up' | 'down') => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .post(`/api/jobs/${jobID}/reorder`, { direction })
+      .then(res => res.data)
+      .then(data => {
+        console.log(`Job ${jobID} reordered ${direction}:`, data);
+        resolve();
+      })
+      .catch(error => {
+        console.error(`Error reordering job ${jobID}:`, error);
+        reject(error);
+      });
+  });
+};
+
 export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
@@ -105,14 +121,26 @@ export const getJobConfig = (job: Job) => {
 export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = false, hasSamples: boolean = false) => {
   const jobConfig = getJobConfig(job);
   const isStopping = job.stop && job.status === 'running';
+  const isSaving = job.save && job.status === 'running';
+  const isSampling = job.sample && job.status === 'running';
+  
+  // Busy if it's currently saving or sampling. Stopping is its own state.
+  const isBusy = isSaving || isSampling;
+
   const canDelete = ['queued', 'completed', 'stopped', 'error'].includes(job.status) && !isStopping;
   const canEdit = ['queued','completed', 'stopped', 'error'].includes(job.status) && !isStopping;
   const canRemoveFromQueue = job.status === 'queued';
+  
+  // Stop should ALWAYS be available if the job is running and not already stopping.
+  // We want to be able to kill a job even if it's stuck saving or sampling.
   const canStop = job.status === 'running' && !isStopping;
-  const canSave = job.status === 'running' && !job.save && !isStopping;
+  
+  // Cannot save if already busy or stopping
+  const canSave = job.status === 'running' && !isBusy && !isStopping;
 
   // allows sample if running OR if stopped and no other jobs are running AND has samples
-  const canSample = (job.status === 'running' && !job.sample && !isStopping) ||
+  // Cannot sample if already busy or stopping
+  const canSample = (job.status === 'running' && !isBusy && !isStopping) ||
                     (!['running', 'queued'].includes(job.status) && !isAnyJobRunning && hasSamples && !job.sample);
 
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
@@ -120,7 +148,7 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
     canStart = true;
   }
-  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue, canSave, canSample };
+  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping };
 };
 
 export const getNumberOfSamples = (job: Job) => {

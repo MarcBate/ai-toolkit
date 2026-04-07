@@ -10,6 +10,8 @@ import classNames from 'classnames';
 import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
+import { ChevronUp, ChevronDown } from 'lucide-react';
+import { reorderJob } from '@/utils/jobs';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -97,17 +99,46 @@ export default function JobsTable({ onlyActive = false, filter = '' }: JobsTable
     return jobs.filter(job => matchesTerm(job, filter));
   }, [jobs, filter]);
 
+  const handleReorder = async (jobID: string, direction: 'up' | 'down') => {
+    try {
+      await reorderJob(jobID, direction);
+      refresh();
+    } catch (e) {
+      console.error('Failed to reorder job:', e);
+    }
+  };
+
   const columns: TableColumn[] = [
     {
       title: 'Name',
       key: 'name',
       render: row => (
-        <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
-          {['running', 'stopping'].includes(row.status) ? (
-            <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
-          ) : null}
-          {row.name}
-        </Link>
+        <div className="flex items-center">
+          {row.status === 'queued' && (
+            <div className="flex flex-col mr-3 text-gray-500">
+              <button
+                onClick={() => handleReorder(row.id, 'up')}
+                className="hover:text-white transition-colors"
+                title="Move Up"
+              >
+                <ChevronUp size={16} />
+              </button>
+              <button
+                onClick={() => handleReorder(row.id, 'down')}
+                className="hover:text-white transition-colors"
+                title="Move Down"
+              >
+                <ChevronDown size={16} />
+              </button>
+            </div>
+          )}
+          <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+            {['running', 'stopping'].includes(row.status) ? (
+              <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
+            ) : null}
+            {row.name}
+          </Link>
+        </div>
       ),
     },
     {

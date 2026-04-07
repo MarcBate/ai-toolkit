@@ -2491,9 +2491,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
-            # only save if we have not just saved
-            if self.step_num != self.last_save_step:
-                self.save(self.step_num)
+            # only save if we have made meaningful progress (at least 5 steps)
+            # or if we are at the very end of training
+            if self.step_num >= self.train_config.steps or (self.step_num - self.last_save_step >= 5):
+                # When saving the progress at the end, use the last completed step
+                self.save(self.step_num - 1 if self.step_num < self.train_config.steps else self.step_num)
             self.logger.finish()
         self.accelerator.end_training()
 
@@ -2637,7 +2639,7 @@ Model trained with [AI Toolkit by Ostris](https://github.com/ostris/ai-toolkit)
 
 ## Download model and use it with ComfyUI, AUTOMATIC1111, SD.Next, Invoke AI, etc.
 
-Weights for this model available in Safetensors format.
+Weights for this model are available in Safetensors format.
 
 [Download](/{repo_id}/tree/main) them in the Files & versions tab.
 
