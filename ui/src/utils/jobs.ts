@@ -159,8 +159,8 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   const canSample = (job.status === 'running' && !isBusy && !isStopping) ||
                     (!['running', 'queued'].includes(job.status) && !isAnyJobRunning && hasSamples && !job.sample);
 
-  // edit sample prompts while running without reloading the model
-  const canEditSample = job.status === 'running' && !isBusy && !isStopping && job.step > 0;
+  // edit sample prompts at any time except when actively generating samples
+  const canEditSample = !isSampling;
 
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
   // can resume if more steps were added

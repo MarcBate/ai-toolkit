@@ -7,6 +7,7 @@ import { Job } from '@prisma/client';
 import {
   startJob,
   stopJob,
+  saveAndPauseJob,
   deleteJob,
   getAvaliableJobActions,
   markJobAsStopped,
@@ -120,7 +121,7 @@ export default function JobActionBar({
               type: 'info',
               confirmText: 'Stop',
               onConfirm: async () => {
-                await handleAction(() => stopJob(job.id));
+                await handleAction(() => saveAndPauseJob(job.id));
               },
             });
           }}
