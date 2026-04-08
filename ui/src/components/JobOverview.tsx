@@ -38,6 +38,11 @@ export default function JobOverview({ job }: JobOverviewProps) {
       return line.split(/\r/).pop();
     }) as string[];
 
+    // Filter out tqdm progress bar lines when not actively training
+    if (job.status !== 'running') {
+      splits = splits.filter(line => !line.match(/^\s*\d+%\|/));
+    }
+
     // only return last 100 lines max
     const maxLines = 1000;
     if (splits.length > maxLines) {
@@ -45,7 +50,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
     }
 
     return splits;
-  }, [log]);
+  }, [log, job.status]);
 
   // Handle scroll events to determine if user has scrolled away from bottom
   const handleScroll = () => {
