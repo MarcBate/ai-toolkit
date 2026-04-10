@@ -1,4 +1,3 @@
-import librosa
 import numpy as np
 import torch
 import torchaudio
@@ -39,6 +38,7 @@ KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 def analyze_audio(audio_path):
     """Extract BPM, key, and time signature from audio using librosa."""
+    import librosa
     y, sr = librosa.load(audio_path, sr=22050, mono=True)
     duration = librosa.get_duration(y=y, sr=sr)
 
