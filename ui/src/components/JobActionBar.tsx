@@ -142,7 +142,7 @@ export default function JobActionBar({
           <Pen />
         </Link>
       )}
-      {canEditSample && (
+      {canEditSample && !canEdit && (
         <Link href={`/jobs/new?id=${job.id}&sampleOnly=true`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Sample Prompts">
           <Pen />
         </Link>
@@ -177,7 +177,7 @@ export default function JobActionBar({
       </Button>
       <div className="border-r border-1 border-gray-700 ml-2 inline"></div>
       <Menu>
-        <MenuButton disabled={disabled} className={'ml-2 disabled:opacity-30'} title="More Actions">
+        <MenuButton className={'ml-2'} title="More Actions">
           <Cog />
         </MenuButton>
         <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
