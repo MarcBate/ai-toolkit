@@ -9,6 +9,7 @@ import { isVideo, isAudio } from '@/utils/basic';
 interface DatasetImageCardProps {
   imageUrl: string;
   alt: string;
+  isAutoCaptioning: boolean;
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
@@ -22,6 +23,7 @@ interface DatasetImageCardProps {
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   imageUrl,
   alt,
+  isAutoCaptioning,
   children,
   className = '',
   onDelete = () => {},
@@ -117,6 +119,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     }
   }, [inViewport, isVisible]);
 
+  // Poll for caption updates every 5 seconds while auto-captioning
+  useEffect(() => {
+    if (!isAutoCaptioning || !inViewport || !isVisible) return;
+    const interval = setInterval(() => {
+      // Reset so fetchCaption will re-fetch
+      setIsCaptionLoaded(false);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isAutoCaptioning, inViewport, isVisible]);
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       entries => {
@@ -164,6 +176,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
+  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
+
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
   const isItImage = !isItAVideo && !isItAudio;
@@ -190,7 +204,22 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   controls
                 />
               )}
-              {isItAudio && (
+              {isItAudio && !showAudioPlayer && (
+                <div
+                  className="w-full h-full cursor-pointer flex items-center justify-center bg-gray-900"
+                  onClick={() => setShowAudioPlayer(true)}
+                >
+                  <img
+                    src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
+                    alt={alt}
+                    className="w-full h-full object-contain"
+                    onError={e => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
+              {isItAudio && showAudioPlayer && (
                 <AudioPlayer
                   src={`/api/img/${encodeURIComponent(imageUrl)}`}
                   title={imageUrl.replace(/^.*[\\/]/, '')}
@@ -263,10 +292,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           >
             <textarea
               ref={textAreaRef}
-              className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
+              className={classNames("w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none", {
+                'opacity-50 cursor-not-allowed': isAutoCaptioning,
+              })}
               style={effectivelyEditing ? { fieldSizing: 'content' } as any : {}}
               value={caption}
               rows={effectivelyEditing ? undefined : 3}
+              readOnly={isAutoCaptioning}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
               onFocus={() => setIsEditing(true)}

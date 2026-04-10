@@ -13,10 +13,15 @@ import { Modal } from '@/components/Modal';
 import { FloatingWindow } from '@/components/FloatingWindow';
 import { TextInput, Checkbox } from '@/components/formInputs';
 import classNames from 'classnames';
+import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import useSettings from '@/hooks/useSettings';
+import { pathJoin } from '@/utils/basic';
+import AutoCaptionButton from '@/components/AutoCaptionButton';
 
 export default function DatasetPage({ params }: { params: Promise<{ datasetName: string }> }) {
   const { datasetName } = use(params);
   const [imgList, setImgList] = useState<{ img_path: string; caption: string }[]>([]);
+  const [isAutoCaptioning, setIsAutoCaptioning] = useState(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [filter, setFilter] = useState('');
   const [filterHistory, setFilterHistory] = useState<string[]>([]);
@@ -30,6 +35,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const [findMatchCharIndex, setFindMatchCharIndex] = useState(-1);
   const [findResultStatus, setFindResultStatus] = useState<'none' | 'found' | 'not-found'>('none');
   const findInputRef = useRef<HTMLInputElement>(null);
+  const { settings, isSettingsLoaded } = useSettings();
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('filterHistory');
@@ -454,6 +460,10 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
           </div>
         )}
         <div>
+          <AutoCaptionButton
+            datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
+            setIsAutoCaptioning={setIsAutoCaptioning}
+          />
           <Button
             className="text-white bg-slate-600 px-3 py-1 rounded-md"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
@@ -480,6 +490,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
                     isHighlighted={isMatch}
                     highlightText={isMatch ? findText : undefined}
                     highlightCharIndex={isMatch ? findMatchCharIndex : -1}
+                    isAutoCaptioning={isAutoCaptioning}
                     onDelete={() => refreshImageList(datasetName)}
                     onCaptionSave={(newCaption, imgPath) => {
                       setImgList(prev =>
@@ -565,7 +576,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
               </>
             )}
           </div>
-          
+
           {findResultStatus === 'not-found' && (
             <div className="flex items-center gap-2 text-amber-500 text-sm mt-2 animate-in fade-in slide-in-from-top-1">
               <FaExclamationTriangle size={16} />
@@ -574,6 +585,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
           )}
         </div>
       </FloatingWindow>
+      <CaptionDatasetModal />
     </>
   );
 }

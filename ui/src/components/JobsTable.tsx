@@ -17,10 +17,11 @@ interface JobsTableProps {
   autoStartQueue?: boolean;
   onlyActive?: boolean;
   filter?: string;
+  job_type?: string | null;
 }
 
-export default function JobsTable({ onlyActive = false, filter = '' }: JobsTableProps) {
-  const { jobs, status, refreshJobs } = useJobsList(onlyActive, 5000);
+export default function JobsTable({ onlyActive = false, filter = '', job_type = null }: JobsTableProps) {
+  const { jobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
 
@@ -112,41 +113,56 @@ export default function JobsTable({ onlyActive = false, filter = '' }: JobsTable
     {
       title: 'Name',
       key: 'name',
-      render: row => (
-        <div className="flex items-center">
-          {row.status === 'queued' && (
-            <div className="flex flex-col mr-3 text-gray-500">
-              <button
-                onClick={() => handleReorder(row.id, 'up')}
-                className="hover:text-white transition-colors"
-                title="Move Up"
-              >
-                <ChevronUp size={16} />
-              </button>
-              <button
-                onClick={() => handleReorder(row.id, 'down')}
-                className="hover:text-white transition-colors"
-                title="Move Down"
-              >
-                <ChevronDown size={16} />
-              </button>
-            </div>
-          )}
-          <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
-            {['running', 'stopping'].includes(row.status) ? (
-              <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
-            ) : null}
-            {row.name}
-          </Link>
-        </div>
-      ),
+      render: row => {
+        let title: React.ReactNode = row.name;
+        if (row.job_type === 'caption') {
+          let splits = row.job_ref.split(/[/\\]/);
+          const datasetPath = `${splits[splits.length - 1]}`;
+          title = (
+            <>
+              <small className="opacity-50">CAPTION: </small> {datasetPath}
+            </>
+          );
+        }
+        return (
+          <div className="flex items-center">
+            {row.status === 'queued' && (
+              <div className="flex flex-col mr-3 text-gray-500">
+                <button
+                  onClick={() => handleReorder(row.id, 'up')}
+                  className="hover:text-white transition-colors"
+                  title="Move Up"
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <button
+                  onClick={() => handleReorder(row.id, 'down')}
+                  className="hover:text-white transition-colors"
+                  title="Move Down"
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
+            )}
+            <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+              {['running', 'stopping'].includes(row.status) ? (
+                <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
+              ) : null}
+              {title}
+            </Link>
+          </div>
+        );
+      },
     },
     {
       title: 'Steps',
       key: 'steps',
       render: row => {
         const jobConfig: JobConfig = JSON.parse(row.job_config);
-        const totalSteps = jobConfig.config.process[0].train.steps;
+        if (row.job_type !== 'train') {
+          return <></>;
+        }
+        const totalSteps = jobConfig.config.process[0].train?.steps;
 
         return (
           <div>

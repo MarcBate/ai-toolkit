@@ -139,18 +139,18 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   const isStopping = job.stop && job.status === 'running';
   const isSaving = job.save && job.status === 'running';
   const isSampling = job.sample && job.status === 'running';
-  
+
   // Busy if it's currently saving or sampling. Stopping is its own state.
   const isBusy = isSaving || isSampling;
 
   const canDelete = ['queued', 'completed', 'stopped', 'error'].includes(job.status) && !isStopping;
-  const canEdit = ['queued','completed', 'stopped', 'error'].includes(job.status) && !isStopping;
+  let canEdit = ['queued', 'completed', 'stopped', 'error'].includes(job.status) && !isStopping;
   const canRemoveFromQueue = job.status === 'queued';
-  
+
   // Stop should ALWAYS be available if the job is running and not already stopping.
   // We want to be able to kill a job even if it's stuck saving or sampling.
   const canStop = job.status === 'running' && !isStopping;
-  
+
   // Cannot save if already busy or stopping
   const canSave = job.status === 'running' && !isBusy && !isStopping;
 
@@ -164,8 +164,12 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
 
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
   // can resume if more steps were added
-  if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
+  if (job.status === 'completed' && (jobConfig.config.process[0].train?.steps || 0) > job.step && !isStopping) {
     canStart = true;
+  }
+  if (job.job_type !== 'train') {
+    // for non-train jobs, allow editing unless it's currently running
+    canEdit = false;
   }
   return { canDelete, canEdit, canEditSample, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping };
 };
@@ -177,5 +181,5 @@ export const getNumberOfSamples = (job: Job) => {
 
 export const getTotalSteps = (job: Job) => {
   const jobConfig = getJobConfig(job);
-  return jobConfig.config.process[0].train.steps;
+  return jobConfig.config.process[0].train?.steps || 0;
 };
