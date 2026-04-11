@@ -44,7 +44,7 @@ export const defaultSampleConfig: SampleConfig = {
   seed: 42,
   walk_seed: true,
   guidance_scale: 4,
-  sample_steps: 50,
+  sample_steps: 30,
   num_frames: 1,
   fps: 1,
 }
@@ -397,7 +397,7 @@ It's Converging!
   seed: 42,
   walk_seed: true,
   guidance_scale: 4,
-  sample_steps: 25,
+  sample_steps: 30,
   num_frames: 1,
   fps: 1,
 };
