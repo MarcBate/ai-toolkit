@@ -192,7 +192,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         style={{ paddingBottom: '100%' }}
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
-          {inViewport && isVisible && (
+          {/* Render content once the card has ever been in view (isVisible is sticky-true).
+              We intentionally do NOT gate on inViewport here — doing so causes images at
+              the last row to unmount/remount as the user hovers near the viewport edge,
+              producing the "endless flash loop" reported when scrolling to the bottom. */}
+          {isVisible && (
             <>
               {isItAVideo && (
                 <video
@@ -237,11 +241,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               )}
             </>
           )}
-          {!isVisible && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-800 bg-opacity-75 rounded-t-lg">
-              <span className="text-white text-lg"></span>
-            </div>
-          )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
           <div className="absolute top-1 right-1 flex space-x-2 z-10">
             <button
@@ -279,7 +278,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'min-h-[75px] z-10': effectivelyEditing,
         })}
       >
-        {inViewport && isVisible && (isCaptionLoaded || caption) && (
+        {/* Same sticky-visible gate as the image — avoid using inViewport here to prevent
+            the caption form from unmounting when the card briefly leaves the viewport edge. */}
+        {isVisible && (isCaptionLoaded || caption) && (
           <form
             onSubmit={e => {
               e.preventDefault();
@@ -304,11 +305,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               onFocus={() => setIsEditing(true)}
             />
           </form>
-        )}
-        {(!inViewport || !isVisible) && isCaptionLoaded && (
-          <div className="w-full h-full flex items-center justify-center text-gray-400">
-            {isVisible ? 'Scroll into view to edit caption' : 'Show content to edit caption'}
-          </div>
         )}
         {!isCaptionLoaded && !caption && (
           <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>

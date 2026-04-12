@@ -425,7 +425,11 @@ class DiffusionTrainer(SDTrainer):
             self.update_status("running", "Training")
 
     def save(self, step=None):
-        self.maybe_stop()
+        # NOTE: do NOT call maybe_stop() here before the save begins.
+        # When save_and_pause sets both save=true and stop=true, calling maybe_stop()
+        # first would raise "Job stopped" before the model is ever written to disk.
+        # The stop check at the end (and in end_step_hook) handles the stop cleanly
+        # after the save completes.
         self.update_status("running", "Saving model")
         super().save(step)
         self.maybe_stop()
