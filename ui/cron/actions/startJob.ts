@@ -225,6 +225,7 @@ export default async function startJob(jobID: string, sampleOnly: boolean = fals
     data: {
       status: 'running',
       stop: false,
+      return_to_queue: false,
       info: sampleOnly ? 'Generating samples...' : 'Starting job...',
     },
   });

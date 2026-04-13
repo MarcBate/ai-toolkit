@@ -2,6 +2,14 @@ import os
 import requests
 import json
 
+
+class JobStoppedException(BaseException):
+    """Raised when a job is intentionally stopped or returned to queue.
+    Inherits from BaseException (not Exception) so run.py's generic
+    'except Exception' handler does not catch it and overwrite the status."""
+    pass
+
+
 def update_job_status_to_ui(job_id: str, status: str, info: str = None):
     ui_url = os.getenv("AITK_UI_URL", "http://localhost:8675")
     if not job_id:

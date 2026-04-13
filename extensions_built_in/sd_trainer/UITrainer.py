@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from toolkit.config_modules import SampleConfig
+from toolkit.ui_utils import JobStoppedException
 from typing import Literal, Optional
 import threading
 import time
@@ -189,15 +190,15 @@ class UITrainer(SDTrainer):
 
     def maybe_stop(self):
         if self.should_stop():
+            self.is_stopping = True
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
-            self.is_stopping = True
-            raise Exception("Job stopped")
+            raise JobStoppedException("Job stopped")
         if self.should_return_to_queue():
+            self.is_stopping = True
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
-            self.is_stopping = True
-            raise Exception("Job returning to queue")
+            raise JobStoppedException("Job returning to queue")
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:

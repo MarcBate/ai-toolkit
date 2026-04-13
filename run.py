@@ -38,7 +38,7 @@ import argparse
 from toolkit.job import get_job
 from toolkit.accelerator import get_accelerator
 from toolkit.print import print_acc, setup_log_to_file
-from toolkit.ui_utils import update_job_status_to_ui
+from toolkit.ui_utils import update_job_status_to_ui, JobStoppedException
 
 accelerator = get_accelerator()
 
@@ -116,6 +116,16 @@ def main():
             job.run()
             job.cleanup()
             jobs_completed += 1
+        except JobStoppedException as e:
+            # Intentional stop or return-to-queue — do NOT overwrite the status
+            # that UITrainer.maybe_stop() already wrote to the DB.
+            print_acc(f"Job intentionally stopped: {e}")
+            try:
+                job.process[0].on_error(e)
+            except Exception as e2:
+                print_acc(f"Error running on_error: {e2}")
+            if is_ui:
+                sys.exit(0)
         except Exception as e:
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
