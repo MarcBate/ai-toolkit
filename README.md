@@ -535,3 +535,27 @@ _Last updated: 2026-03-31 18:10 UTC_
 
 ---
 
+## Changelog
+
+### mcb2 branch
+
+#### 2026-04-13 — Fix UI job stop misclassified as error, causing re-queue loop
+
+Jobs stopped via the UI queue (pause queue, stop button) were incorrectly
+recorded as `error` status in the database. This happened because
+`UITrainer.maybe_stop()` raised a generic `Exception`, which `run.py`'s
+catch-all `except Exception` handler treated as a real failure and overwrote
+the `stopped`/`queued` status that `maybe_stop()` had already written to the DB.
+The stale `return_to_queue=1` flag left behind caused the job to re-queue and
+immediately stop itself every time the queue was restarted.
+
+**Files changed:**
+- `toolkit/ui_utils.py` — added `JobStoppedException(BaseException)` so it
+  bypasses the generic exception handler
+- `extensions_built_in/sd_trainer/UITrainer.py` — `maybe_stop()` now raises
+  `JobStoppedException` instead of `Exception`
+- `run.py` — added `except JobStoppedException` handler that calls `on_error()`
+  for cleanup but does not overwrite the DB status
+- `ui/cron/actions/startJob.ts` — clears `return_to_queue` when a job
+  transitions to `running` so a stale flag cannot cause an immediate self-stop
+
