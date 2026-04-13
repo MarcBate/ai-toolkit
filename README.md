@@ -582,7 +582,7 @@ immediately stop itself every time the queue was restarted.
 - **Edit sample config while running** — change prompts, resolution, etc. for
   a job that is actively training; changes take effect at the next sample
 - **Queue reordering** — drag jobs to reorder the training queue
-- **Training queue filter** — filter the jobs list by queue/status
+- **Queue filter textbox** — filter the jobs list by name using a text search box
 - **Save snapshot on pause** — pressing the pause/stop button saves a snapshot
   before stopping the job
 - **On-demand sampling when idle** — generate samples for a completed job when
@@ -603,46 +603,6 @@ immediately stop itself every time the queue was restarted.
   their image card scrolls out of view, reducing server load
 - **Fix auto-updating captions** — resolved issue where captions were not
   refreshing correctly after batch captioning
-- **Dataset captioning via UI** — caption an entire dataset directly from the
-  job UI (added alongside ACE-Step 1.5 support)
 - **Reworked drag/upload/select model** — single unified model for dragging,
   uploading, and selecting dataset images
-- **Skip hidden files** — dataset listing ignores hidden files/directories
-
-#### UI — General
-
-- **Light mode** — full light/dark mode support
-- **Icons in job top bar** — quick-access icons added to the job detail page header
-- **Vertical scrollbar on Checkpoints panel** — checkpoints list scrolls
-  independently when it overflows
-- **Streaming image/video load** — dataset and sample images load via streaming
-  for faster perceived performance
-- **Console fills vertical space** — training log console expands to fill
-  available screen height
-- **Control image preview** — click a control image in the viewer to preview it
-- **Fix cog menu always accessible** — gear menu no longer appears when it
-  should be hidden; removed duplicate pencil icons
-- **Fix DB lock crash** — jobs no longer fail when SQLite DB is briefly locked
-- **Defer librosa import** — librosa is imported lazily to prevent crashes on
-  extension discovery when it is not installed
-
-#### Models & Extensions
-
-- **ACE-Step 1.5 and 1.5 XL** — training support for the updated ACE-Step
-  audio model variants; default timestep type changed to `linear`
-- **FLAC/OGG audio support** — audio datasets can now include `.flac` and
-  `.ogg` files
-- **Download button for audio samples** — generated audio samples have a
-  download button in the gear menu
-- **FLUX.2 Klein low-VRAM fix** — reduced load-time VRAM spikes on
-  low-memory GPUs for FLUX.2 Klein models
-- **Merge network on save with strength** — configurable strength when merging
-  a network into the base model on save
-- **LTX 2.3 text encoder offload/quantize order fix** — resolved incorrect
-  ordering that could cause errors during model load
-- **Fix Flux.2 VAE CPU offload** — VAE no longer stays offloaded to CPU when
-  encoding control images during latent caching
-- **Mac Apple Silicon support** — experimental macOS MPS support added
-- **More optimizers in UI** — additional optimizer choices exposed in the
-  job creation UI
 
