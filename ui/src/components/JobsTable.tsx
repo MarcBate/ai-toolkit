@@ -43,8 +43,13 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       term = term.trim();
       if (!term) return true;
 
-      const jobConfig: JobConfig = JSON.parse(job.job_config);
-      const modelName = jobConfig.config.process[0].model.name_or_path || '';
+      let modelName = '';
+      try {
+        const jobConfig: JobConfig = JSON.parse(job.job_config);
+        modelName = jobConfig?.config?.process?.[0]?.model?.name_or_path || '';
+      } catch {
+        // malformed config — search on name only
+      }
       const searchableText = `${job.name} ${modelName}`.toLowerCase();
 
       // Check if term is quoted
@@ -116,7 +121,7 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       render: row => {
         let title: React.ReactNode = row.name;
         if (row.job_type === 'caption') {
-          let splits = row.job_ref.split(/[/\\]/);
+          let splits = (row.job_ref || '').split(/[/\\]/);
           const datasetPath = `${splits[splits.length - 1]}`;
           title = (
             <>
@@ -158,11 +163,16 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       title: 'Steps',
       key: 'steps',
       render: row => {
-        const jobConfig: JobConfig = JSON.parse(row.job_config);
         if (row.job_type !== 'train') {
           return <></>;
         }
-        const totalSteps = jobConfig.config.process[0].train?.steps;
+        let totalSteps = 0;
+        try {
+          const jobConfig: JobConfig = JSON.parse(row.job_config);
+          totalSteps = jobConfig?.config?.process?.[0]?.train?.steps ?? 0;
+        } catch {
+          // malformed config
+        }
 
         return (
           <div>
