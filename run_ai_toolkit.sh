@@ -235,20 +235,31 @@ echo
 mkdir -p "$(dirname "${LOG_FILE}")"
 
 cd "${UI_DIR}"
+
+# If the repo was updated (or no prior build exists) run the full build+start.
+# Otherwise skip the rebuild and go straight to start — saves 3+ minutes.
+if [[ "${UPDATED}" == "1" || ! -d "${UI_DIR}/.next" ]]; then
+  echo "---- Running full build (repo updated or no prior build found)..."
+  UI_CMD="npm run build_and_start"
+else
+  echo "---- Skipping rebuild (no upstream changes). Running npm run start..."
+  UI_CMD="npm run start"
+fi
+
 (
-  npm run build_and_start 2>&1 | tee -a "${LOG_FILE}"
+  ${UI_CMD} 2>&1 | tee -a "${LOG_FILE}"
 ) &
 UI_PID=$!
 
 echo "UI PID: ${UI_PID}"
 echo "Waiting for ${UI_URL} ..."
 
-if wait_for_url "${UI_URL}" 180; then
+if wait_for_url "${UI_URL}" 600; then
   echo "UI is up: ${UI_URL}"
   open_in_windows "${UI_URL}"
 else
   echo
-  echo "UI did not come up within 180 seconds."
+  echo "UI did not come up within 600 seconds."
   echo "Check the log: ${LOG_FILE}"
   exit 1
 fi

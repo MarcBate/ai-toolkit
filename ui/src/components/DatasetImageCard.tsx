@@ -14,10 +14,13 @@ interface DatasetImageCardProps {
   className?: string;
   onDelete?: () => void;
   onCaptionSave?: (newCaption: string, imageUrl: string) => void;
+  /** When provided (even as empty string), the caption is considered pre-loaded and no fetch is issued. */
   initialCaption?: string;
   isHighlighted?: boolean;
   highlightText?: string;
   highlightCharIndex?: number;
+  /** Increment this to collapse the caption on cards that are not currently highlighted (e.g. on Find navigation). */
+  resetEditKey?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -28,10 +31,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   className = '',
   onDelete = () => {},
   onCaptionSave = () => {},
-  initialCaption = '',
+  initialCaption,
   isHighlighted = false,
   highlightText = '',
   highlightCharIndex = -1,
+  resetEditKey,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -39,21 +43,26 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [inViewport, setInViewport] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(!!initialCaption);
-  const [caption, setCaption] = useState<string>(initialCaption);
-  const [savedCaption, setSavedCaption] = useState<string>(initialCaption);
+  // If initialCaption was explicitly provided (even as ''), the caption is already known —
+  // no need to fetch. Only fetch when the prop is absent (undefined).
+  const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(initialCaption !== undefined);
+  const [caption, setCaption] = useState<string>(initialCaption ?? '');
+  const [savedCaption, setSavedCaption] = useState<string>(initialCaption ?? '');
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
 
   useEffect(() => {
-    setCaption(initialCaption);
-    setSavedCaption(initialCaption);
-    setIsCaptionLoaded(!!initialCaption);
+    setCaption(initialCaption ?? '');
+    setSavedCaption(initialCaption ?? '');
+    setIsCaptionLoaded(initialCaption !== undefined);
   }, [initialCaption]);
 
   useEffect(() => {
     if (isHighlighted && highlightText && highlightCharIndex !== -1 && isCaptionLoaded) {
-      // Focus and highlight the text in the textarea
+      // Focus and highlight the text in the textarea.
+      // NOTE: highlightText is intentionally excluded from the deps array — including it would
+      // re-run this effect on every keystroke in the Find input, stealing focus mid-word.
+      // The effect re-runs on navigation (highlightCharIndex changes) which is the right trigger.
       if (textAreaRef.current) {
         textAreaRef.current.focus();
         textAreaRef.current.setSelectionRange(
@@ -62,12 +71,24 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         );
       }
     }
-  }, [isHighlighted, highlightText, highlightCharIndex, isCaptionLoaded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlighted, highlightCharIndex, isCaptionLoaded]);
+
+  // When the parent navigates to a new find result it increments resetEditKey.
+  // Collapse any card that is no longer the active match so only one caption
+  // is expanded at a time.
+  useEffect(() => {
+    if (resetEditKey === undefined) return;
+    if (!isHighlighted) {
+      setIsEditing(false);
+      textAreaRef.current?.blur();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetEditKey]);
 
   const fetchCaption = async () => {
-    if (isGettingCaption.current || (isCaptionLoaded && caption)) return;
+    if (isGettingCaption.current || isCaptionLoaded) return;
     isGettingCaption.current = true;
-    if (isCaptionLoaded) return;
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -176,7 +197,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
-  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
+  // Start hidden so AudioPlayer doesn't mount (and load audio/art) for every visible card at once.
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
 
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
@@ -210,17 +232,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               )}
               {isItAudio && !showAudioPlayer && (
                 <div
-                  className="w-full h-full cursor-pointer flex items-center justify-center bg-gray-900"
+                  className="w-full h-full cursor-pointer flex flex-col items-center justify-center gap-2 bg-gray-900 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
                   onClick={() => setShowAudioPlayer(true)}
+                  title="Click to play"
                 >
-                  <img
-                    src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
-                    alt={alt}
-                    className="w-full h-full object-contain"
-                    onError={e => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
+                  <div className="text-5xl select-none">♪</div>
+                  <div className="text-xs px-2 w-full text-center truncate">
+                    {imageUrl.replace(/^.*[\\/]/, '')}
+                  </div>
+                  <div className="text-xs text-gray-500">Click to play</div>
                 </div>
               )}
               {isItAudio && showAudioPlayer && (

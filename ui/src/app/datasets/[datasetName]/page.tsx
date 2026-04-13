@@ -34,6 +34,8 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const [findNextIndex, setFindNextIndex] = useState(-1);
   const [findMatchCharIndex, setFindMatchCharIndex] = useState(-1);
   const [findResultStatus, setFindResultStatus] = useState<'none' | 'found' | 'not-found'>('none');
+  // Incremented on every successful Find navigation so non-highlighted cards collapse.
+  const [findNavKey, setFindNavKey] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
   const { settings, isSettingsLoaded } = useSettings();
 
@@ -216,6 +218,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
         setFindNextIndex(idx);
         setFindMatchCharIndex(charIndex);
         setFindResultStatus('found');
+        setFindNavKey(prev => prev + 1);
         found = true;
         // Scroll to the image
         const element = document.getElementById(`image-card-${idx}`);
@@ -491,6 +494,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
                     highlightText={isMatch ? findText : undefined}
                     highlightCharIndex={isMatch ? findMatchCharIndex : -1}
                     isAutoCaptioning={isAutoCaptioning}
+                    resetEditKey={findNavKey}
                     onDelete={() => refreshImageList(datasetName)}
                     onCaptionSave={(newCaption, imgPath) => {
                       setImgList(prev =>

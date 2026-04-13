@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   modelArchs,
   ModelArch,
@@ -545,7 +545,14 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].save.archive_optimizer')}
               />
             </FormGroup>
-          </Card>
+            <FormGroup label="Options">
+              <Checkbox
+                  label="Keep step number in final safetensors file name"
+                  checked={jobConfig.config.process[0].save.save_with_step_num || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].save.save_with_step_num')}
+              />
+            </FormGroup>
+          </Card>claude
         </div>
         <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Training">
