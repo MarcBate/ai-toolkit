@@ -242,7 +242,23 @@ You can add the word `[trigger]` in the caption file and if you have `trigger_wo
 replaced. 
 
 Images are never upscaled but they are downscaled and placed in buckets for batching. **You do not need to crop/resize your images**.
-The loader will automatically resize them and can handle varying aspect ratios. 
+The loader will automatically resize them and can handle varying aspect ratios.
+
+### Control / Paired Datasets
+
+For instruction-edit models (e.g. Qwen-Image-Edit, FLUX.1-Kontext) you can supply a second folder of
+control/source images via `control_path` in your dataset config. The control folder must contain files
+with the **same base names** as the target images (any supported extension: jpg, jpeg, png, webp).
+
+```yaml
+datasets:
+  - folder_path: /path/to/target_images
+    control_path: /path/to/control_images
+    caption_ext: txt
+```
+
+If any control image is missing, training will fail immediately with a clear error listing the
+missing files — before any model weights are loaded.
 
 
 ## Training Specific Layers
@@ -594,6 +610,13 @@ immediately stop itself every time the queue was restarted.
 - **Fix status on pause** — job status correctly reflects paused state
 - **Cannot edit sampling while sampling** — UI locks sample config during
   active sample generation to prevent conflicts
+
+#### Training — Dataset & Dataloader
+
+- **Early control image validation** — when `control_path` is configured, all
+  control images are verified to exist before the model is loaded. A clear error
+  listing every missing file is raised immediately, avoiding a long wait for model
+  weights to load before discovering a misconfigured path.
 
 #### UI — Dataset Management
 

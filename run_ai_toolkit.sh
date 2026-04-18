@@ -138,7 +138,6 @@ if [[ "${DO_GIT_PULL}" == "1" ]]; then
   echo "---- Checking for updates from origin/main..."
   git fetch origin main
 
-  # Explicitly compare current branch (mcb2) to the author's main
   LOCAL_HASH="$(git rev-parse HEAD)"
   REMOTE_HASH="$(git rev-parse origin/main)"
   BASE_HASH="$(git merge-base HEAD origin/main)"
@@ -148,18 +147,29 @@ if [[ "${DO_GIT_PULL}" == "1" ]]; then
   elif [[ "${BASE_HASH}" == "${REMOTE_HASH}" ]]; then
     echo "---- Your local branch is ahead of origin/main. No updates to pull."
   else
-    # This means origin/main has new commits that are not in your branch
-    echo "---- Merging updates from origin/main..."
-    
-    # Using merge instead of pull --rebase is safer for maintaining your own history
-    if git merge origin/main -m "Auto-merge from origin/main"; then
-      echo "---- Successfully merged updates."
-      UPDATED="1"
-    else
-      echo "---- Merge conflict detected! Please resolve manually."
-      # Optionally: git merge --abort
-      exit 1
-    fi
+    # origin/main has new commits not yet in this branch
+    NEW_COUNT="$(git rev-list HEAD..origin/main --count)"
+    echo
+    echo "---- ${NEW_COUNT} update(s) available from origin/main:"
+    git log --oneline HEAD..origin/main
+    echo
+    read -r -p "Fetch and merge updates now? [y/N] " _answer
+    case "${_answer}" in
+      [Yy]|[Yy][Ee][Ss])
+        echo "---- Merging updates from origin/main..."
+        if git merge origin/main -m "Auto-merge from origin/main"; then
+          echo "---- Successfully merged updates."
+          UPDATED="1"
+        else
+          echo "---- Merge conflict detected! Please resolve manually."
+          git merge --abort 2>/dev/null || true
+          exit 1
+        fi
+        ;;
+      *)
+        echo "---- Skipping merge. Continuing with current code."
+        ;;
+    esac
   fi
 else
   echo "---- Skipping git fetch/pull"
