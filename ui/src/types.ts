@@ -271,6 +271,7 @@ export interface CaptionProcessConfig {
     caption_prompt?: string;
     max_res?: number;
     max_new_tokens?: number;
+    fixed_caption?: string;
   }
 }
 
