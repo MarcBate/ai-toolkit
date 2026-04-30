@@ -202,6 +202,7 @@ class StableDiffusion:
         self.invert_assistant_lora = False
         self._after_sample_img_hooks = []
         self._status_update_hooks = []
+        self._maybe_stop_hooks = []
         # todo update this based on the model
         self.is_transformer = False
         
@@ -1136,6 +1137,13 @@ class StableDiffusion:
         
     def add_status_update_hook(self, func):
         self._status_update_hooks.append(func)
+
+    def add_maybe_stop_hook(self, func):
+        self._maybe_stop_hooks.append(func)
+
+    def maybe_stop(self):
+        for hook in self._maybe_stop_hooks:
+            hook()
 
     @torch.no_grad()
     def generate_images(
