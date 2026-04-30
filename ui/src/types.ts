@@ -79,6 +79,8 @@ export interface SaveConfig {
   max_step_saves_to_keep: number;
   save_format: string;
   push_to_hub: boolean;
+  archive_optimizer?: boolean;
+  save_with_step_num?:boolean;
 }
 
 export interface DatasetConfig {

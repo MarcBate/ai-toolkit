@@ -1317,7 +1317,7 @@ class ClipImageFileItemDTOMixin:
             ).pixel_values
             self.clip_image_tensor = clip_out.squeeze(0).clone().detach()
 
-    def cleanup_clip_image(self: 'FileItemDTO'):
+    def cleanup_clip_image(self):
         self.clip_image_tensor = None
         self.clip_image_embeds = None
 
@@ -1631,7 +1631,7 @@ class PoiFileItemDTOMixin:
                     f"Error: poi is not supported when caching latents. Please set cache_latents and cache_latents_to_disk to False in the dataset config"
                 )
                 # make sure we are loading through json
-            if dataset_config.caption_ext != 'json':
+            if dataset_config.caption_ext != '.json':
                 raise Exception(
                     f"Error: poi is only supported when using json captions. Please set caption_ext to json in the dataset config"
                 )
@@ -1987,6 +1987,7 @@ class LatentCachingMixin:
                 i += 1
 
             # restore device state
+            print_acc(" - Latent caching complete. Restoring device state...")
             self.sd.restore_device_state()
 
 
@@ -2109,8 +2110,9 @@ class TextEmbeddingCachingMixin:
                 file_item.is_text_embedding_cached = True
                 i += 1
             # restore device state
-            # if did_move:
-            #     self.sd.restore_device_state()
+            if did_move:
+                print_acc(" - Text embedding caching complete. Restoring device state...")
+                self.sd.restore_device_state()
 
 
 class CLIPCachingMixin:
@@ -2278,13 +2280,10 @@ class CLIPCachingMixin:
                     # flush(garbage_collect=False)
                 file_item.is_vision_clip_cached = True
                 i += 1
-            # flush every 100
-            # if i % 100 == 0:
-            #     flush()
-
-        # restore device state
-        self.sd.restore_device_state()
-
+            
+            # restore device state
+            print_acc(" - CLIP vision caching complete. Restoring device state...")
+            self.sd.restore_device_state()
 
 
 class ControlCachingMixin:

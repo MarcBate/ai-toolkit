@@ -1,12 +1,22 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Save, Image } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
+import { openSaveSnapshotModal } from '@/components/SaveSnapshotModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped } from '@/utils/jobs';
+import {
+  startJob,
+  stopJob,
+  saveAndPauseJob,
+  deleteJob,
+  getAvaliableJobActions,
+  markJobAsStopped,
+  saveJob,
+  sampleJob,
+} from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
-import { redirect } from 'next/navigation';
+import { useState } from 'react';
 
 interface JobActionBarProps {
   job: Job;
@@ -15,6 +25,8 @@ interface JobActionBarProps {
   hideView?: boolean;
   className?: string;
   autoStartQueue?: boolean;
+  isAnyJobRunning?: boolean;
+  hasSamples?: boolean;
 }
 
 export default function JobActionBar({
@@ -24,39 +36,79 @@ export default function JobActionBar({
   className,
   hideView,
   autoStartQueue = false,
+  isAnyJobRunning = false,
+  hasSamples = false,
 }: JobActionBarProps) {
-  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const { canStart, canStop, canDelete, canEdit, canEditSample, canRemoveFromQueue, canSave, canSample, isBusy } = getAvaliableJobActions(
+    job,
+    isAnyJobRunning,
+    hasSamples,
+  );
 
   if (!afterDelete) afterDelete = onRefresh;
+
+  const handleAction = async (action: () => Promise<void>) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await action();
+    } catch (e) {
+      console.error('Error performing job action:', e);
+    } finally {
+      setIsProcessing(false);
+      if (onRefresh) onRefresh();
+    }
+  };
+
+  const disabled = isProcessing || isBusy;
 
   return (
     <div className={`${className}`}>
       {canStart && (
         <Button
-          onClick={async () => {
-            if (!canStart) return;
-            await startJob(job.id);
-            // start the queue as well
-            if (autoStartQueue) {
-              await startQueue(job.gpu_ids);
-            }
-            if (onRefresh) onRefresh();
-          }}
-          className={`ml-2 opacity-100`}
+          onClick={() => handleAction(() => startJob(job.id))}
+          disabled={disabled}
+          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          title="Start Job"
         >
           <Play />
         </Button>
       )}
       {canRemoveFromQueue && (
         <Button
-          onClick={async () => {
-            if (!canRemoveFromQueue) return;
-            await markJobAsStopped(job.id);
-            if (onRefresh) onRefresh();
-          }}
-          className={`ml-2 opacity-100`}
+          onClick={() => handleAction(() => markJobAsStopped(job.id))}
+          disabled={disabled}
+          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          title="Remove from Queue"
         >
           <X />
+        </Button>
+      )}
+      {canSave && (
+        <Button
+          onClick={() => {
+            if (disabled) return;
+            openSaveSnapshotModal({
+              job,
+              onRefresh,
+            });
+          }}
+          disabled={disabled}
+          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          title="Save Snapshot"
+        >
+          <Save />
+        </Button>
+      )}
+      {canSample && (
+        <Button
+          onClick={() => handleAction(() => sampleJob(job.id))}
+          disabled={disabled}
+          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          title="Generate Samples Now"
+        >
+          <Image />
         </Button>
       )}
       {canStop && (
@@ -65,27 +117,33 @@ export default function JobActionBar({
             if (!canStop) return;
             openConfirm({
               title: 'Stop Job',
-              message: `Are you sure you want to stop the job "${job.name}"? You CAN resume later.`,
+              message: `Are you sure you want to stop the job "${job.name}"? This will save a snapshot (if progress has been made) and stop. You CAN resume later.`,
               type: 'info',
               confirmText: 'Stop',
               onConfirm: async () => {
-                await stopJob(job.id);
-                if (onRefresh) onRefresh();
+                await handleAction(() => saveAndPauseJob(job.id));
               },
             });
           }}
-          className={`ml-2 opacity-100`}
+          disabled={isProcessing} // Allow stop even if busy (isBusy is true when stopping)
+          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          title="Stop Job"
         >
           <Pause />
         </Button>
       )}
       {!hideView && (
-        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block" title="View Job Details">
           <Eye />
         </Link>
       )}
       {canEdit && (
-        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Job Config">
+          <Pen />
+        </Link>
+      )}
+      {canEditSample && !canEdit && (
+        <Link href={`/jobs/new?id=${job.id}&sampleOnly=true`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Sample Prompts">
           <Pen />
         </Link>
       )}
@@ -101,25 +159,25 @@ export default function JobActionBar({
             type: 'warning',
             confirmText: 'Delete',
             onConfirm: async () => {
-              if (job.status === 'running') {
-                try {
+              await handleAction(async () => {
+                if (job.status === 'running') {
                   await stopJob(job.id);
-                } catch (e) {
-                  console.error('Error stopping job before deleting:', e);
                 }
-              }
-              await deleteJob(job.id);
-              if (afterDelete) afterDelete();
+                await deleteJob(job.id);
+                if (afterDelete) afterDelete();
+              });
             },
           });
         }}
-        className={`ml-2 opacity-100`}
+        disabled={disabled}
+        className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+        title="Delete Job"
       >
         <Trash2 />
       </Button>
       <div className="border-r border-1 border-gray-700 ml-2 inline"></div>
       <Menu>
-        <MenuButton className={'ml-2'}>
+        <MenuButton className={'ml-2'} title="More Actions">
           <Cog />
         </MenuButton>
         <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
@@ -144,8 +202,7 @@ export default function JobActionBar({
                   type: 'warning',
                   confirmText: 'Mark as Stopped',
                   onConfirm: async () => {
-                    await markJobAsStopped(job.id);
-                    onRefresh && onRefresh();
+                    await handleAction(() => markJobAsStopped(job.id));
                   },
                 });
               }}

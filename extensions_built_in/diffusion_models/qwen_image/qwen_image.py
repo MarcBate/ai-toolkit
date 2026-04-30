@@ -125,6 +125,8 @@ class QwenImageModel(BaseModel):
             quantize_model(self, transformer)
             flush()
 
+        self.maybe_stop()
+
         if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
             MemoryManager.attach(
                 transformer,
@@ -161,6 +163,8 @@ class QwenImageModel(BaseModel):
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
 
+        self.maybe_stop()
+
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Text Encoder")
             quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
@@ -174,21 +178,23 @@ class QwenImageModel(BaseModel):
 
         self.noise_scheduler = QwenImageModel.get_train_scheduler()
 
-        self.print_and_status_update("Making pipe")
-
         kwargs = {}
 
         if self._qwen_image_keep_visual:
+            self.print_and_status_update("Loading processor")
             try:
+                self.print_and_status_update ("model_path: " + model_path)
                 self.processor = Qwen2VLProcessor.from_pretrained(
                     model_path, subfolder="processor"
                 )
             except OSError:
+                self.print_and_status_update ( "base_model_path: " + base_model_path)
                 self.processor = Qwen2VLProcessor.from_pretrained(
                     base_model_path, subfolder="processor"
                 )
             kwargs["processor"] = self.processor
 
+        self.print_and_status_update("Making pipe Qwen Image")
         pipe: QwenImagePipeline = self._qwen_pipeline(
             scheduler=self.noise_scheduler,
             text_encoder=None,
@@ -197,6 +203,7 @@ class QwenImageModel(BaseModel):
             transformer=None,
             **kwargs,
         )
+        self.print_and_status_update("Moving pipe to device")
         # for quantization, it works best to do these after making the pipe
         pipe.text_encoder = text_encoder
         pipe.transformer = transformer
@@ -208,16 +215,19 @@ class QwenImageModel(BaseModel):
 
         # leave it on cpu for now
         if not self.low_vram:
+            self.print_and_status_update(  "Moving model to device")
             pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
         # just to make sure everything is on the right device and dtype
+        self.print_and_status_update("Moving text encoder to device")
         text_encoder[0].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         flush()
 
         # save it to the model class
+        self.print_and_status_update("Saving model to class")
         self.vae = vae
         self.text_encoder = text_encoder  # list of text encoders
         self.tokenizer = tokenizer  # list of tokenizers

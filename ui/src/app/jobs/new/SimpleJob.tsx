@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   modelArchs,
   ModelArch,
@@ -41,6 +41,7 @@ type Props = {
   gpuList: any;
   datasetOptions: any;
   isLoading?: boolean;
+  sampleOnly?: boolean;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -56,6 +57,7 @@ export default function SimpleJob({
   gpuList,
   datasetOptions,
   isLoading,
+  sampleOnly = false,
 }: Props) {
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
@@ -222,7 +224,7 @@ export default function SimpleJob({
         onSubmit={handleSubmit}
         className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
       >
-        {isLoading && (
+        {!sampleOnly && isLoading && (
           <div className="absolute inset-0 z-50 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-400 border-t-blue-500" />
@@ -230,7 +232,7 @@ export default function SimpleJob({
             </div>
           </div>
         )}
-        <div className={topBarClass}>
+        <div className={`${topBarClass} ${sampleOnly ? 'hidden' : ''}`}>
           <Card title="Job">
             <TextInput
               label="Training Name"
@@ -536,9 +538,23 @@ export default function SimpleJob({
               min={1}
               required
             />
-          </Card>
+            <FormGroup label="Options">
+              <Checkbox
+                label="Archive Optimizer"
+                checked={jobConfig.config.process[0].save.archive_optimizer || false}
+                onChange={value => setJobConfig(value, 'config.process[0].save.archive_optimizer')}
+              />
+            </FormGroup>
+            <FormGroup label="Options">
+              <Checkbox
+                  label="Keep step number in final safetensors file name"
+                  checked={jobConfig.config.process[0].save.save_with_step_num || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].save.save_with_step_num')}
+              />
+            </FormGroup>
+          </Card>claude
         </div>
-        <div>
+        <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Training">
             <div className={trainingBarClass}>
               <div>
@@ -784,7 +800,7 @@ export default function SimpleJob({
             </div>
           </Card>
         </div>
-        <div>
+        <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Advanced" collapsible>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div>
@@ -823,7 +839,7 @@ export default function SimpleJob({
             </div>
           </Card>
         </div>
-        <div>
+        <div className={sampleOnly ? 'hidden' : ''}>
           <Card title="Datasets">
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (
@@ -863,7 +879,7 @@ export default function SimpleJob({
                         label="Target Dataset"
                         value={dataset.folder_path}
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
-                        options={datasetOptions}
+                        options={[{ value: defaultDatasetConfig.folder_path, label: 'Please select...' }, ...datasetOptions]}
                       />
                       {modelArch?.additionalSections?.includes('datasets.control_path') && (
                         <SelectInput
@@ -874,7 +890,7 @@ export default function SimpleJob({
                           onChange={value =>
                             setJobConfig(value == '' ? null : value, `config.process[0].datasets[${i}].control_path`)
                           }
-                          options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                          options={[{ value: '', label: 'None' }, ...datasetOptions]}
                         />
                       )}
                       {modelArch?.additionalSections?.includes('datasets.multi_control_paths') && (
@@ -890,7 +906,7 @@ export default function SimpleJob({
                                 `config.process[0].datasets[${i}].control_path_1`,
                               )
                             }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                            options={[{ value: '', label: 'None' }, ...datasetOptions]}
                           />
                           <SelectInput
                             label="Control Dataset 2"
@@ -903,7 +919,7 @@ export default function SimpleJob({
                                 `config.process[0].datasets[${i}].control_path_2`,
                               )
                             }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                            options={[{ value: '', label: 'None' }, ...datasetOptions]}
                           />
                           <SelectInput
                             label="Control Dataset 3"
@@ -916,7 +932,7 @@ export default function SimpleJob({
                                 `config.process[0].datasets[${i}].control_path_3`,
                               )
                             }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                            options={[{ value: '', label: 'None' }, ...datasetOptions]}
                           />
                         </>
                       )}
@@ -1096,7 +1112,7 @@ export default function SimpleJob({
                 type="button"
                 onClick={() => {
                   const newDataset = objectCopy(defaultDatasetConfig);
-                  // automaticallt add the controls for a new dataset
+                  // automatically add the controls for a new dataset
                   const controls = modelArch?.controls ?? [];
                   newDataset.controls = controls;
                   setJobConfig([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');

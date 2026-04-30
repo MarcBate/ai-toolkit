@@ -13,6 +13,14 @@ interface DatasetImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onCaptionSave?: (newCaption: string, imageUrl: string) => void;
+  /** When provided (even as empty string), the caption is considered pre-loaded and no fetch is issued. */
+  initialCaption?: string;
+  isHighlighted?: boolean;
+  highlightText?: string;
+  highlightCharIndex?: number;
+  /** Increment this to collapse the caption on cards that are not currently highlighted (e.g. on Find navigation). */
+  resetEditKey?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -22,18 +30,65 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   children,
   className = '',
   onDelete = () => {},
+  onCaptionSave = () => {},
+  initialCaption,
+  isHighlighted = false,
+  highlightText = '',
+  highlightCharIndex = -1,
+  resetEditKey,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [inViewport, setInViewport] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
-  const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
-  const [caption, setCaption] = useState<string>('');
-  const [savedCaption, setSavedCaption] = useState<string>('');
   const abortControllerRef = useRef<AbortController | null>(null);
+  // If initialCaption was explicitly provided (even as ''), the caption is already known —
+  // no need to fetch. Only fetch when the prop is absent (undefined).
+  const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(initialCaption !== undefined);
+  const [caption, setCaption] = useState<string>(initialCaption ?? '');
+  const [savedCaption, setSavedCaption] = useState<string>(initialCaption ?? '');
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const isGettingCaption = useRef<boolean>(false);
+
+  useEffect(() => {
+    setCaption(initialCaption ?? '');
+    setSavedCaption(initialCaption ?? '');
+    setIsCaptionLoaded(initialCaption !== undefined);
+  }, [initialCaption]);
+
+  useEffect(() => {
+    if (isHighlighted && highlightText && highlightCharIndex !== -1 && isCaptionLoaded) {
+      // Focus and highlight the text in the textarea.
+      // NOTE: highlightText is intentionally excluded from the deps array — including it would
+      // re-run this effect on every keystroke in the Find input, stealing focus mid-word.
+      // The effect re-runs on navigation (highlightCharIndex changes) which is the right trigger.
+      if (textAreaRef.current) {
+        textAreaRef.current.focus();
+        textAreaRef.current.setSelectionRange(
+            highlightCharIndex,
+            highlightCharIndex + highlightText.length
+        );
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlighted, highlightCharIndex, isCaptionLoaded]);
+
+  // When the parent navigates to a new find result it increments resetEditKey.
+  // Collapse any card that is no longer the active match so only one caption
+  // is expanded at a time.
+  useEffect(() => {
+    if (resetEditKey === undefined) return;
+    if (!isHighlighted) {
+      setIsEditing(false);
+      textAreaRef.current?.blur();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetEditKey]);
 
   const fetchCaption = async () => {
-    if (isCaptionLoaded) return;
+    if (isGettingCaption.current || isCaptionLoaded) return;
+    isGettingCaption.current = true;
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -60,22 +115,25 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       });
   };
 
-  const saveCaption = () => {
-    const trimmedCaption = caption.trim();
-    if (trimmedCaption === savedCaption) return;
+  const saveCaption = (valueToSave?: string) => {
+    const targetCaption = (valueToSave !== undefined ? valueToSave : caption).trim();
+    if (targetCaption === savedCaption) return;
+
+    setSavedCaption(targetCaption);
+
     apiClient
-      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
+      .post('/api/img/caption', { imgPath: imageUrl, caption: targetCaption })
       .then(res => res.data)
       .then(data => {
         console.log('Caption saved:', data);
-        setSavedCaption(trimmedCaption);
+        onCaptionSave(targetCaption, imageUrl);
       })
       .catch(error => {
         console.error('Error saving caption:', error);
+        setSavedCaption(prev => prev === targetCaption ? caption.trim() : prev);
       });
   };
 
-  // Only fetch caption when the component is both in viewport and visible
   useEffect(() => {
     if (inViewport && isVisible) {
       fetchCaption();
@@ -93,18 +151,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   }, [isAutoCaptioning, inViewport, isVisible]);
 
   useEffect(() => {
-    // Create intersection observer to check viewport visibility
     const observer = new IntersectionObserver(
       entries => {
         if (entries[0].isIntersecting) {
           setInViewport(true);
-          // Initialize isVisible to true when first coming into view
           if (!isVisible) {
             setIsVisible(true);
           }
         } else {
           setInViewport(false);
-          // Cancel any in-flight caption fetch when scrolling away
           abortControllerRef.current?.abort();
         }
       },
@@ -132,31 +187,38 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    // If Enter is pressed without Shift, prevent default behavior and save
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      saveCaption();
+      saveCaption(e.currentTarget.value);
+      setIsEditing(false);
+      (e.target as HTMLTextAreaElement).blur();
     }
   };
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
-  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
+  // Start hidden so AudioPlayer doesn't mount (and load audio/art) for every visible card at once.
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
 
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
   const isItImage = !isItAVideo && !isItAudio;
 
+  const effectivelyEditing = isEditing || isHighlighted;
+
   return (
     <div className={`flex flex-col ${className}`}>
-      {/* Square image container */}
       <div
         ref={cardRef}
         className="relative w-full"
-        style={{ paddingBottom: '100%' }} // Make it square
+        style={{ paddingBottom: '100%' }}
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
-          {inViewport && isVisible && (
+          {/* Render content once the card has ever been in view (isVisible is sticky-true).
+              We intentionally do NOT gate on inViewport here — doing so causes images at
+              the last row to unmount/remount as the user hovers near the viewport edge,
+              producing the "endless flash loop" reported when scrolling to the bottom. */}
+          {isVisible && (
             <>
               {isItAVideo && (
                 <video
@@ -170,17 +232,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               )}
               {isItAudio && !showAudioPlayer && (
                 <div
-                  className="w-full h-full cursor-pointer flex items-center justify-center bg-gray-900"
+                  className="w-full h-full cursor-pointer flex flex-col items-center justify-center gap-2 bg-gray-900 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
                   onClick={() => setShowAudioPlayer(true)}
+                  title="Click to play"
                 >
-                  <img
-                    src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
-                    alt={alt}
-                    className="w-full h-full object-contain"
-                    onError={e => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
+                  <div className="text-5xl select-none">♪</div>
+                  <div className="text-xs px-2 w-full text-center truncate">
+                    {imageUrl.replace(/^.*[\\/]/, '')}
+                  </div>
+                  <div className="text-xs text-gray-500">Click to play</div>
                 </div>
               )}
               {isItAudio && showAudioPlayer && (
@@ -200,11 +260,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                 />
               )}
             </>
-          )}
-          {!isVisible && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-800 bg-opacity-75 rounded-t-lg">
-              <span className="text-white text-lg"></span>
-            </div>
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
           <div className="absolute top-1 right-1 flex space-x-2 z-10">
@@ -236,35 +291,40 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         </div>
       </div>
       <div
-        className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px]', {
+        className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg', {
           'border-blue-500 border-2': !isCaptionCurrent,
           'border-transparent border-2': isCaptionCurrent,
+          'h-[75px] overflow-hidden': !effectivelyEditing,
+          'min-h-[75px] z-10': effectivelyEditing,
         })}
       >
-        {inViewport && isVisible && (isCaptionLoaded || caption) && (
+        {/* Same sticky-visible gate as the image — avoid using inViewport here to prevent
+            the caption form from unmounting when the card briefly leaves the viewport edge. */}
+        {isVisible && (isCaptionLoaded || caption) && (
           <form
             onSubmit={e => {
               e.preventDefault();
               saveCaption();
             }}
-            onBlur={saveCaption}
+            onBlur={e => {
+              saveCaption(e.currentTarget.querySelector('textarea')?.value);
+              setIsEditing(false);
+            }}
           >
             <textarea
+              ref={textAreaRef}
               className={classNames("w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none", {
                 'opacity-50 cursor-not-allowed': isAutoCaptioning,
               })}
+              style={effectivelyEditing ? { fieldSizing: 'content' } as any : {}}
               value={caption}
-              rows={3}
+              rows={effectivelyEditing ? undefined : 3}
               readOnly={isAutoCaptioning}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
+              onFocus={() => setIsEditing(true)}
             />
           </form>
-        )}
-        {(!inViewport || !isVisible) && isCaptionLoaded && (
-          <div className="w-full h-full flex items-center justify-center text-gray-400">
-            {isVisible ? 'Scroll into view to edit caption' : 'Show content to edit caption'}
-          </div>
         )}
         {!isCaptionLoaded && !caption && (
           <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>

@@ -13,7 +13,7 @@ import AudioPlayer from './AudioPlayer';
 interface Props {
   imgPath: string | null; // current image path
   numSamples: number; // number of samples per row
-  sampleImages: string[]; // all sample images
+  sampleImages: (string | null)[]; // all sample images (can contain null for gaps)
   sampleConfig: SampleConfig | null;
   onChange: (nextPath: string | null) => void; // parent setter
   refreshSampleImages?: () => void;
@@ -72,9 +72,9 @@ export default function SampleImageViewer({
         .split('.')[0]
         .split('_')
         .filter(p => p !== '');
-      if (parts.length === 3) {
-        ii.step = parseInt(parts[1]);
-        ii.promptIdx = parseInt(parts[2]);
+      if (parts.length >= 2) {
+        ii.promptIdx = parseInt(parts[parts.length - 1]);
+        ii.step = parseInt(parts[parts.length - 2]);
       } else {
         console.error('Unexpected filename format for sample image:', filename);
       }
@@ -85,10 +85,12 @@ export default function SampleImageViewer({
   const setImageAtIndex = useCallback(
     (idx: number) => {
       if (idx < 0 || idx >= sampleImages.length) return;
+      const nextPath = sampleImages[idx];
+      if (!nextPath) return; // skip if null
       setShowingControlIdx(null);
-      onChange(sampleImages[idx]);
+      onChange(nextPath);
     },
-    [sampleImages, numSamples, onChange],
+    [sampleImages, onChange],
   );
 
   const currentIndex = useMemo(() => {
@@ -113,7 +115,7 @@ export default function SampleImageViewer({
     const nextIdx = currentIndex - 1;
     if (nextIdx < minIdx) return;
     setImageAtIndex(nextIdx);
-  }, [sampleImages, currentIndex, imgInfo.promptIdx, setImageAtIndex]);
+  }, [currentIndex, imgInfo.promptIdx, setImageAtIndex]);
 
   const handleArrowRight = useCallback(() => {
     if (currentIndex === -1) return;
@@ -122,7 +124,7 @@ export default function SampleImageViewer({
     const nextIdx = currentIndex + 1;
     if (nextIdx > maxIdx) return;
     setImageAtIndex(nextIdx);
-  }, [sampleImages, currentIndex, imgInfo.promptIdx, setImageAtIndex]);
+  }, [numSamples, currentIndex, imgInfo.promptIdx, setImageAtIndex]);
 
   const sampleItem = useMemo<SampleItem | null>(() => {
     if (!sampleConfig) return null;
@@ -159,10 +161,10 @@ export default function SampleImageViewer({
     if (!sampleItem) return '?';
     if (sampleItem.seed !== undefined) return sampleItem.seed;
     if (sampleConfig?.walk_seed) {
-      return sampleConfig.seed + imgInfo.promptIdx;
+      return (sampleConfig.seed || 0) + imgInfo.promptIdx;
     }
     return sampleConfig?.seed ?? '?';
-  }, [sampleItem, sampleConfig]);
+  }, [sampleItem, sampleConfig, imgInfo.promptIdx]);
 
   const displayedImgPath = useMemo(() => {
     if (showingControlIdx !== null && controlImages[showingControlIdx]) {

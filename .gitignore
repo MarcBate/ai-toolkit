@@ -185,3 +185,6 @@ aitk_db.db
 /notes.md
 /data
 .claude
+/aitk_db.zip
+/marcbateFeatures.patch
+/fixit.sh

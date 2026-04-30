@@ -19,9 +19,21 @@ export async function POST(request: Request) {
     const imageFiles = findImagesRecursively(datasetFolder);
 
     // Format response
-    const result = imageFiles.map(imgPath => ({
-      img_path: imgPath,
-    }));
+    const result = imageFiles.map(imgPath => {
+      const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.txt';
+      let caption = '';
+      if (fs.existsSync(captionPath)) {
+        try {
+          caption = fs.readFileSync(captionPath, 'utf-8');
+        } catch (e) {
+          console.error(`Error reading caption file: ${captionPath}`, e);
+        }
+      }
+      return {
+        img_path: imgPath,
+        caption: caption
+      };
+    });
 
     return NextResponse.json({ images: result });
   } catch (error) {

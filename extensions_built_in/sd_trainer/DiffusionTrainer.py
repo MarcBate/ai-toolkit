@@ -1,9 +1,12 @@
 from collections import OrderedDict
+import json
 import os
 import sqlite3
 import asyncio
 import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
+from toolkit.config_modules import SampleConfig
+from toolkit.ui_utils import JobStoppedException
 from typing import Literal, Optional
 import threading
 import time
@@ -158,6 +161,42 @@ class DiffusionTrainer(SDTrainer):
 
         return self._retry_db_operation(_check_return_to_queue)
 
+    def should_save(self):
+        if not self.is_ui_trainer:
+            return False
+
+        def _check_save():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT save FROM Job WHERE id = ?", (self.job_id,))
+                save = cursor.fetchone()
+                return False if save is None else save[0] == 1
+
+        return _check_save()
+
+    def reset_save(self):
+        if self.accelerator.is_main_process and self.is_ui_trainer:
+            self.update_db_key("save", False)
+
+    def should_sample(self):
+        if not self.is_ui_trainer:
+            return False
+
+        def _check_sample():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT sample FROM Job WHERE id = ?", (self.job_id,))
+                sample = cursor.fetchone()
+                return False if sample is None else sample[0] == 1
+
+        return _check_sample()
+
+    def reset_sample(self):
+        if self.accelerator.is_main_process and self.is_ui_trainer:
+            self.update_db_key("sample", False)
+
     def maybe_stop(self):
         if not self.is_ui_trainer:
             return
@@ -165,12 +204,47 @@ class DiffusionTrainer(SDTrainer):
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
-            raise Exception("Job stopped")
+            raise JobStoppedException("Job stopped")
         if self.should_return_to_queue():
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
-            raise Exception("Job returning to queue")
+            raise JobStoppedException("Job returning to queue")
+
+    def maybe_save(self):
+        if not self.is_ui_trainer:
+            return
+        if self.should_save():
+            self.reset_save()
+            self.save(self.step_num)
+
+    def reload_sample_config(self):
+        """Re-read sample config from the DB in case prompts were edited while running."""
+        if not self.is_ui_trainer:
+            return
+        try:
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT job_config FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                if row:
+                    job_cfg = json.loads(row[0])
+                    sample_conf = job_cfg.get('config', {}).get('process', [{}])[0].get('sample', {})
+                    if sample_conf:
+                        self.sample_config = SampleConfig(**sample_conf)
+        except Exception as e:
+            print(f"Warning: Could not reload sample config from DB: {e}")
+
+    def maybe_sample(self):
+        if not self.is_ui_trainer:
+            return
+        if self.should_sample():
+            self.reload_sample_config()
+            self.reset_sample()
+            # save model and optimizer first as requested
+            self.save(self.step_num)
+            # then sample
+            self.sample(self.step_num)
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:
@@ -181,8 +255,10 @@ class DiffusionTrainer(SDTrainer):
                 cursor = conn.cursor()
                 cursor.execute("BEGIN IMMEDIATE")
                 try:
-                    # Convert the value to string if it's not already
-                    if isinstance(value, str):
+                    # Convert the value to appropriate SQLite type
+                    if isinstance(value, bool):
+                        value_to_insert = 1 if value else 0
+                    elif isinstance(value, (int, float, str)) or value is None:
                         value_to_insert = value
                     else:
                         value_to_insert = str(value)
@@ -253,8 +329,14 @@ class DiffusionTrainer(SDTrainer):
         if self.is_ui_trainer:
             try:
                 if self.accelerator.is_main_process and not self.is_stopping:
-                    self.update_status("error", str(e))
-                self.update_db_key("step", self.last_save_step)
+                    # If it's a KeyboardInterrupt, mark as stopped instead of error
+                    if isinstance(e, KeyboardInterrupt) or "Job stopped" in str(e):
+                        self.update_status("stopped", "Job stopped by user")
+                    else:
+                        self.update_status("error", str(e))
+                    self.update_db_key("step", self.last_save_step)
+                else:
+                    self.update_db_key("step", self.step_num)
                 asyncio.run(self.wait_for_all_async())
             except Exception as db_err:
                 print(f"[AITK] Warning: failed to update DB during error handling: {db_err}")
@@ -277,7 +359,12 @@ class DiffusionTrainer(SDTrainer):
     def done_hook(self):
         super(DiffusionTrainer, self).done_hook()
         if self.is_ui_trainer:
-            self.update_status("completed", "Training completed")
+            if self.sample_only:
+                # Restore the status the job had before sample-only mode started
+                previous_status = os.environ.get("AITK_PREVIOUS_STATUS", "stopped")
+                self.update_status(previous_status, "Sampling complete")
+            else:
+                self.update_status("completed", "Training completed")
             # Wait for all async operations to finish before shutting down
             asyncio.run(self.wait_for_all_async())
             self.thread_pool.shutdown(wait=True)
@@ -286,6 +373,8 @@ class DiffusionTrainer(SDTrainer):
         super(DiffusionTrainer, self).end_step_hook()
         if self.is_ui_trainer:
             self.update_step()
+            self.maybe_save()
+            self.maybe_sample()
             self.maybe_stop()
 
     def hook_before_model_load(self):
@@ -316,6 +405,7 @@ class DiffusionTrainer(SDTrainer):
         if self.is_ui_trainer:
             self.maybe_stop()
             self.sd.add_status_update_hook(self.status_update_hook_func)
+            self.sd.add_maybe_stop_hook(self.maybe_stop)
 
     def sample_step_hook(self, img_num, total_imgs):
         super().sample_step_hook(img_num, total_imgs)
@@ -330,10 +420,18 @@ class DiffusionTrainer(SDTrainer):
         self.update_status("running", f"Generating images - 0/{total_imgs}")
         super().sample(step, is_first)
         self.maybe_stop()
-        self.update_status("running", "Training")
+        if self.sample_only:
+            # reset sample flag in DB
+            self.update_db_key("sample", False)
+        else:
+            self.update_status("running", "Training")
 
     def save(self, step=None):
-        self.maybe_stop()
+        # NOTE: do NOT call maybe_stop() here before the save begins.
+        # When save_and_pause sets both save=true and stop=true, calling maybe_stop()
+        # first would raise "Job stopped" before the model is ever written to disk.
+        # The stop check at the end (and in end_step_hook) handles the stop cleanly
+        # after the save completes.
         self.update_status("running", "Saving model")
         super().save(step)
         self.maybe_stop()

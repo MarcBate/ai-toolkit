@@ -77,7 +77,7 @@ def analyze_audio(audio_path):
             beat_strengths - beat_strengths.mean(),
             beat_strengths - beat_strengths.mean(),
             mode="full",
-        )
+            )
         acf = acf[len(acf) // 2 :]
         if len(acf) > 6:
             # Look at autocorrelation peaks at lag 3 vs lag 4
@@ -129,11 +129,11 @@ class AceStepCaptioner(BaseCaptioner):
         )
         if self.caption_config.low_vram:
             self.model.to("cpu")
-        
+
         self.model2 = None
         self.processor2 = None
 
-        if self.caption_config.fixed_caption is not None:
+        if self.caption_config.fixed_caption is None:
             # load captioner model
             self.print_and_status_update("Loading captioner model")
             self.model2 = Qwen2_5OmniForConditionalGeneration.from_pretrained(

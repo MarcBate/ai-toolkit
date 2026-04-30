@@ -10,21 +10,108 @@ import classNames from 'classnames';
 import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
+import { ChevronUp, ChevronDown } from 'lucide-react';
+import { reorderJob } from '@/utils/jobs';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
   onlyActive?: boolean;
+  filter?: string;
   job_type?: string | null;
 }
 
-export default function JobsTable({ onlyActive = false, job_type = null }: JobsTableProps) {
+export default function JobsTable({ onlyActive = false, filter = '', job_type = null }: JobsTableProps) {
   const { jobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
 
+  const isAnyJobRunning = jobs.some(j => j.status === 'running');
+
   const refresh = () => {
     refreshJobs();
     refreshQueues();
+  };
+
+  const filteredJobs = useMemo(() => {
+    if (!filter) return jobs;
+
+    const escapeRegExp = (string: string) => {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    };
+
+    const matchesTerm = (job: Job, term: string) => {
+      term = term.trim();
+      if (!term) return true;
+
+      let modelName = '';
+      try {
+        const jobConfig: JobConfig = JSON.parse(job.job_config);
+        modelName = jobConfig?.config?.process?.[0]?.model?.name_or_path || '';
+      } catch {
+        // malformed config — search on name only
+      }
+      const searchableText = `${job.name} ${modelName}`.toLowerCase();
+
+      // Check if term is quoted
+      if (term.startsWith('"') && term.endsWith('"')) {
+        const exactTerm = term.slice(1, -1);
+        if (!exactTerm) return true;
+        const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escapeRegExp(exactTerm)}([^a-zA-Z0-9_]|$)`, 'i');
+        return regex.test(searchableText);
+      }
+
+      // Default partial match
+      return searchableText.includes(term.toLowerCase());
+    };
+
+    const splitByOperator = (input: string, operator: 'and' | 'or') => {
+      const regex = new RegExp(`\\s+${operator}\\s+`, 'gi');
+      const parts: string[] = [];
+      let lastIndex = 0;
+      let match;
+
+      while ((match = regex.exec(input)) !== null) {
+        const part = input.slice(lastIndex, match.index).trim();
+        const quoteCount = (part.match(/"/g) || []).length;
+        if (quoteCount % 2 === 0) {
+          parts.push(part);
+          lastIndex = regex.lastIndex;
+        }
+      }
+      parts.push(input.slice(lastIndex).trim());
+      return parts.filter(p => p !== '');
+    };
+
+    const orParts = splitByOperator(filter, 'or');
+    if (orParts.length > 1) {
+      return jobs.filter(job => {
+        return orParts.some(part => {
+          const andParts = splitByOperator(part, 'and');
+          if (andParts.length > 1) {
+            return andParts.every(subPart => matchesTerm(job, subPart));
+          }
+          return matchesTerm(job, part);
+        });
+      });
+    }
+
+    const andParts = splitByOperator(filter, 'and');
+    if (andParts.length > 1) {
+      return jobs.filter(job => {
+        return andParts.every(part => matchesTerm(job, part));
+      });
+    }
+
+    return jobs.filter(job => matchesTerm(job, filter));
+  }, [jobs, filter]);
+
+  const handleReorder = async (jobID: string, direction: 'up' | 'down') => {
+    try {
+      await reorderJob(jobID, direction);
+      refresh();
+    } catch (e) {
+      console.error('Failed to reorder job:', e);
+    }
   };
 
   const columns: TableColumn[] = [
@@ -32,10 +119,9 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       title: 'Name',
       key: 'name',
       render: row => {
-        let title = row.name;
-        // if (row.job_type === 'train') title = `Train: ${title}`;
+        let title: React.ReactNode = row.name;
         if (row.job_type === 'caption') {
-          let splits = row.job_ref.split(/[/\\]/);
+          let splits = (row.job_ref || '').split(/[/\\]/);
           const datasetPath = `${splits[splits.length - 1]}`;
           title = (
             <>
@@ -44,12 +130,32 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
           );
         }
         return (
-          <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
-            {['running', 'stopping'].includes(row.status) ? (
-              <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
-            ) : null}
-            {title}
-          </Link>
+          <div className="flex items-center">
+            {row.status === 'queued' && (
+              <div className="flex flex-col mr-3 text-gray-500">
+                <button
+                  onClick={() => handleReorder(row.id, 'up')}
+                  className="hover:text-white transition-colors"
+                  title="Move Up"
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <button
+                  onClick={() => handleReorder(row.id, 'down')}
+                  className="hover:text-white transition-colors"
+                  title="Move Down"
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
+            )}
+            <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+              {['running', 'stopping'].includes(row.status) ? (
+                <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
+              ) : null}
+              {title}
+            </Link>
+          </div>
         );
       },
     },
@@ -57,11 +163,16 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       title: 'Steps',
       key: 'steps',
       render: row => {
-        const jobConfig: JobConfig = JSON.parse(row.job_config);
         if (row.job_type !== 'train') {
           return <></>;
         }
-        const totalSteps = jobConfig.config.process[0].train?.steps;
+        let totalSteps = 0;
+        try {
+          const jobConfig: JobConfig = JSON.parse(row.job_config);
+          totalSteps = jobConfig?.config?.process?.[0]?.train?.steps ?? 0;
+        } catch {
+          // malformed config
+        }
 
         return (
           <div>
@@ -104,20 +215,27 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       key: 'actions',
       className: 'text-right',
       render: row => {
-        return <JobActionBar job={row} onRefresh={refreshJobs} autoStartQueue={false} />;
+        return (
+          <JobActionBar
+            job={row}
+            onRefresh={refreshJobs}
+            autoStartQueue={false}
+            isAnyJobRunning={isAnyJobRunning}
+          />
+        );
       },
     },
   ];
 
   const jobsDict = useMemo(() => {
     if (!isGPUInfoLoaded) return {};
-    if (jobs.length === 0) return {};
+    if (filteredJobs.length === 0) return {};
     let jd: { [key: string]: { name: string; jobs: Job[] } } = {};
     gpuList.forEach(gpu => {
       jd[`${gpu.index}`] = { name: `${gpu.name}`, jobs: [] };
     });
     jd['Idle'] = { name: 'Idle', jobs: [] };
-    jobs.forEach(job => {
+    filteredJobs.forEach(job => {
       const gpu = gpuList.find(gpu => job.gpu_ids?.split(',').includes(gpu.index.toString())) as GpuInfo;
       const key = `${gpu?.index || '0'}`;
       if (['queued', 'running', 'stopping'].includes(job.status) && key in jd) {
@@ -142,7 +260,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       }
     });
     return jd;
-  }, [jobs, queues, isGPUInfoLoaded]);
+  }, [filteredJobs, queues, isGPUInfoLoaded]);
 
   let isLoading = status === 'loading' || queueStatus === 'loading' || !isGPUInfoLoaded;
 

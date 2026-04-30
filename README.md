@@ -242,7 +242,23 @@ You can add the word `[trigger]` in the caption file and if you have `trigger_wo
 replaced. 
 
 Images are never upscaled but they are downscaled and placed in buckets for batching. **You do not need to crop/resize your images**.
-The loader will automatically resize them and can handle varying aspect ratios. 
+The loader will automatically resize them and can handle varying aspect ratios.
+
+### Control / Paired Datasets
+
+For instruction-edit models (e.g. Qwen-Image-Edit, FLUX.1-Kontext) you can supply a second folder of
+control/source images via `control_path` in your dataset config. The control folder must contain files
+with the **same base names** as the target images (any supported extension: jpg, jpeg, png, webp).
+
+```yaml
+datasets:
+  - folder_path: /path/to/target_images
+    control_path: /path/to/control_images
+    caption_ext: txt
+```
+
+If any control image is missing, training will fail immediately with a clear error listing the
+missing files — before any model weights are loaded.
 
 
 ## Training Specific Layers
@@ -536,4 +552,82 @@ _Last updated: 2026-03-31 18:10 UTC_
 </p>
 
 ---
+
+## Changelog
+
+### mcb2 branch
+
+#### 2026-04-13 — Fix UI job stop misclassified as error, causing re-queue loop
+
+Jobs stopped via the UI queue (pause queue, stop button) were incorrectly
+recorded as `error` status in the database. This happened because
+`UITrainer.maybe_stop()` raised a generic `Exception`, which `run.py`'s
+catch-all `except Exception` handler treated as a real failure and overwrote
+the `stopped`/`queued` status that `maybe_stop()` had already written to the DB.
+The stale `return_to_queue=1` flag left behind caused the job to re-queue and
+immediately stop itself every time the queue was restarted.
+
+**Files changed:**
+- `toolkit/ui_utils.py` — added `JobStoppedException(BaseException)` so it
+  bypasses the generic exception handler
+- `extensions_built_in/sd_trainer/UITrainer.py` — `maybe_stop()` now raises
+  `JobStoppedException` instead of `Exception`
+- `run.py` — added `except JobStoppedException` handler that calls `on_error()`
+  for cleanup but does not overwrite the DB status
+- `ui/cron/actions/startJob.ts` — clears `return_to_queue` when a job
+  transitions to `running` so a stale flag cannot cause an immediate self-stop
+
+---
+
+#### Training
+
+- **AdvancedPromptEmbeds** — new embedding class compatible with previous
+  `PromptEmbeds` but more streamlined and supports a wider range of model
+  embedding paradigms
+- **Optimizer archiving** — option to archive optimizer state on save to save
+  disk space
+- **Training seed via env var** — set `SEED` environment variable for
+  reproducible training runs
+- **Fix step reset on pause** — `DiffusionTrainer.on_error` now conditionally
+  preserves `step_num` on intentional stops, matching `UITrainer` behaviour
+- **Fix compile model not compiling** — `compile: true` in config now actually
+  compiles the model; compilation is deferred until after accelerate setup
+
+#### UI — Queue & Job Management
+
+- **Job save/sample on demand** — trigger a save or sample generation at any
+  point during a running job without stopping it
+- **Edit sample config while running** — change prompts, resolution, etc. for
+  a job that is actively training; changes take effect at the next sample
+- **Queue reordering** — drag jobs to reorder the training queue
+- **Queue filter textbox** — filter the jobs list by name using a text search box
+- **Save snapshot on pause** — pressing the pause/stop button saves a snapshot
+  before stopping the job
+- **On-demand sampling when idle** — generate samples for a completed job when
+  no other jobs are running
+- **Fix progress bar reappearing after pause** — progress no longer restarts
+  after a job is paused
+- **Fix status on pause** — job status correctly reflects paused state
+- **Cannot edit sampling while sampling** — UI locks sample config during
+  active sample generation to prevent conflicts
+
+#### Training — Dataset & Dataloader
+
+- **Early control image validation** — when `control_path` is configured, all
+  control images are verified to exist before the model is loaded. A clear error
+  listing every missing file is raised immediately, avoiding a long wait for model
+  weights to load before discovering a misconfigured path.
+
+#### UI — Dataset Management
+
+- **Find & replace captions** — bulk find-and-replace across all captions in
+  a dataset, with a replace-all button
+- **Duplicate dataset** — copy an existing dataset from the UI
+- **Caption filtering** — filter dataset images by caption content
+- **Abort off-screen caption requests** — caption API calls are cancelled when
+  their image card scrolls out of view, reducing server load
+- **Fix auto-updating captions** — resolved issue where captions were not
+  refreshing correctly after batch captioning
+- **Reworked drag/upload/select model** — single unified model for dragging,
+  uploading, and selecting dataset images
 

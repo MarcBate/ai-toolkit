@@ -304,6 +304,7 @@ def quantize_model(
             f" - quantizing {len(all_blocks)} transformer blocks"
         )
         for block in tqdm(all_blocks):
+            base_model.maybe_stop()
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)

@@ -38,6 +38,7 @@ import argparse
 from toolkit.job import get_job
 from toolkit.accelerator import get_accelerator
 from toolkit.print import print_acc, setup_log_to_file
+from toolkit.ui_utils import update_job_status_to_ui, JobStoppedException
 
 accelerator = get_accelerator()
 
@@ -102,18 +103,34 @@ def main():
     jobs_completed = 0
     jobs_failed = 0
 
+    is_ui = os.getenv("IS_AI_TOOLKIT_UI", "0") == "1"
+    job_id = os.getenv("AITK_JOB_ID", None)
+
     if accelerator.is_main_process:
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
         try:
-            job = get_job(config_file, args.name)
+            sample_only = os.environ.get("AITK_SAMPLE_ONLY", "0") == "1"
+            job = get_job(config_file, args.name, sample_only=sample_only)
             job.run()
             job.cleanup()
             jobs_completed += 1
+        except JobStoppedException as e:
+            # Intentional stop or return-to-queue — do NOT overwrite the status
+            # that UITrainer.maybe_stop() already wrote to the DB.
+            print_acc(f"Job intentionally stopped: {e}")
+            try:
+                job.process[0].on_error(e)
+            except Exception as e2:
+                print_acc(f"Error running on_error: {e2}")
+            if is_ui:
+                sys.exit(0)
         except Exception as e:
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
+            if is_ui and job_id:
+                update_job_status_to_ui(job_id, 'error', f"Error: {str(e)}")
             try:
                 job.process[0].on_error(e)
             except Exception as e2:
@@ -121,14 +138,21 @@ def main():
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt:
+            print_acc(f"Job stopped by user")
+            if is_ui and job_id:
+                update_job_status_to_ui(job_id, 'stopped', "Job stopped by user")
             try:
-                job.process[0].on_error(e)
+                job.process[0].on_error(KeyboardInterrupt())
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
-                raise e
+                # Exit cleanly on keyboard interrupt when running from UI
+                if is_ui:
+                    sys.exit(0)
+                else:
+                    raise KeyboardInterrupt
 
 
 if __name__ == '__main__':

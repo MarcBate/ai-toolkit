@@ -30,6 +30,8 @@ model Job {
   updated_at      DateTime @updatedAt
   status          String   @default("stopped")
   stop            Boolean  @default(false)
+  save            Boolean  @default(false)
+  sample          Boolean  @default(false)
   return_to_queue Boolean  @default(false) // same as stop, but will be set to 'queued' when stopped
   step            Int      @default(0)
   info            String   @default("")

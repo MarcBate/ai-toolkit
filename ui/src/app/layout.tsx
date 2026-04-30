@@ -4,9 +4,11 @@ import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import ConfirmModal from '@/components/ConfirmModal';
+import SaveSnapshotModal from '@/components/SaveSnapshotModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import os from 'os';
 
 export const dynamic = 'force-dynamic';
@@ -46,12 +48,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex h-screen bg-gray-950">
               <Sidebar />
               <main className="flex-1 overflow-auto bg-gray-950 text-gray-100 relative">
-                <Suspense>{children}</Suspense>
+                <ErrorBoundary>
+                  <Suspense>{children}</Suspense>
+                </ErrorBoundary>
               </main>
             </div>
           </AuthWrapper>
         </ThemeProvider>
         <ConfirmModal />
+        <SaveSnapshotModal />
         <DocModal />
       </body>
     </html>

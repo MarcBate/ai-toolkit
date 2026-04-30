@@ -19,8 +19,8 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
   };
 
   return (
-    <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
-      <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
+    <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden hover:shadow-2xl transition-all duration-300 border border-gray-800 flex flex-col max-h-[400px]">
+      <div className="bg-gray-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center space-x-2">
           <Brain className="w-5 h-5 text-purple-600 dark:text-purple-400" />
           <h2 className="font-semibold text-gray-100">Checkpoints</h2>
@@ -28,7 +28,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         </div>
       </div>
 
-      <div className="p-2">
+      <div className="p-2 overflow-y-auto flex-grow scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
         {status === 'loading' && (
           <div className="flex items-center justify-center py-4">
             <Loader2 className="w-5 h-5 text-gray-400 animate-spin" />
@@ -45,7 +45,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         {['success', 'refreshing'].includes(status) && (
           <div className="space-y-1">
             {files.map((file, index) => {
-              const fileName = file.path.split('/').pop() || '';
+              const fileName = (file.path || '').split(/[/\\]/).pop() || '';
               const nameWithoutExt = fileName.replace('.safetensors', '');
               return (
                 <a
