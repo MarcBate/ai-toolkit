@@ -349,6 +349,7 @@ class UITrainer(SDTrainer):
         super().hook_after_sd_init_before_load()
         self.maybe_stop()
         self.sd.add_status_update_hook(self.status_update_hook_func)
+        self.sd.add_maybe_stop_hook(self.maybe_stop)
 
     def sample_step_hook(self, img_num, total_imgs):
         super().sample_step_hook(img_num, total_imgs)

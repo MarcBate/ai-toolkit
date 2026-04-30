@@ -133,7 +133,7 @@ class AceStepCaptioner(BaseCaptioner):
         self.model2 = None
         self.processor2 = None
 
-        if self.caption_config.fixed_caption is not None:
+        if self.caption_config.fixed_caption is None:
             # load captioner model
             self.print_and_status_update("Loading captioner model")
             self.model2 = Qwen2_5OmniForConditionalGeneration.from_pretrained(

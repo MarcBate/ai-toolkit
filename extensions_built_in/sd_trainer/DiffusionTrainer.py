@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from toolkit.config_modules import SampleConfig
+from toolkit.ui_utils import JobStoppedException
 from typing import Literal, Optional
 import threading
 import time
@@ -203,12 +204,12 @@ class DiffusionTrainer(SDTrainer):
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
-            raise Exception("Job stopped")
+            raise JobStoppedException("Job stopped")
         if self.should_return_to_queue():
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
-            raise Exception("Job returning to queue")
+            raise JobStoppedException("Job returning to queue")
 
     def maybe_save(self):
         if not self.is_ui_trainer:
@@ -404,6 +405,7 @@ class DiffusionTrainer(SDTrainer):
         if self.is_ui_trainer:
             self.maybe_stop()
             self.sd.add_status_update_hook(self.status_update_hook_func)
+            self.sd.add_maybe_stop_hook(self.maybe_stop)
 
     def sample_step_hook(self, img_num, total_imgs):
         super().sample_step_hook(img_num, total_imgs)

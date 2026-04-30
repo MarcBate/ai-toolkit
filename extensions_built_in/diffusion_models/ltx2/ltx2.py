@@ -296,6 +296,8 @@ class LTX2Model(BaseModel):
             quantize_model(self, transformer)
             flush()
 
+        self.maybe_stop()
+
         if (
             self.model_config.layer_offloading
             and self.model_config.layer_offloading_transformer_percent > 0
@@ -425,6 +427,8 @@ class LTX2Model(BaseModel):
         text_encoder.model.vision_tower = None
         flush()
         
+        self.maybe_stop()
+
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Text Encoder")
             quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))

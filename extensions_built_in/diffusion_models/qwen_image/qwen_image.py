@@ -125,6 +125,8 @@ class QwenImageModel(BaseModel):
             quantize_model(self, transformer)
             flush()
 
+        self.maybe_stop()
+
         if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
             MemoryManager.attach(
                 transformer,
@@ -160,6 +162,8 @@ class QwenImageModel(BaseModel):
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
+
+        self.maybe_stop()
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Text Encoder")
