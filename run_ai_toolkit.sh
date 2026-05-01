@@ -136,6 +136,7 @@ UPDATED="0"
 
 if [[ "${DO_GIT_PULL}" == "1" ]]; then
   echo "---- Checking for updates from origin/main..."
+  git config pull.rebase false
   git fetch origin main
 
   LOCAL_HASH="$(git rev-parse HEAD)"
@@ -143,7 +144,7 @@ if [[ "${DO_GIT_PULL}" == "1" ]]; then
   BASE_HASH="$(git merge-base HEAD origin/main)"
 
   if [[ "${LOCAL_HASH}" == "${REMOTE_HASH}" ]]; then
-    echo "---- Already up to date with origin/main."
+    echo "---- Already up to date."
   elif [[ "${BASE_HASH}" == "${REMOTE_HASH}" ]]; then
     echo "---- Your local branch is ahead of origin/main. No updates to pull."
   else
@@ -153,26 +154,25 @@ if [[ "${DO_GIT_PULL}" == "1" ]]; then
     echo "---- ${NEW_COUNT} update(s) available from origin/main:"
     git log --oneline HEAD..origin/main
     echo
-    read -r -p "Fetch and merge updates now? [y/N] " _answer
+    read -r -p "Pull updates now? [y/N] " _answer
     case "${_answer}" in
       [Yy]|[Yy][Ee][Ss])
-        echo "---- Merging updates from origin/main..."
-        if git merge origin/main -m "Auto-merge from origin/main"; then
-          echo "---- Successfully merged updates."
+        echo "---- Pulling updates..."
+        if git pull origin main; then
+          echo "---- Successfully pulled updates."
           UPDATED="1"
         else
-          echo "---- Merge conflict detected! Please resolve manually."
-          git merge --abort 2>/dev/null || true
+          echo "---- Pull failed! Please resolve manually."
           exit 1
         fi
         ;;
       *)
-        echo "---- Skipping merge. Continuing with current code."
+        echo "---- Skipping pull. Continuing with current code."
         ;;
     esac
   fi
 else
-  echo "---- Skipping git fetch/pull"
+  echo "---- Skipping git pull"
 fi
 
 echo
@@ -246,18 +246,8 @@ mkdir -p "$(dirname "${LOG_FILE}")"
 
 cd "${UI_DIR}"
 
-# If the repo was updated (or no prior build exists) run the full build+start.
-# Otherwise skip the rebuild and go straight to start — saves 3+ minutes.
-if [[ "${UPDATED}" == "1" || ! -d "${UI_DIR}/.next" ]]; then
-  echo "---- Running full build (repo updated or no prior build found)..."
-  UI_CMD="npm run build_and_start"
-else
-  echo "---- Skipping rebuild (no upstream changes). Running npm run start..."
-  UI_CMD="npm run start"
-fi
-
 (
-  ${UI_CMD} 2>&1 | tee -a "${LOG_FILE}"
+  npm run build_and_start 2>&1 | tee -a "${LOG_FILE}"
 ) &
 UI_PID=$!
 

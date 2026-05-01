@@ -19,7 +19,7 @@ import albumentations as A
 from toolkit import image_utils
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin, TextEmbeddingCachingMixin
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin, TextEmbeddingCachingMixin, read_text_file
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
@@ -307,17 +307,16 @@ class PairedImageDataset(Dataset):
             prompt_path = path_no_ext + '.txt'
 
         if os.path.exists(prompt_path):
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-                # remove any newlines
-                prompt = prompt.replace('\n', ', ')
-                # remove new lines for all operating systems
-                prompt = prompt.replace('\r', ', ')
-                prompt_split = prompt.split(',')
-                # remove empty strings
-                prompt_split = [p.strip() for p in prompt_split if p.strip()]
-                # join back together
-                prompt = ', '.join(prompt_split)
+            prompt = read_text_file(prompt_path)
+            # remove any newlines
+            prompt = prompt.replace('\n', ', ')
+            # remove new lines for all operating systems
+            prompt = prompt.replace('\r', ', ')
+            prompt_split = prompt.split(',')
+            # remove empty strings
+            prompt_split = [p.strip() for p in prompt_split if p.strip()]
+            # join back together
+            prompt = ', '.join(prompt_split)
         else:
             prompt = self.default_prompt
         return prompt

@@ -106,6 +106,16 @@ def clean_caption(caption):
     # caption = ', '.join(caption_split)
     return caption
 
+def read_text_file(path: str) -> str:
+    """Read a text file, falling back to cp1252 when UTF-8 decoding fails."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except UnicodeDecodeError:
+        with open(path, 'r', encoding='cp1252') as f:
+            return f.read()
+
+
 def waveform_to_stereo(waveform):
     c = waveform.shape[0]
     if c == 2:
@@ -148,23 +158,16 @@ class CaptionMixin:
         default_prompt_path_with_ext = os.path.join(os.path.dirname(img_path), 'default' + ext)
 
         if os.path.exists(prompt_path):
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-                # check if is json
-                if prompt_path.endswith('.json'):
-                    prompt = json.loads(prompt)
-                    if 'caption' in prompt:
-                        prompt = prompt['caption']
-
-                prompt = clean_caption(prompt)
+            prompt = read_text_file(prompt_path)
+            if prompt_path.endswith('.json'):
+                prompt = json.loads(prompt)
+                if 'caption' in prompt:
+                    prompt = prompt['caption']
+            prompt = clean_caption(prompt)
         elif os.path.exists(default_prompt_path_with_ext):
-            with open(default_prompt_path, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-                prompt = clean_caption(prompt)
+            prompt = clean_caption(read_text_file(default_prompt_path_with_ext))
         elif os.path.exists(default_prompt_path):
-            with open(default_prompt_path, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-                prompt = clean_caption(prompt)
+            prompt = clean_caption(read_text_file(default_prompt_path))
         else:
             prompt = ''
             # get default_prompt if it exists on the class instance
@@ -345,31 +348,30 @@ class CaptionProcessingDTOMixin:
             short_caption = None
 
             if os.path.exists(prompt_path):
-                with open(prompt_path, 'r', encoding='utf-8') as f:
-                    prompt = f.read()
-                    short_caption = None
-                    if prompt_path.endswith('.json'):
-                        # replace any line endings with commas for \n \r \r\n
-                        prompt = prompt.replace('\r\n', ' ')
-                        prompt = prompt.replace('\n', ' ')
-                        prompt = prompt.replace('\r', ' ')
+                prompt = read_text_file(prompt_path)
+                short_caption = None
+                if prompt_path.endswith('.json'):
+                    # replace any line endings with commas for \n \r \r\n
+                    prompt = prompt.replace('\r\n', ' ')
+                    prompt = prompt.replace('\n', ' ')
+                    prompt = prompt.replace('\r', ' ')
 
-                        prompt_json = json.loads(prompt)
-                        if 'caption' in prompt_json:
-                            prompt = prompt_json['caption']
-                        if 'caption_short' in prompt_json:
-                            short_caption = prompt_json['caption_short']
-                            if self.dataset_config.use_short_captions:
-                                prompt = short_caption
-                        if 'extra_values' in prompt_json:
-                            self.extra_values = prompt_json['extra_values']
+                    prompt_json = json.loads(prompt)
+                    if 'caption' in prompt_json:
+                        prompt = prompt_json['caption']
+                    if 'caption_short' in prompt_json:
+                        short_caption = prompt_json['caption_short']
+                        if self.dataset_config.use_short_captions:
+                            prompt = short_caption
+                    if 'extra_values' in prompt_json:
+                        self.extra_values = prompt_json['extra_values']
 
-                    prompt = clean_caption(prompt)
-                    if short_caption is not None:
-                        short_caption = clean_caption(short_caption)
-                    
-                    if prompt.strip() == '' and self.dataset_config.default_caption is not None:
-                        prompt = self.dataset_config.default_caption
+                prompt = clean_caption(prompt)
+                if short_caption is not None:
+                    short_caption = clean_caption(short_caption)
+
+                if prompt.strip() == '' and self.dataset_config.default_caption is not None:
+                    prompt = self.dataset_config.default_caption
             else:
                 prompt = ''
                 if self.dataset_config.default_caption is not None:
@@ -1641,8 +1643,7 @@ class PoiFileItemDTOMixin:
             caption_path = file_path_no_ext + '.json'
             if not os.path.exists(caption_path):
                 raise Exception(f"Error: caption file not found for poi: {caption_path}")
-            with open(caption_path, 'r', encoding='utf-8') as f:
-                json_data = json.load(f)
+            json_data = json.loads(read_text_file(caption_path))
             if 'poi' not in json_data:
                 print_acc(f"Warning: poi not found in caption file: {caption_path}")
             if self.poi not in json_data['poi']:
