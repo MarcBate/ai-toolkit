@@ -167,9 +167,7 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   if (job.status === 'completed' && (jobConfig.config.process[0].train?.steps || 0) > job.step && !isStopping) {
     canStart = true;
   }
-  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue };
-  if (job.job_type !== 'train') {
-    // for non-train jobs, allow editing unless it's currently running
+  if (!['train', 'caption'].includes(job.job_type)) {
     canEdit = false;
   }
   return { canDelete, canEdit, canEditSample, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping };
