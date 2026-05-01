@@ -10,6 +10,7 @@ import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import os from 'os';
+import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ConfirmModal />
         <SaveSnapshotModal />
         <DocModal />
+        <CaptionDatasetModal />
       </body>
     </html>
   );
