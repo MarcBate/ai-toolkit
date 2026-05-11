@@ -18,6 +18,7 @@ interface TableProps {
   isLoading: boolean;
   theadClassName?: string;
   onRefresh: () => void;
+  rowProps?: (row: TableRow, index: number) => React.HTMLAttributes<HTMLTableRowElement>;
 }
 
 export default function UniversalTable({
@@ -26,6 +27,7 @@ export default function UniversalTable({
   isLoading,
   theadClassName = 'text-gray-400',
   onRefresh = () => {},
+  rowProps,
 }: TableProps) {
   return (
     <div className="w-full bg-gray-900 rounded-md shadow-md">
@@ -57,11 +59,16 @@ export default function UniversalTable({
             </thead>
             <tbody>
               {rows?.map((row, index) => {
-                // Style for alternating rows
                 const rowClass = index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800';
+                const extra = rowProps ? rowProps(row, index) : {};
+                const { className: extraClass, ...restExtra } = extra;
 
                 return (
-                  <tr key={index} className={`${rowClass} border-b border-gray-700 hover:bg-gray-700`}>
+                  <tr
+                    key={index}
+                    className={classNames(rowClass, 'border-b border-gray-700 hover:bg-gray-700', extraClass)}
+                    {...restExtra}
+                  >
                     {columns.map(column => (
                       <td key={column.key} className={classNames('px-3 py-2', column.className)}>
                         {column.render ? column.render(row) : row[column.key]}

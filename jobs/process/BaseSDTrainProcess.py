@@ -297,6 +297,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             output_path = os.path.join(sample_folder, filename)
 
             prompt = sample_config.prompts[i]
+            if not prompt:
+                print(f"Warning: sample {i} has an empty prompt, skipping")
+                continue
 
             # add embedding if there is one
             # note: diffusers will automatically expand the trigger to the number of added tokens
@@ -2411,6 +2414,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # print above the progress bar
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
+                        if getattr(self, 'is_ui_trainer', False):
+                            self.reload_sample_config()
                         self.sample(self.step_num)
                         if self.train_config.unload_text_encoder:
                             # make sure the text encoder is unloaded

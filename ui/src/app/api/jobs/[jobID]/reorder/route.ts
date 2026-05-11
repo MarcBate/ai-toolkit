@@ -5,10 +5,10 @@ const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest, { params }: { params: { jobID: string } }) {
   const { jobID } = await params;
-  const { direction } = await request.json();
+  const { direction, targetIndex } = await request.json();
 
-  if (!['up', 'down'].includes(direction)) {
-    return NextResponse.json({ error: 'Invalid direction' }, { status: 400 });
+  if (targetIndex === undefined && !['up', 'down'].includes(direction)) {
+    return NextResponse.json({ error: 'Invalid direction or targetIndex' }, { status: 400 });
   }
 
   const job = await prisma.job.findUnique({
@@ -35,6 +35,20 @@ export async function POST(request: NextRequest, { params }: { params: { jobID: 
     return NextResponse.json({ error: 'Job not found in active queue' }, { status: 404 });
   }
 
+  if (targetIndex !== undefined) {
+    const clamped = Math.max(0, Math.min(targetIndex, queueJobs.length - 1));
+    if (clamped !== currentIndex) {
+      const reordered = [...queueJobs];
+      const [removed] = reordered.splice(currentIndex, 1);
+      reordered.splice(clamped, 0, removed);
+      await prisma.$transaction(
+        reordered.map((j, idx) => prisma.job.update({ where: { id: j.id }, data: { queue_position: idx } }))
+      );
+      console.log(`Job ${job.id} moved to index ${clamped}`);
+    }
+    return NextResponse.json({ success: true });
+  }
+
   let swapIndex = -1;
   if (direction === 'up' && currentIndex > 0) {
     swapIndex = currentIndex - 1;
@@ -44,21 +58,11 @@ export async function POST(request: NextRequest, { params }: { params: { jobID: 
 
   if (swapIndex !== -1) {
     const neighbor = queueJobs[swapIndex];
-    
-    // Swap positions
     const tempPos = job.queue_position;
-    
     await prisma.$transaction([
-      prisma.job.update({
-        where: { id: job.id },
-        data: { queue_position: neighbor.queue_position },
-      }),
-      prisma.job.update({
-        where: { id: neighbor.id },
-        data: { queue_position: tempPos },
-      }),
+      prisma.job.update({ where: { id: job.id }, data: { queue_position: neighbor.queue_position } }),
+      prisma.job.update({ where: { id: neighbor.id }, data: { queue_position: tempPos } }),
     ]);
-    
     console.log(`Job ${job.id} moved ${direction}`);
   }
 

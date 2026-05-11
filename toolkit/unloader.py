@@ -8,12 +8,13 @@ if TYPE_CHECKING:
 
 
 class FakeTextEncoder(torch.nn.Module):
-    def __init__(self, device, dtype):
+    def __init__(self, device, dtype, config=None):
         super().__init__()
         # register a dummy parameter to avoid errors in some cases
         self.dummy_param = torch.nn.Parameter(torch.zeros(1))
         self._device = device
         self._dtype = dtype
+        self.config = config
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError(
@@ -45,20 +46,24 @@ def unload_text_encoder(model: "BaseModel"):
 
             # the pipeline stores text encoders like text_encoder, text_encoder_2, text_encoder_3, etc.
             if hasattr(pipe, "text_encoder"):
-                te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
+                original_config = getattr(pipe.text_encoder, 'config', None)
+                te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype, config=original_config)
                 text_encoder_list.append(te)
                 pipe.text_encoder.to('cpu')
                 pipe.text_encoder = te
 
             i = 2
             while hasattr(pipe, f"text_encoder_{i}"):
-                te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
+                original_te = getattr(pipe, f"text_encoder_{i}")
+                original_config = getattr(original_te, 'config', None)
+                te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype, config=original_config)
                 text_encoder_list.append(te)
                 setattr(pipe, f"text_encoder_{i}", te)
                 i += 1
             model.text_encoder = text_encoder_list
         else:
             # only has a single text encoder
-            model.text_encoder = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
+            original_config = getattr(model.text_encoder, 'config', None)
+            model.text_encoder = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype, config=original_config)
 
     flush()

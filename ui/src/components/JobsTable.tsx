@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import useJobsList from '@/hooks/useJobsList';
 import Link from 'next/link';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -10,8 +10,8 @@ import classNames from 'classnames';
 import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
-import { ChevronUp, ChevronDown } from 'lucide-react';
-import { reorderJob } from '@/utils/jobs';
+import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
+import { reorderJob, reorderJobToIndex } from '@/utils/jobs';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -30,6 +30,45 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   const refresh = () => {
     refreshJobs();
     refreshQueues();
+  };
+
+  const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
+  const [dragOverJobId, setDragOverJobId] = useState<string | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, jobId: string) => {
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedJobId(jobId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, jobId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverJobId !== jobId) setDragOverJobId(jobId);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetJobId: string, queuedJobs: Job[]) => {
+    e.preventDefault();
+    if (!draggedJobId || draggedJobId === targetJobId) {
+      setDraggedJobId(null);
+      setDragOverJobId(null);
+      return;
+    }
+    const targetIndex = queuedJobs.findIndex(j => j.id === targetJobId);
+    if (targetIndex === -1) return;
+    try {
+      await reorderJobToIndex(draggedJobId, targetIndex);
+      refresh();
+    } catch (err) {
+      console.error('Failed to reorder job:', err);
+    } finally {
+      setDraggedJobId(null);
+      setDragOverJobId(null);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedJobId(null);
+    setDragOverJobId(null);
   };
 
   const filteredJobs = useMemo(() => {
@@ -132,22 +171,27 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
         return (
           <div className="flex items-center">
             {row.status === 'queued' && (
-              <div className="flex flex-col mr-3 text-gray-500">
-                <button
-                  onClick={() => handleReorder(row.id, 'up')}
-                  className="hover:text-white transition-colors"
-                  title="Move Up"
-                >
-                  <ChevronUp size={16} />
-                </button>
-                <button
-                  onClick={() => handleReorder(row.id, 'down')}
-                  className="hover:text-white transition-colors"
-                  title="Move Down"
-                >
-                  <ChevronDown size={16} />
-                </button>
-              </div>
+              <>
+                <div className="mr-1 text-gray-600 cursor-grab" title="Drag to reorder">
+                  <GripVertical size={16} />
+                </div>
+                <div className="flex flex-col mr-3 text-gray-500">
+                  <button
+                    onClick={() => handleReorder(row.id, 'up')}
+                    className="hover:text-white transition-colors"
+                    title="Move Up"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleReorder(row.id, 'down')}
+                    className="hover:text-white transition-colors"
+                    title="Move Down"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                </div>
+              </>
             )}
             <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
               {['running', 'stopping'].includes(row.status) ? (
@@ -253,6 +297,10 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
         });
       } else {
         jd[key].jobs.sort((a, b) => {
+          const aIsActive = ['running', 'stopping'].includes(a.status);
+          const bIsActive = ['running', 'stopping'].includes(b.status);
+          if (aIsActive && !bIsActive) return -1;
+          if (!aIsActive && bIsActive) return 1;
           if (a.queue_position === null) return 1;
           if (b.queue_position === null) return -1;
           return a.queue_position - b.queue_position;
@@ -327,6 +375,23 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
                     ? 'bg-green-700 dark:bg-green-950 text-white dark:text-gray-400'
                     : 'bg-red-700 dark:bg-red-950 text-white dark:text-gray-400'
                 }
+                rowProps={(row) => {
+                  if (row.status !== 'queued') return {};
+                  const queuedJobs = jobsDict[gpuKey].jobs.filter((j: Job) => j.status === 'queued');
+                  const isDragging = row.id === draggedJobId;
+                  const isDragOver = row.id === dragOverJobId && row.id !== draggedJobId;
+                  return {
+                    draggable: true,
+                    onDragStart: (e: React.DragEvent<HTMLTableRowElement>) => handleDragStart(e, row.id),
+                    onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => handleDragOver(e, row.id),
+                    onDrop: (e: React.DragEvent<HTMLTableRowElement>) => handleDrop(e, row.id, queuedJobs),
+                    onDragEnd: handleDragEnd,
+                    className: classNames(
+                      isDragging && 'opacity-40',
+                      isDragOver && 'border-t-2 border-blue-400',
+                    ),
+                  };
+                }}
               />
             </div>
           );

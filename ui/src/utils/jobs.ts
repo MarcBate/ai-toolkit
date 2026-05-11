@@ -114,6 +114,22 @@ export const markJobAsStopped = (jobID: string) => {
   });
 };
 
+export const reorderJobToIndex = (jobID: string, targetIndex: number) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .post(`/api/jobs/${jobID}/reorder`, { targetIndex })
+      .then(res => res.data)
+      .then(data => {
+        console.log(`Job ${jobID} reordered to index ${targetIndex}:`, data);
+        resolve();
+      })
+      .catch(error => {
+        console.error(`Error reordering job ${jobID} to index ${targetIndex}:`, error);
+        reject(error);
+      });
+  });
+};
+
 export const reorderJob = (jobID: string, direction: 'up' | 'down') => {
   return new Promise<void>((resolve, reject) => {
     apiClient
