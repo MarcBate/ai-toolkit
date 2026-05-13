@@ -1279,13 +1279,6 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
             </div>
-            <TextInput
-              label="Negative Prompt"
-              value={jobConfig.config.process[0].sample.neg ?? ''}
-              onChange={value => setJobConfig(value, 'config.process[0].sample.neg')}
-              placeholder="Negative prompt applied to all samples (optional)"
-              className="pt-4"
-            />
             <FormGroup label={`Sample Prompts (${jobConfig.config.process[0].sample.samples.length})`} className="pt-2">
               <div></div>
             </FormGroup>

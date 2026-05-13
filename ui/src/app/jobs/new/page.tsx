@@ -151,16 +151,6 @@ export default function TrainingForm() {
 
   const saveJob = async () => {
     if (status === 'saving') return;
-
-    if (sampleOnly) {
-      const samples = jobConfig?.config?.process?.[0]?.sample?.samples ?? [];
-      const emptyIdx = samples.findIndex((s: any) => !s.prompt || s.prompt.trim() === '');
-      if (emptyIdx !== -1) {
-        alert(`Prompt ${emptyIdx + 1} is empty. All prompts must have text before saving.`);
-        return;
-      }
-    }
-
     setStatus('saving');
 
     apiClient

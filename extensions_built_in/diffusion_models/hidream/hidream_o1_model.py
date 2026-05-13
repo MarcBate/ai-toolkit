@@ -361,11 +361,9 @@ class HidreamO1Model(BaseModel):
                 tokens = text_embeddings.text_embeds[b]
                 if tokens.dim() == 1:
                     tokens = tokens.unsqueeze(0)
-                # Token IDs must stay as long integers; guard against accidental float cast
-                tokens = tokens.to(device=device, dtype=torch.long)
                 per_sample.append(
                     self.pipeline.build_conditioning_sample(
-                        tokens,
+                        tokens.to(device),
                         h_pix,
                         w_pix,
                     )
