@@ -154,10 +154,16 @@ class AdvancedPromptEmbeds:
             raise ValueError("Must provide a path")
 
         data = {}
+        frozen_dtype_keys = []
         for key in loaded.keys():
             data[key] = loaded[key]
+            # Integer tensors are always indices/token IDs and must not be cast to float
+            if loaded[key].dtype in (torch.int64, torch.int32, torch.int16, torch.int8, torch.bool):
+                frozen_dtype_keys.append(key)
 
-        return cls(**data)
+        result = cls(**data)
+        result.frozen_dtype_keys = frozen_dtype_keys
+        return result
 
     @classmethod
     def concat_prompt_embeds(
