@@ -103,8 +103,8 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return 10;
   }, [job]);
 
-  const { sampleSlots, numSamples } = useMemo(() => {
-    const defaultRes = { sampleSlots: sampleImages as (string | null)[], numSamples: configNumSamples };
+  const { sampleSlots, numSamples, steps } = useMemo(() => {
+    const defaultRes = { sampleSlots: sampleImages as (string | null)[], numSamples: configNumSamples, steps: [] as number[] };
     if (sampleImages.length === 0) return defaultRes;
 
     // 1. Parse all images
@@ -137,7 +137,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
     if (validParsed.length === 0) return defaultRes;
 
-    // 2. Identify all unique steps
+    // 2. Identify all unique steps (sorted ascending)
     const steps = Array.from(new Set(validParsed.map(img => img.step))).sort((a, b) => a - b);
     const maxIdxInFiles = Math.max(...validParsed.map(img => img.promptIdx));
     const eNumSamples = Math.max(configNumSamples, maxIdxInFiles + 1);
@@ -152,7 +152,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
       }
     });
 
-    return { sampleSlots: slots, numSamples: eNumSamples };
+    return { sampleSlots: slots, numSamples: eNumSamples, steps };
   }, [sampleImages, configNumSamples]);
 
   const scrollToBottom = () => {
@@ -346,6 +346,9 @@ export default function SampleImages({ job }: SampleImagesProps) {
               const shouldPad = numSamples < MIN_COLS && groupSize < MIN_COLS;
               const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
 
+              const isFirstOfRow = idx % numSamples === 0;
+              const rowStepLabel = isFirstOfRow && steps.length > groupIndex ? steps[groupIndex] : undefined;
+
               return (
                 <div key={sample || `empty-${idx}`} className="contents">
                   {sample ? (
@@ -356,12 +359,28 @@ export default function SampleImages({ job }: SampleImagesProps) {
                       alt="Sample Image"
                       onClick={() => setSelectedSamplePath(sample)}
                       observerRoot={containerRef.current}
+                      stepLabel={rowStepLabel}
                     />
                   ) : (
                     <div className="flex flex-col">
                       <div className="relative w-full" style={{ paddingBottom: '100%' }}>
-                        <div className="absolute inset-0 rounded-t-lg shadow-md bg-gray-950 flex items-center justify-center border border-gray-800">
+                        <div
+                          className="absolute inset-0 rounded-t-lg shadow-md bg-gray-950 flex items-center justify-center border border-gray-800"
+                          style={{ containerType: 'size' }}
+                        >
                           <span className="text-[10px] text-gray-500 font-mono">NOT SAMPLED</span>
+                          {rowStepLabel !== undefined && (
+                            <div
+                              className="absolute top-0 left-0 z-10 text-white font-bold leading-none select-none pointer-events-none"
+                              style={{
+                                fontSize: '10cqmin',
+                                padding: '0.1em 0.15em',
+                                textShadow: '0 0 6px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,0.9)',
+                              }}
+                            >
+                              {rowStepLabel}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
