@@ -620,6 +620,9 @@ class ModelConfig:
         # mainly for decompression loras for distilled models
         self.assistant_lora_path = kwargs.get('assistant_lora_path', None)
         self.inference_lora_path = kwargs.get('inference_lora_path', None)
+        # LightX2V distillation LoRAs for WAN 2.2 sample generation (not applied during training)
+        self.lightx2v_high_noise_lora_path = kwargs.get('lightx2v_high_noise_lora_path', None)
+        self.lightx2v_low_noise_lora_path = kwargs.get('lightx2v_low_noise_lora_path', None)
         self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now

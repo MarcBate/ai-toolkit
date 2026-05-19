@@ -1345,25 +1345,13 @@ export default function SimpleJob({
                             ))}
                           </>
                         ) : (
-                          <>
-                            {modelArch?.hasMultiLinePrompts ? (
-                              <TextAreaInput
-                                label={`Prompt`}
-                                value={sample.prompt}
-                                onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
-                                placeholder="Enter prompt"
-                                required
-                              />
-                            ) : (
-                              <TextInput
-                                label={`Prompt`}
-                                value={sample.prompt}
-                                onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
-                                placeholder="Enter prompt"
-                                required
-                              />
-                            )}
-                          </>
+                          <TextAreaInput
+                            label={`Prompt`}
+                            value={sample.prompt}
+                            onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                            placeholder="Enter prompt"
+                            required
+                          />
                         )}
 
                         <div className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
@@ -1548,6 +1536,18 @@ export default function SimpleJob({
             >
               Add Prompt
             </button>
+            <TextAreaInput
+              label="Negative Prompt"
+              value={jobConfig.config.process[0].sample.neg || ''}
+              onChange={value => setJobConfig(value || false, 'config.process[0].sample.neg')}
+              placeholder="eg. blurry, low quality"
+              className="pt-2"
+            />
+            {jobConfig.config.process[0].sample.guidance_scale <= 1 && !!jobConfig.config.process[0].sample.neg && (
+              <p className="text-xs text-yellow-500 mt-1">
+                CFG = 1 — negative prompt will be ignored.
+              </p>
+            )}
           </Card>
         </div>
 

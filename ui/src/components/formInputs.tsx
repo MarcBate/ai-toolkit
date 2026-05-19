@@ -112,11 +112,12 @@ export interface TextAreaInputProps extends InputProps {
 }
 
 export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextAreaInputProps>((props: TextAreaInputProps, ref) => {
-  const { label, value, onChange, placeholder, required, disabled, rows = 4, className, docKey = null } = props;
+  const { label, value, onChange, placeholder, required, disabled, rows, className, docKey = null } = props;
   let { doc } = props;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
+  const autoGrow = rows === undefined;
   return (
     <div className={classNames(className)}>
       {label && (
@@ -140,6 +141,7 @@ export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextAreaInputProps>
         required={required}
         disabled={disabled}
         rows={rows}
+        style={autoGrow ? ({ fieldSizing: 'content', resize: 'none', overflow: 'hidden', minHeight: '2rem' } as React.CSSProperties) : undefined}
       />
     </div>
   );

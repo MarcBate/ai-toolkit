@@ -538,6 +538,81 @@ class Wan2214bModel(Wan21):
 
         return combined_dict
     
+    def _has_lightx2v_loras(self):
+        return (
+            self.model_config.lightx2v_high_noise_lora_path is not None
+            or self.model_config.lightx2v_low_noise_lora_path is not None
+        )
+
+    def _apply_lightx2v_loras(self, pipeline, high_only: bool = False, low_only: bool = False):
+        """Inject LightX2V distillation LoRAs into transformer_1 (high noise) and/or transformer_2 (low noise).
+
+        high_only: only apply the high-noise LoRA (for stage 1 of two-stage inference)
+        low_only:  only apply the low-noise LoRA (for stage 2 of two-stage inference)
+        """
+        import peft.tuners.lora.model as _peft_lora_model
+
+        # PEFT 0.18.x bug: dispatch_torchao calls TorchaoLoraLinear without the
+        # required get_apply_tensor_subclass kwarg.  Bypass it so PEFT falls back to
+        # the standard Linear LoRA handler, which works fine for inference-time
+        # (non-merged) adapters on quantized weights.
+        _orig_dispatch_torchao = _peft_lora_model.dispatch_torchao
+        _peft_lora_model.dispatch_torchao = lambda *args, **kwargs: None
+
+        def _move_lora_to_device(transformer, adapter_name, device):
+            for module in transformer.modules():
+                if hasattr(module, 'lora_A') and adapter_name in module.lora_A:
+                    module.lora_A[adapter_name].to(device)
+                    module.lora_B[adapter_name].to(device)
+
+        try:
+            high_path = self.model_config.lightx2v_high_noise_lora_path
+            low_path = self.model_config.lightx2v_low_noise_lora_path
+
+            if not low_only and high_path is not None:
+                if not os.path.exists(high_path):
+                    self.print_and_status_update(f"Warning: LightX2V high noise LoRA not found: {high_path}")
+                else:
+                    self.print_and_status_update("Applying LightX2V high noise LoRA to transformer 1")
+                    # pipeline.transformer already points to transformer_1
+                    pipeline.load_lora_weights(high_path, adapter_name="lightx2v_high")
+                    _move_lora_to_device(pipeline.transformer, "lightx2v_high", self.device_torch)
+
+            if not high_only and low_path is not None and pipeline.transformer_2 is not None:
+                if not os.path.exists(low_path):
+                    self.print_and_status_update(f"Warning: LightX2V low noise LoRA not found: {low_path}")
+                else:
+                    self.print_and_status_update("Applying LightX2V low noise LoRA to transformer 2")
+                    # Temporarily swap so load_lora_weights targets transformer_2
+                    orig_transformer = pipeline.transformer
+                    pipeline.transformer = pipeline.transformer_2
+                    try:
+                        pipeline.load_lora_weights(low_path, adapter_name="lightx2v_low")
+                        _move_lora_to_device(pipeline.transformer_2, "lightx2v_low", self.device_torch)
+                    finally:
+                        pipeline.transformer = orig_transformer
+        finally:
+            _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
+
+    def _remove_lightx2v_loras(self, pipeline):
+        """Remove LightX2V LoRA adapters from both transformers after sampling."""
+        high_path = self.model_config.lightx2v_high_noise_lora_path
+        low_path = self.model_config.lightx2v_low_noise_lora_path
+
+        def _delete_adapter_from_model(model, adapter_name):
+            for module in model.modules():
+                if hasattr(module, 'delete_adapter'):
+                    try:
+                        module.delete_adapter(adapter_name)
+                    except Exception:
+                        pass
+
+        if high_path is not None and os.path.exists(high_path):
+            _delete_adapter_from_model(pipeline.transformer, "lightx2v_high")
+
+        if low_path is not None and os.path.exists(low_path) and pipeline.transformer_2 is not None:
+            _delete_adapter_from_model(pipeline.transformer_2, "lightx2v_low")
+
     def generate_single_image(
         self,
         pipeline,
@@ -549,23 +624,31 @@ class Wan2214bModel(Wan21):
     ):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
-        # todo, figure out how to do video
-        output = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype),
-            negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype),
-            height=gen_config.height,
-            width=gen_config.width,
-            num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            num_frames=gen_config.num_frames,
-            generator=generator,
-            return_dict=False,
-            output_type="pil",
-            **extra
-        )[0]
+
+        has_lightx2v = self._has_lightx2v_loras()
+
+        if not has_lightx2v:
+            try:
+                output = pipeline(
+                    prompt_embeds=conditional_embeds.text_embeds.to(
+                        self.device_torch, dtype=self.torch_dtype),
+                    negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                        self.device_torch, dtype=self.torch_dtype),
+                    height=gen_config.height,
+                    width=gen_config.width,
+                    num_inference_steps=gen_config.num_inference_steps,
+                    guidance_scale=gen_config.guidance_scale,
+                    latents=gen_config.latents,
+                    num_frames=gen_config.num_frames,
+                    generator=generator,
+                    return_dict=False,
+                    output_type="pil",
+                    **extra
+                )[0]
+            finally:
+                pass
+        else:
+            output = self._lightx2v_generate(pipeline, gen_config, conditional_embeds, unconditional_embeds, generator, extra)
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
@@ -575,6 +658,86 @@ class Wan2214bModel(Wan21):
             # get just the first image
             img = batch_item[0]
         return img
+
+    def _lightx2v_generate(
+        self,
+        pipeline,
+        gen_config: GenerateImageConfig,
+        conditional_embeds: PromptEmbeds,
+        unconditional_embeds: PromptEmbeds,
+        generator: torch.Generator,
+        extra: dict,
+    ):
+        """Two-stage LightX2V distillation inference.
+
+        Stage 1: high-noise model (transformer_1 + high LoRA) for first half of steps.
+        Stage 2: low-noise model (transformer_2 + low LoRA) for second half of steps,
+                 starting from stage 1's output latent.
+
+        Text encoder is NOT reloaded — pre-computed embeddings from the training cache
+        are used directly.
+        """
+        num_steps = gen_config.num_inference_steps
+        mid_step = num_steps // 2
+
+        cond_embeds = conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype)
+        uncond_embeds = unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype)
+
+        common_kwargs = dict(
+            prompt_embeds=cond_embeds,
+            negative_prompt_embeds=uncond_embeds,
+            height=gen_config.height,
+            width=gen_config.width,
+            num_frames=gen_config.num_frames,
+            num_inference_steps=num_steps,
+            guidance_scale=gen_config.guidance_scale,
+            generator=generator,
+            return_dict=False,
+            **extra
+        )
+
+        # Disable boundary-ratio transformer switching so each stage uses only its own
+        # transformer rather than the pipeline routing by timestep threshold.
+        orig_boundary_ratio = pipeline.config.boundary_ratio
+        pipeline.register_to_config(boundary_ratio=None)
+
+        try:
+            # Stage 1: high-noise model (transformer_1) with high LoRA
+            self._apply_lightx2v_loras(pipeline, high_only=True)
+            try:
+                intermediate_latents = pipeline(
+                    **common_kwargs,
+                    latents=gen_config.latents,
+                    output_type="latent",
+                    denoising_end_step=mid_step,
+                )[0]
+            finally:
+                self._remove_lightx2v_loras(pipeline)
+
+            # Stage 2: low-noise model (transformer_2) with low LoRA.
+            # Apply low LoRA to transformer_2, then swap pipeline.transformer so the
+            # pipeline's denoising loop uses transformer_2 (boundary_ratio is None so it
+            # always uses self.transformer, whichever one is set).
+            self._apply_lightx2v_loras(pipeline, low_only=True)
+            orig_transformer = pipeline.transformer  # = transformer_1
+            if self.model_config.low_vram:
+                # Free GPU memory before loading the low-noise transformer
+                orig_transformer.to("cpu")
+            pipeline.transformer = pipeline.transformer_2
+            try:
+                output = pipeline(
+                    **common_kwargs,
+                    latents=intermediate_latents,
+                    output_type="pil",
+                    denoising_start_step=mid_step,
+                )[0]
+            finally:
+                pipeline.transformer = orig_transformer
+                self._remove_lightx2v_loras(pipeline)
+        finally:
+            pipeline.register_to_config(boundary_ratio=orig_boundary_ratio)
+
+        return output
 
     def get_model_to_train(self):
         # todo, loras wont load right unless they have the transformer_1 or transformer_2 in the key.

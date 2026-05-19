@@ -69,6 +69,8 @@ class Wan22Pipeline(WanPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
         noise_mask: Optional[torch.Tensor] = None,
+        denoising_start_step: Optional[int] = None,
+        denoising_end_step: Optional[int] = None,
     ):
 
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
@@ -87,15 +89,23 @@ class Wan22Pipeline(WanPipeline):
         transformer_device = self.transformer.device
         text_encoder_device = self.text_encoder.device
         device = self._exec_device
-        
+
+        # Only load the text encoder when we actually need to encode — skip it when
+        # pre-computed prompt_embeds are already provided (e.g. LightX2V two-stage sampling
+        # where the text encoder was unloaded after caching training embeddings).
+        _needs_text_encoding = prompt is not None and prompt_embeds is None
+
         if self._aggressive_offload:
             print("Unloading vae")
             self.vae.to("cpu")
-            print("Unloading transformer")
-            self.transformer.to("cpu")
-            if self.transformer_2 is not None:
-                self.transformer_2.to("cpu")
-            self.text_encoder.to(device)
+            if _needs_text_encoding:
+                print("Unloading transformer")
+                self.transformer.to("cpu")
+                if self.transformer_2 is not None:
+                    self.transformer_2.to("cpu")
+                self.text_encoder.to(device)
+            else:
+                self.transformer.to(device)
             flush()
         
 
@@ -139,8 +149,7 @@ class Wan22Pipeline(WanPipeline):
             max_sequence_length=max_sequence_length,
             device=device,
         )
-        if self._aggressive_offload:
-            # unload text encoder
+        if self._aggressive_offload and _needs_text_encoding:
             print("Unloading text encoder")
             self.text_encoder.to("cpu")
             self.transformer.to(device)
@@ -155,6 +164,8 @@ class Wan22Pipeline(WanPipeline):
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
+        # Slice for two-stage LightX2V inference (each stage runs only its portion of steps)
+        timesteps = timesteps[denoising_start_step:denoising_end_step]
 
         # 5. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
@@ -202,7 +213,7 @@ class Wan22Pipeline(WanPipeline):
             # we don't have one loaded yet in aggressive offload mode
             current_model = None
 
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        with self.progress_bar(total=len(timesteps)) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
