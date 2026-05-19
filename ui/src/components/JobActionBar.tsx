@@ -63,27 +63,33 @@ export default function JobActionBar({
   };
 
   const disabled = isProcessing || isBusy;
+  const iconSizeClass = 'w-5 h-5 sm:w-6 sm:h-6';
 
   return (
-    <div className={`${className}`}>
+    <div className={`flex items-center flex-shrink-0 ${className ?? ''}`}>
       {canStart && (
         <Button
-          onClick={() => handleAction(() => startJob(job.id))}
+          onClick={() => handleAction(async () => {
+            await startJob(job.id);
+            if (autoStartQueue) {
+              await startQueue(job.gpu_ids);
+            }
+          })}
           disabled={disabled}
-          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
           title="Start Job"
         >
-          <Play />
+          <Play className={iconSizeClass} />
         </Button>
       )}
       {canRemoveFromQueue && (
         <Button
           onClick={() => handleAction(() => markJobAsStopped(job.id))}
           disabled={disabled}
-          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
           title="Remove from Queue"
         >
-          <X />
+          <X className={iconSizeClass} />
         </Button>
       )}
       {canSave && (
@@ -96,20 +102,20 @@ export default function JobActionBar({
             });
           }}
           disabled={disabled}
-          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
           title="Save Snapshot"
         >
-          <Save />
+          <Save className={iconSizeClass} />
         </Button>
       )}
       {canSample && (
         <Button
           onClick={() => handleAction(() => sampleJob(job.id))}
           disabled={disabled}
-          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
           title="Generate Samples Now"
         >
-          <Image />
+          <Image className={iconSizeClass} />
         </Button>
       )}
       {canStop && (
@@ -126,21 +132,21 @@ export default function JobActionBar({
               },
             });
           }}
-          disabled={isProcessing} // Allow stop even if busy (isBusy is true when stopping)
-          className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+          disabled={isProcessing}
+          className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
           title="Stop Job"
         >
-          <Pause />
+          <Pause className={iconSizeClass} />
         </Button>
       )}
       {!hideView && (
-        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block" title="View Job Details">
-          <Eye />
+        <Link href={`/jobs/${job.id}`} className="ml-1 sm:ml-2 text-gray-200 hover:text-gray-100 inline-block" title="View Job Details">
+          <Eye className={iconSizeClass} />
         </Link>
       )}
       {job.job_type === 'caption' && canEdit && (
         <div
-          className="ml-2 hover:text-gray-100 inline-block cursor-pointer"
+          className="ml-1 sm:ml-2 hover:text-gray-100 inline-block cursor-pointer"
           onClick={() =>
             openCaptionDatasetModal(
               job.job_ref || '',
@@ -151,17 +157,17 @@ export default function JobActionBar({
             )
           }
         >
-          <Pen />
+          <Pen className={iconSizeClass} />
         </div>
       )}
       {job.job_type === 'train' && canEdit && (
-        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Job Config">
-          <Pen />
+        <Link href={`/jobs/new?id=${job.id}`} className="ml-1 sm:ml-2 hover:text-gray-100 inline-block" title="Edit Job Config">
+          <Pen className={iconSizeClass} />
         </Link>
       )}
       {job.job_type === 'train' && canEditSample && !canEdit && (
-        <Link href={`/jobs/new?id=${job.id}&sampleOnly=true`} className="ml-2 hover:text-gray-100 inline-block" title="Edit Sample Prompts">
-          <Pen />
+        <Link href={`/jobs/new?id=${job.id}&sampleOnly=true`} className="ml-1 sm:ml-2 hover:text-gray-100 inline-block" title="Edit Sample Prompts">
+          <Pen className={iconSizeClass} />
         </Link>
       )}
       <Button
@@ -187,15 +193,15 @@ export default function JobActionBar({
           });
         }}
         disabled={disabled}
-        className={`ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
+        className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
         title="Delete Job"
       >
-        <Trash2 />
+        <Trash2 className={iconSizeClass} />
       </Button>
-      <div className="border-r border-1 border-gray-700 ml-2 inline"></div>
+      <div className="border-r border-1 border-gray-700 ml-1 sm:ml-2 inline"></div>
       <Menu>
-        <MenuButton className={'ml-2'} title="More Actions">
-          <Cog />
+        <MenuButton className={'ml-1 sm:ml-2'} title="More Actions">
+          <Cog className={iconSizeClass} />
         </MenuButton>
         <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
           {job.job_type === 'train' && (

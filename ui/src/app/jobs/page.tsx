@@ -12,7 +12,7 @@ export default function Dashboard() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Queue</h1>
+          <h1 className="text-base sm:text-lg">Queue</h1>
         </div>
         <div className="flex-1 max-w-xl mx-4">
           <input
@@ -24,8 +24,12 @@ export default function Dashboard() {
           />
         </div>
         <div>
-          <Link href="/jobs/new" className="text-white bg-slate-600 px-3 py-1 rounded-md">
-            New Training Job
+          <Link
+            href="/jobs/new"
+            className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md text-sm sm:text-base whitespace-nowrap"
+          >
+            <span className="sm:hidden">+ New Job</span>
+            <span className="hidden sm:inline">New Training Job</span>
           </Link>
         </div>
       </TopBar>

@@ -403,13 +403,16 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     <>
       {/* Fixed top bar */}
       <TopBar>
-        <div>
-          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
+        <div className="flex-shrink-0">
+          <Button className="text-gray-500 dark:text-gray-300 px-2 sm:px-3 mt-1" onClick={() => history.back()}>
             <FaChevronLeft />
           </Button>
         </div>
-        <div>
-          <h1 className="text-lg">Dataset: {datasetName}</h1>
+        <div className="min-w-0 flex-shrink">
+          <h1 className="text-base sm:text-lg truncate">
+            <span className="hidden sm:inline">Dataset: </span>
+            {datasetName}
+          </h1>
         </div>
         <div className="flex-1 max-w-xl mx-4 relative">
           <input
@@ -458,20 +461,21 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
         </div>
         <div className="flex-1"></div>
         {status === 'success' && totalCount > 0 && (
-          <div className="text-sm text-gray-400 mr-4">
+          <div className="text-sm text-gray-400 mr-2 sm:mr-4 flex-shrink-0">
             Caption count: {captionCount}/{totalCount}
           </div>
         )}
-        <div>
+        <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
           <AutoCaptionButton
             datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
             setIsAutoCaptioning={setIsAutoCaptioning}
           />
           <Button
-            className="text-white bg-slate-600 px-3 py-1 rounded-md"
+            className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md text-sm sm:text-base whitespace-nowrap"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
           >
-            Add Images
+            <span className="sm:hidden">+ Add</span>
+            <span className="hidden sm:inline">Add Images</span>
           </Button>
         </div>
       </TopBar>

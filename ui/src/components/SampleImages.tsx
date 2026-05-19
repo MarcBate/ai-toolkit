@@ -59,24 +59,25 @@ export const SampleImagesMenu = ({ job, onRefresh, hasSamples, isAnyJobRunning }
             await sampleJob(job.id);
             if (onRefresh) onRefresh();
           }}
-          className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 mr-2`)}
+          className={classNames(`px-2 sm:px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 mr-1 sm:mr-2 flex items-center`)}
         >
-          <LuCamera className="inline-block mr-2" />
-          Generate Samples Now
+          <LuCamera className="inline-block sm:mr-2" />
+          <span className="hidden sm:inline">Generate Samples Now</span>
         </Button>
       )}
       <Button
         onClick={downloadZip}
-        className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
-          'opacity-50 cursor-not-allowed': isZipping,
-        })}
+        className={classNames(
+          `flex-1 sm:flex-initial justify-center px-2 sm:px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center`,
+          { 'opacity-50 cursor-not-allowed': isZipping },
+        )}
       >
         {isZipping ? (
-          <LuLoader className="animate-spin inline-block mr-2" />
+          <LuLoader className="animate-spin inline-block sm:mr-2" />
         ) : (
-          <FaDownload className="inline-block mr-2" />
+          <FaDownload className="inline-block sm:mr-2" />
         )}
-        {isZipping ? 'Preparing' : 'Download'}
+        <span className="hidden sm:inline">{isZipping ? 'Preparing' : 'Download'}</span>
       </Button>
     </div>
   );
@@ -406,14 +407,14 @@ export default function SampleImages({ job }: SampleImagesProps) {
         refreshSampleImages={refreshSampleImages}
       />
       <div
-        className="fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="hidden md:flex fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToTop}
         title="Scroll to Top"
       >
         <FaCaretUp className="text-gray-500 dark:text-gray-400" />
       </div>
       <div
-        className="fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="hidden md:flex fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToBottom}
         title="Scroll to Bottom"
       >
