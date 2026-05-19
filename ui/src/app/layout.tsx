@@ -11,6 +11,7 @@ import DocModal from '@/components/DocModal';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import MergeLoRAsModal from '@/components/MergeLoRAsModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SaveSnapshotModal />
         <DocModal />
         <CaptionDatasetModal />
+        <MergeLoRAsModal />
       </body>
     </html>
   );
