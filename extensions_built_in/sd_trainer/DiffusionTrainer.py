@@ -4,6 +4,7 @@ import os
 import sqlite3
 import asyncio
 import concurrent.futures
+import traceback
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from toolkit.config_modules import SampleConfig
 from toolkit.ui_utils import JobStoppedException
@@ -418,7 +419,16 @@ class DiffusionTrainer(SDTrainer):
         self.maybe_stop()
         total_imgs = len(self.sample_config.prompts)
         self.update_status("running", f"Generating images - 0/{total_imgs}")
-        super().sample(step, is_first)
+        try:
+            super().sample(step, is_first)
+        except JobStoppedException:
+            raise
+        except Exception as e:
+            if self.sample_only:
+                raise
+            print(f"\nWarning: Sample generation failed at step {step}, continuing training:\n{e}")
+            traceback.print_exc()
+            self.update_status("running", f"Sample failed (step {step}), continuing training")
         self.maybe_stop()
         if self.sample_only:
             # reset sample flag in DB

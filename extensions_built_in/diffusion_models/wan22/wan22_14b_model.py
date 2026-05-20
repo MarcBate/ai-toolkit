@@ -565,6 +565,20 @@ class Wan2214bModel(Wan21):
                     module.lora_A[adapter_name].to(device)
                     module.lora_B[adapter_name].to(device)
 
+        def _ensure_adapter_absent(model, adapter_name):
+            """Remove any stale peft_config entry before loading to avoid 'already in use'."""
+            if hasattr(model, 'peft_config') and adapter_name in model.peft_config:
+                try:
+                    del model.peft_config[adapter_name]
+                except Exception:
+                    pass
+            for module in model.modules():
+                if hasattr(module, 'delete_adapter'):
+                    try:
+                        module.delete_adapter(adapter_name)
+                    except Exception:
+                        pass
+
         try:
             high_path = self.model_config.lightx2v_high_noise_lora_path
             low_path = self.model_config.lightx2v_low_noise_lora_path
@@ -575,6 +589,7 @@ class Wan2214bModel(Wan21):
                 else:
                     self.print_and_status_update("Applying LightX2V high noise LoRA to transformer 1")
                     # pipeline.transformer already points to transformer_1
+                    _ensure_adapter_absent(pipeline.transformer, "lightx2v_high")
                     pipeline.load_lora_weights(high_path, adapter_name="lightx2v_high")
                     _move_lora_to_device(pipeline.transformer, "lightx2v_high", self.device_torch)
 
@@ -587,6 +602,7 @@ class Wan2214bModel(Wan21):
                     orig_transformer = pipeline.transformer
                     pipeline.transformer = pipeline.transformer_2
                     try:
+                        _ensure_adapter_absent(pipeline.transformer_2, "lightx2v_low")
                         pipeline.load_lora_weights(low_path, adapter_name="lightx2v_low")
                         _move_lora_to_device(pipeline.transformer_2, "lightx2v_low", self.device_torch)
                     finally:
@@ -600,6 +616,14 @@ class Wan2214bModel(Wan21):
         low_path = self.model_config.lightx2v_low_noise_lora_path
 
         def _delete_adapter_from_model(model, adapter_name):
+            # peft_config is the model-level registry that load_lora_weights checks
+            # before adding a new adapter — must clear it or the next load raises
+            # "Adapter name X already in use".
+            if hasattr(model, 'peft_config') and adapter_name in model.peft_config:
+                try:
+                    del model.peft_config[adapter_name]
+                except Exception:
+                    pass
             for module in model.modules():
                 if hasattr(module, 'delete_adapter'):
                     try:
@@ -607,10 +631,10 @@ class Wan2214bModel(Wan21):
                     except Exception:
                         pass
 
-        if high_path is not None and os.path.exists(high_path):
+        if high_path is not None:
             _delete_adapter_from_model(pipeline.transformer, "lightx2v_high")
 
-        if low_path is not None and os.path.exists(low_path) and pipeline.transformer_2 is not None:
+        if low_path is not None and pipeline.transformer_2 is not None:
             _delete_adapter_from_model(pipeline.transformer_2, "lightx2v_low")
 
     def generate_single_image(
