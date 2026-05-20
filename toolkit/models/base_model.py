@@ -367,8 +367,8 @@ class BaseModel:
             hook(status)
 
     def print_and_status_update(self, status: str):
-        print_acc(status)
-        self._status_update(status)
+        print_acc("\n" + status)
+        self._status_update("\n" + status)
 
     def add_status_update_hook(self, func):
         self._status_update_hooks.append(func)
