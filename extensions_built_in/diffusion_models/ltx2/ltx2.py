@@ -717,6 +717,10 @@ class LTX2Model(BaseModel):
                 True  # they dont set this in some examples in diffusers, but I believe it should always be true for 2.3
             )
 
+        def _stop_callback(pipe, i, t, callback_kwargs):
+            self.maybe_stop()
+            return callback_kwargs
+
         video, audio = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
@@ -739,6 +743,7 @@ class LTX2Model(BaseModel):
             generator=generator,
             return_dict=False,
             output_type="np" if is_video else "pil",
+            callback_on_step_end=_stop_callback,
             **extra,
         )
         if self.low_vram:

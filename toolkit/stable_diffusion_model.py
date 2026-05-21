@@ -1392,6 +1392,7 @@ class StableDiffusion:
                     assert network.is_active
 
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
+                    self.maybe_stop()
                     gen_config = image_configs[i]
 
                     extra = {}

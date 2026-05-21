@@ -651,6 +651,10 @@ class Wan2214bModel(Wan21):
 
         has_lightx2v = self._has_lightx2v_loras()
 
+        def _stop_callback(pipe, i, t, callback_kwargs):
+            self.maybe_stop()
+            return callback_kwargs
+
         if not has_lightx2v:
             try:
                 output = pipeline(
@@ -667,6 +671,7 @@ class Wan2214bModel(Wan21):
                     generator=generator,
                     return_dict=False,
                     output_type="pil",
+                    callback_on_step_end=_stop_callback,
                     **extra
                 )[0]
             finally:
@@ -707,6 +712,10 @@ class Wan2214bModel(Wan21):
         cond_embeds = conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype)
         uncond_embeds = unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype)
 
+        def _stop_callback(pipe, i, t, callback_kwargs):
+            self.maybe_stop()
+            return callback_kwargs
+
         common_kwargs = dict(
             prompt_embeds=cond_embeds,
             negative_prompt_embeds=uncond_embeds,
@@ -717,6 +726,7 @@ class Wan2214bModel(Wan21):
             guidance_scale=gen_config.guidance_scale,
             generator=generator,
             return_dict=False,
+            callback_on_step_end=_stop_callback,
             **extra
         )
 

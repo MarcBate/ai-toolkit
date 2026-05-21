@@ -125,8 +125,9 @@ class QwenImageEditPlusModel(QwenImageModel):
         # flush_between_steps = self.model_config.low_vram
         flush_between_steps = False
 
-        # Fix a bug in diffusers/torch
+        # Fix a bug in diffusers/torch; also check for stop signal between denoising steps
         def callback_on_step_end(pipe, i, t, callback_kwargs):
+            self.maybe_stop()
             if flush_between_steps:
                 flush()
             latents = callback_kwargs["latents"]

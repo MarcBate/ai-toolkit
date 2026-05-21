@@ -80,6 +80,10 @@ class Wan2214bI2VModel(Wan2214bModel):
                 vae=self.vae
             )
 
+        def _stop_callback(pipe, i, t, callback_kwargs):
+            self.maybe_stop()
+            return callback_kwargs
+
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
@@ -96,6 +100,7 @@ class Wan2214bI2VModel(Wan2214bModel):
             generator=generator,
             return_dict=False,
             output_type="pil",
+            callback_on_step_end=_stop_callback,
             **extra,
         )[0]
 
