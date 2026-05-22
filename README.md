@@ -9,8 +9,8 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below. Full details and per-commit notes are in the [Changelog](#changelog) section at the bottom of this file.
 
 - Restart training from any checkpoint
+-   option to save optimizers needs to be checked for the job, and before restoring name the one you want to restore as 'optimizer.pt' and move any safetensor files after that one you want to restore, elsewhere
 - Save checkpoint when pausing or stopping training, on demand before the next 'save every' step
-- re-order job queue by drag and drop jobs 
 - Generate samples on-demand while training job is running
 - Edit sample prompts while training, but not applied yet if you unloaded text encoder
 - Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
@@ -18,20 +18,22 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 
 ### UI — Queue & Job Management
 
-- added placeholders for any image/videos not sampled so grid lines up correctly
+- re-order job queue by drag and drop jobs 
 - **Queue filter** — filter the jobs list by name with a text search box
 - **Negative Prompt field** — dedicated negative prompt input in the sample configuration
 - **Non-empty prompt validation** — prevents saving a job with blank prompt fields
 
-### UI — Samples & Loss Graph
+### UI — Loss Graph
 
 - **Step count on sample page** — each sample row shows the training step at which it was generated
 - **Loss graph — persistent settings per job** — display toggles (Smoothed / Raw / Log Y / Clip outliers), smoothing %, plot stride, series visibility, and zoom range are saved to `localStorage` and restored when navigating back to a job
 - **Loss graph — stable chart height** — canvas height no longer jumps when toggling display options
 
-### UI — Dataset Management
+### UI — Samples page
 
-- **Find & replace captions** — bulk find-and-replace across all captions in a dataset, with a replace-all button
+- added placeholders for any image/videos not sampled so grid lines up correctly
+- expands prompt height when caption is active to show entire prompt to make it easier to edit. reverts to 3 lines when lost focus
+- **Find & replace captions** —  find-and-replace across all captions in a dataset, with a replace-all button
 - **Caption filtering** — filter dataset images by caption content
 - **Abort off-screen caption requests** — caption API calls are cancelled when the image card scrolls out of view
 
