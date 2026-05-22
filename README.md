@@ -20,22 +20,19 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 
 - re-order job queue by drag and drop jobs 
 - **Queue filter** — filter the jobs list by name with a text search box
-- **Negative Prompt field** — dedicated negative prompt input in the sample configuration
-- **Non-empty prompt validation** — prevents saving a job with blank prompt fields
+- **Negative Prompt field** — expose this to the job configuration UI
 
 ### UI — Loss Graph
 
-- **Step count on sample page** — each sample row shows the training step at which it was generated
-- **Loss graph — persistent settings per job** — display toggles (Smoothed / Raw / Log Y / Clip outliers), smoothing %, plot stride, series visibility, and zoom range are saved to `localStorage` and restored when navigating back to a job
-- **Loss graph — stable chart height** — canvas height no longer jumps when toggling display options
+- Fixed height issue and saves settings the next time you return to it per job.
+- Shows how long spent training each model
 
 ### UI — Samples page
 
 - added placeholders for any image/videos not sampled so grid lines up correctly
 - expands prompt height when caption is active to show entire prompt to make it easier to edit. reverts to 3 lines when lost focus
 - **Find & replace captions** —  find-and-replace across all captions in a dataset, with a replace-all button
-- **Caption filtering** — filter dataset images by caption content
-- **Abort off-screen caption requests** — caption API calls are cancelled when the image card scrolls out of view
+- **Caption filtering** — filter dataset images by caption content 
 
 ____________________________________
 
