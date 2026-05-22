@@ -4,30 +4,22 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 
 ---
 
-## Fork additions — MarcBate / mcb2 branch
+## Fork additions — CoachBate / mcb2 branch
 
 This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below. Full details and per-commit notes are in the [Changelog](#changelog) section at the bottom of this file.
 
-### Models & Training
-
-- **LightX2V two-stage sampling** — proper stage 1 + stage 2 inference for Wan2.2 with per-stage LoRA adapters and a sliced denoising schedule
-- **Fix LightX2V adapter reuse** — clears PEFT registry between samples, eliminating "adapter name already in use" errors on back-to-back sample videos
-- **Cancellable sample generation** — stop/pause signals are checked per denoising step across LTX2, Wan 5B / 14B / I2V, and all Qwen Image pipelines, so generation cancels mid-inference rather than waiting for the full video to finish
-- **Fix `get_te_has_grad` with `FakeTextEncoder`** — prevents crash when the text encoder is unloaded during `cache_text_embeddings` training (Chroma model)
-- **AdvancedPromptEmbeds** — new embedding class compatible with `PromptEmbeds` but supporting a wider range of model embedding paradigms
-- **Optimizer archiving** — archive optimizer state on save to reduce disk usage
-- **Training seed via env var** — set `SEED` for reproducible training runs
-- **Early control image validation** — when `control_path` is set, all control images are verified before model weights are loaded; missing files are reported immediately
+- Restart training from any checkpoint
+- Save checkpoint when pausing or stopping training, on demand before the next 'save every' step
+- re-order job queue by drag and drop jobs 
+- Generate samples on-demand while training job is running
+- Edit sample prompts while training, but not applied yet if you unloaded text encoder
+- Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
+- Stop training job even in the middle of sample generation or model quantization.
 
 ### UI — Queue & Job Management
 
-- **Job save / sample on demand** — trigger a save or sample at any point without stopping the job
-- **Edit sample config while running** — change prompts, resolution, etc. mid-training; changes take effect at the next sample
-- **Queue reordering** — drag jobs to reorder the training queue
+- added placeholders for any image/videos not sampled so grid lines up correctly
 - **Queue filter** — filter the jobs list by name with a text search box
-- **Save snapshot on pause** — snapshot is saved automatically when the stop / pause button is pressed
-- **On-demand sampling when idle** — generate samples for a completed job when no other jobs are running
-- **Stop sampling on pause** — active sample generation cancels immediately when a job is paused or the queue is stopped
 - **Negative Prompt field** — dedicated negative prompt input in the sample configuration
 - **Non-empty prompt validation** — prevents saving a job with blank prompt fields
 
@@ -40,17 +32,10 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 ### UI — Dataset Management
 
 - **Find & replace captions** — bulk find-and-replace across all captions in a dataset, with a replace-all button
-- **Duplicate dataset** — copy an existing dataset from the UI
 - **Caption filtering** — filter dataset images by caption content
 - **Abort off-screen caption requests** — caption API calls are cancelled when the image card scrolls out of view
 
-### Infrastructure
-
-- **File reading with encoding fallback** — dataset files are read with UTF-8 / Latin-1 fallback for robustness on mixed-encoding corpora
-- **Update script uses `git pull`** — `run_ai_toolkit.sh` updated to pull cleanly
-- **LF line endings enforced** — `.gitattributes` ensures consistent line endings across platforms
-
----
+____________________________________
 
 ## Supported Models
 
