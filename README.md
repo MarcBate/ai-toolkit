@@ -2,7 +2,55 @@
 
 AI Toolkit is an easy to use all in one training suite for diffusion models. I try to support all the latest models on consumer grade hardware. Image and video models. It can be run as a GUI or CLI. It is designed to be easy to use but still have every feature imaginable. Free and open source.
 
+---
 
+## Fork additions — MarcBate / mcb2 branch
+
+This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below. Full details and per-commit notes are in the [Changelog](#changelog) section at the bottom of this file.
+
+### Models & Training
+
+- **LightX2V two-stage sampling** — proper stage 1 + stage 2 inference for Wan2.2 with per-stage LoRA adapters and a sliced denoising schedule
+- **Fix LightX2V adapter reuse** — clears PEFT registry between samples, eliminating "adapter name already in use" errors on back-to-back sample videos
+- **Cancellable sample generation** — stop/pause signals are checked per denoising step across LTX2, Wan 5B / 14B / I2V, and all Qwen Image pipelines, so generation cancels mid-inference rather than waiting for the full video to finish
+- **Fix `get_te_has_grad` with `FakeTextEncoder`** — prevents crash when the text encoder is unloaded during `cache_text_embeddings` training (Chroma model)
+- **AdvancedPromptEmbeds** — new embedding class compatible with `PromptEmbeds` but supporting a wider range of model embedding paradigms
+- **Optimizer archiving** — archive optimizer state on save to reduce disk usage
+- **Training seed via env var** — set `SEED` for reproducible training runs
+- **Early control image validation** — when `control_path` is set, all control images are verified before model weights are loaded; missing files are reported immediately
+
+### UI — Queue & Job Management
+
+- **Job save / sample on demand** — trigger a save or sample at any point without stopping the job
+- **Edit sample config while running** — change prompts, resolution, etc. mid-training; changes take effect at the next sample
+- **Queue reordering** — drag jobs to reorder the training queue
+- **Queue filter** — filter the jobs list by name with a text search box
+- **Save snapshot on pause** — snapshot is saved automatically when the stop / pause button is pressed
+- **On-demand sampling when idle** — generate samples for a completed job when no other jobs are running
+- **Stop sampling on pause** — active sample generation cancels immediately when a job is paused or the queue is stopped
+- **Negative Prompt field** — dedicated negative prompt input in the sample configuration
+- **Non-empty prompt validation** — prevents saving a job with blank prompt fields
+
+### UI — Samples & Loss Graph
+
+- **Step count on sample page** — each sample row shows the training step at which it was generated
+- **Loss graph — persistent settings per job** — display toggles (Smoothed / Raw / Log Y / Clip outliers), smoothing %, plot stride, series visibility, and zoom range are saved to `localStorage` and restored when navigating back to a job
+- **Loss graph — stable chart height** — canvas height no longer jumps when toggling display options
+
+### UI — Dataset Management
+
+- **Find & replace captions** — bulk find-and-replace across all captions in a dataset, with a replace-all button
+- **Duplicate dataset** — copy an existing dataset from the UI
+- **Caption filtering** — filter dataset images by caption content
+- **Abort off-screen caption requests** — caption API calls are cancelled when the image card scrolls out of view
+
+### Infrastructure
+
+- **File reading with encoding fallback** — dataset files are read with UTF-8 / Latin-1 fallback for robustness on mixed-encoding corpora
+- **Update script uses `git pull`** — `run_ai_toolkit.sh` updated to pull cleanly
+- **LF line endings enforced** — `.gitattributes` ensures consistent line endings across platforms
+
+---
 
 ## Supported Models
 
@@ -632,3 +680,105 @@ immediately stop itself every time the queue was restarted.
 - **Reworked drag/upload/select model** — single unified model for dragging,
   uploading, and selecting dataset images
 
+---
+
+#### 2026-04-30 — Fix pausing not shown as error in UI
+
+`stable_diffusion_model.py` — guards added so a paused/stopped job is never
+recorded as an error state in the UI status pipeline.
+
+---
+
+#### 2026-05-01 — File reading encoding fallback + update script cleanup
+
+- `toolkit/data_loader.py`, `toolkit/dataloader_mixins.py` — file reads now
+  try UTF-8 first, then fall back to Latin-1, preventing crashes on datasets
+  with mixed-encoding caption files
+- `run_ai_toolkit.sh` — update script refactored to use `git pull` instead of
+  manual archive extraction
+- `.gitattributes` — added to enforce LF line endings across platforms
+
+---
+
+#### 2026-05-06 — Fix `get_te_has_grad` crash with `FakeTextEncoder`
+
+`extensions_built_in/diffusion_models/chroma/chroma_model.py` — when
+`cache_text_embeddings` is enabled, the T5 encoder is replaced with a
+`FakeTextEncoder` stub before baseline samples are generated.
+`get_te_has_grad()` crashed trying to walk the real encoder's parameter tree.
+Now returns `False` immediately when a `FakeTextEncoder` is detected.
+
+---
+
+#### 2026-05-13 — Negative Prompt field + non-empty prompt validation
+
+- `ui/src/app/jobs/new/SimpleJob.tsx` — added a "Negative Prompt" input to
+  the sample configuration section of the job creation UI
+- `ui/src/app/jobs/new/page.tsx` — validation now requires all prompts to be
+  non-empty before a job can be saved
+
+---
+
+#### 2026-05-14 — Step count on sample image page
+
+`ui/src/components/SampleImages.tsx`, `SampleImageCard.tsx` — each row on the
+sample image viewer now displays the training step number at which the samples
+were generated.
+
+---
+
+#### 2026-05-19 — LightX2V two-stage sampling for Wan2.2
+
+`extensions_built_in/diffusion_models/wan22/wan22_14b_model.py`,
+`wan22_pipeline.py` — replaces the single-pass pipeline call with proper
+two-stage inference: stage 1 runs `transformer_1` + high LoRA for the first
+half of timesteps; stage 2 runs `transformer_2` + low LoRA for the remainder
+using stage 1's output latent. Adds `denoising_start_step` / `denoising_end_step`
+to `Wan22Pipeline` to slice the timestep schedule per stage. Also fixes
+`aggressive_offload` to skip reloading the text encoder when
+`prompt_embeds` are already provided.
+
+---
+
+#### 2026-05-19 — Fix LightX2V adapter reuse error and non-fatal sample failures
+
+`wan22_14b_model.py`, `extensions_built_in/sd_trainer/DiffusionTrainer.py`:
+
+- `_remove_lightx2v_loras` — clears the PEFT model-level adapter registry so
+  "adapter name already in use" no longer fires on the second sample video
+  within the same sampling call
+- `_apply_lightx2v_loras` — adds `_ensure_adapter_absent` pre-check as a
+  belt-and-suspenders guard against stale state from a partial load
+- Sample cleanup made unconditional (removed `os.path.exists` guards) so
+  adapters are always removed even if the file has moved
+- `DiffusionTrainer.sample()` wrapped in `try/except` so a sample failure logs
+  and continues training rather than killing the job
+
+---
+
+#### 2026-05-20 — Stop sample generation when job is paused or queue is stopped
+
+Two layers of cancellation added for long-running sample / video generation:
+
+1. A stop-signal check at the start of every sample in the `generate_images`
+   loop (`base_model.py`, `stable_diffusion_model.py`) so no new sample starts
+   after a stop is requested.
+2. A `callback_on_step_end` passed to LTX2, Wan 5B / 14B / I2V, and all Qwen
+   Image pipelines that calls `maybe_stop()` between each denoising step,
+   allowing mid-inference cancellation.
+
+---
+
+#### 2026-05-22 — Loss graph: persistent settings per job + stable canvas height
+
+`ui/src/components/JobLossGraph.tsx`:
+
+- Display toggles (Smoothed / Raw / Log Y / Clip outliers), smoothing %,
+  plot stride, per-series enabled state, and x-axis zoom range are saved to
+  `localStorage` keyed by job ID (`loss-graph:<id>`) and restored when
+  navigating back to the job's loss graph.
+- Canvas height no longer jumps when Display buttons are clicked: the
+  post-creation `setSize()` call is deferred to `requestAnimationFrame` so the
+  browser completes layout before the legend height is measured.
+- Saved zoom range is re-applied after chart recreation, and the Reset zoom
+  button is shown immediately when a saved zoom is present.
