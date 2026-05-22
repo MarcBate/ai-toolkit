@@ -6,7 +6,7 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 
 ## Fork additions — CoachBate / mcb2 branch
 
-This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below. Full details and per-commit notes are in the [Changelog](#changelog) section at the bottom of this file.
+This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below that make my life easier. Full details and per-commit notes are in the [Changelog](#changelog) section at the bottom of this file.
 
 - Restart training from any checkpoint
 -   option to save optimizers needs to be checked for the job, and before restoring name the one you want to restore as 'optimizer.pt' and move any safetensor files after that one you want to restore, elsewhere
