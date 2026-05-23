@@ -14,6 +14,7 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 - Generate samples on-demand while training job is running
 - Edit sample prompts while training, but not applied yet if you unloaded text encoder
 - Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
+- Generate LTX-2.3 sample videos in 8 steps with the distilled LoRA instead of 30 steps.
 - Stop training job even in the middle of sample generation or model quantization.
 
 ### UI — Queue & Job Management
@@ -766,3 +767,27 @@ Two layers of cancellation added for long-running sample / video generation:
   browser completes layout before the legend height is measured.
 - Saved zoom range is re-applied after chart recreation, and the Reset zoom
   button is shown immediately when a saved zoom is present.
+
+---
+
+#### 2026-05-23 — LTX-2.3 distilled LoRA for fast sample generation
+
+`extensions_built_in/diffusion_models/ltx2/ltx2.py`, `toolkit/config_modules.py`:
+
+Adds support for loading the LTX-2.3 distilled LoRA during sample generation so
+videos can be produced in ~8 steps (CFG 1) instead of 30, matching what the
+LightX2V feature does for Wan 2.2. The LoRA is applied immediately before the
+pipeline call and removed unconditionally in a `try/finally` block so training
+weights are never affected.
+
+Two new model config keys:
+
+```yaml
+model:
+  distill_lora_path: "/path/to/ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+  distill_lora_strength: 0.6   # optional, default 0.6
+```
+
+Includes the same PEFT 0.18.x `dispatch_torchao` workaround and stale-adapter
+cleanup used by the LightX2V implementation so it works on quantized models and
+doesn't raise "adapter name already in use" on repeated sample calls.

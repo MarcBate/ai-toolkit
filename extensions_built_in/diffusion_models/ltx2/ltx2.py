@@ -607,6 +607,65 @@ class LTX2Model(BaseModel):
 
         return latents.to(device, dtype=dtype)
 
+    def _has_distill_lora(self):
+        return self.model_config.distill_lora_path is not None
+
+    def _apply_distill_lora(self, pipeline: "LTX2Pipeline"):
+        """Load the distilled LoRA onto the pipeline transformer for fast sampling."""
+        import peft.tuners.lora.model as _peft_lora_model
+
+        lora_path = self.model_config.distill_lora_path
+        strength = self.model_config.distill_lora_strength
+
+        if not os.path.exists(lora_path):
+            self.print_and_status_update(f"Warning: distill LoRA not found: {lora_path}")
+            return
+
+        # PEFT 0.18.x bug: dispatch_torchao called without required kwarg on quantized weights
+        _orig_dispatch_torchao = _peft_lora_model.dispatch_torchao
+        _peft_lora_model.dispatch_torchao = lambda *args, **kwargs: None
+
+        try:
+            # Clear any stale adapter registration before loading
+            if hasattr(pipeline.transformer, 'peft_config') and 'distill_lora' in pipeline.transformer.peft_config:
+                try:
+                    del pipeline.transformer.peft_config['distill_lora']
+                except Exception:
+                    pass
+            for module in pipeline.transformer.modules():
+                if hasattr(module, 'delete_adapter'):
+                    try:
+                        module.delete_adapter('distill_lora')
+                    except Exception:
+                        pass
+
+            self.print_and_status_update(f"Applying distill LoRA (strength={strength})")
+            pipeline.load_lora_weights(lora_path, adapter_name="distill_lora")
+
+            # Move LoRA weights to device in case they landed on CPU
+            for module in pipeline.transformer.modules():
+                if hasattr(module, 'lora_A') and 'distill_lora' in module.lora_A:
+                    module.lora_A['distill_lora'].to(self.device_torch)
+                    module.lora_B['distill_lora'].to(self.device_torch)
+
+            pipeline.set_adapters(["distill_lora"], adapter_weights=[strength])
+        finally:
+            _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
+
+    def _remove_distill_lora(self, pipeline: "LTX2Pipeline"):
+        """Remove the distilled LoRA adapter from the pipeline transformer."""
+        if hasattr(pipeline.transformer, 'peft_config') and 'distill_lora' in pipeline.transformer.peft_config:
+            try:
+                del pipeline.transformer.peft_config['distill_lora']
+            except Exception:
+                pass
+        for module in pipeline.transformer.modules():
+            if hasattr(module, 'delete_adapter'):
+                try:
+                    module.delete_adapter('distill_lora')
+                except Exception:
+                    pass
+
     def get_generation_pipeline(self):
         scheduler = LTX2Model.get_train_scheduler()
 
@@ -721,31 +780,39 @@ class LTX2Model(BaseModel):
             self.maybe_stop()
             return callback_kwargs
 
-        video, audio = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            prompt_attention_mask=conditional_embeds.attention_mask.to(
-                self.device_torch
-            ),
-            negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
-                self.device_torch
-            ),
-            height=gen_config.height,
-            width=gen_config.width,
-            num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            num_frames=gen_config.num_frames,
-            generator=generator,
-            return_dict=False,
-            output_type="np" if is_video else "pil",
-            callback_on_step_end=_stop_callback,
-            **extra,
-        )
+        if self._has_distill_lora():
+            self._apply_distill_lora(pipeline)
+
+        try:
+            video, audio = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                prompt_attention_mask=conditional_embeds.attention_mask.to(
+                    self.device_torch
+                ),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
+                    self.device_torch
+                ),
+                height=gen_config.height,
+                width=gen_config.width,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="np" if is_video else "pil",
+                callback_on_step_end=_stop_callback,
+                **extra,
+            )
+        finally:
+            if self._has_distill_lora():
+                self._remove_distill_lora(pipeline)
+
         if self.low_vram:
             # Restore no tiling
             # pipeline.vae.use_tiling = False

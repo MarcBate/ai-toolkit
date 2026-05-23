@@ -623,6 +623,9 @@ class ModelConfig:
         # LightX2V distillation LoRAs for WAN 2.2 sample generation (not applied during training)
         self.lightx2v_high_noise_lora_path = kwargs.get('lightx2v_high_noise_lora_path', None)
         self.lightx2v_low_noise_lora_path = kwargs.get('lightx2v_low_noise_lora_path', None)
+        # LTX-2.3 distilled LoRA for fast sample generation (not applied during training)
+        self.distill_lora_path = kwargs.get('distill_lora_path', None)
+        self.distill_lora_strength = kwargs.get('distill_lora_strength', 0.6)
         self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now
