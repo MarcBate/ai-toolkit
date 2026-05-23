@@ -1108,8 +1108,8 @@ class GenerateImageConfig:
         self.guidance_rescale: float = guidance_rescale
         self.prompt: str = prompt
         self.prompt_2: str = prompt_2
-        self.negative_prompt: str = negative_prompt
-        self.negative_prompt_2: str = negative_prompt_2
+        self.negative_prompt: str = negative_prompt if isinstance(negative_prompt, str) else ''
+        self.negative_prompt_2: str = negative_prompt_2 if isinstance(negative_prompt_2, str) else None
         self.latents: Union[torch.Tensor | None] = latents
 
         self.output_path: str = output_path

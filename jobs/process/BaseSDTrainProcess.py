@@ -782,6 +782,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_before_train_loop(self):
         if self.accelerator.is_main_process:
             self.logger.start()
+            self.logger.record_session_start()
         self.prepare_accelerator()
         
     def sample_step_hook(self, img_num, total_imgs):

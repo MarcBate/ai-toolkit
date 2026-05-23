@@ -394,6 +394,11 @@ class DiffusionTrainer(SDTrainer):
         super().hook_before_train_loop()
         if self.is_ui_trainer:
             self.maybe_stop()
+            # Clear any stale save flag left over from a previous session that was
+            # stopped before completing a step (e.g. killed during model loading /
+            # quantization).  No steps have run yet this session, so there is nothing
+            # new to save.
+            self.reset_save()
             self.update_step()
             self.update_status("running", "Training")
             self.timer.add_after_print_hook(self.handle_timing_print_hook)
@@ -419,16 +424,22 @@ class DiffusionTrainer(SDTrainer):
         self.maybe_stop()
         total_imgs = len(self.sample_config.prompts)
         self.update_status("running", f"Generating images - 0/{total_imgs}")
+        if self.is_ui_trainer:
+            self.logger.record_sample_start()
         try:
-            super().sample(step, is_first)
-        except JobStoppedException:
-            raise
-        except Exception as e:
-            if self.sample_only:
+            try:
+                super().sample(step, is_first)
+            except JobStoppedException:
                 raise
-            print(f"\nWarning: Sample generation failed at step {step}, continuing training:\n{e}")
-            traceback.print_exc()
-            self.update_status("running", f"Sample failed (step {step}), continuing training")
+            except Exception as e:
+                if self.sample_only:
+                    raise
+                print(f"\nWarning: Sample generation failed at step {step}, continuing training:\n{e}")
+                traceback.print_exc()
+                self.update_status("running", f"Sample failed (step {step}), continuing training")
+        finally:
+            if self.is_ui_trainer:
+                self.logger.record_sample_end()
         self.maybe_stop()
         if self.sample_only:
             # reset sample flag in DB

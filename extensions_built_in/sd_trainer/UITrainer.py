@@ -338,6 +338,11 @@ class UITrainer(SDTrainer):
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
         self.maybe_stop()
+        # Clear any stale save flag left over from a previous session that was
+        # stopped before completing a step (e.g. killed during model loading /
+        # quantization).  No steps have run yet this session, so there is nothing
+        # new to save.
+        self.reset_save()
         self.update_step()
         self.update_status("running", "Training")
         self.timer.add_after_print_hook(self.handle_timing_print_hook)
@@ -361,7 +366,11 @@ class UITrainer(SDTrainer):
         self.maybe_stop()
         total_imgs = len(self.sample_config.prompts)
         self.update_status("running", f"Generating images - 0/{total_imgs}")
-        super().sample(step, is_first)
+        self.logger.record_sample_start()
+        try:
+            super().sample(step, is_first)
+        finally:
+            self.logger.record_sample_end()
         self.maybe_stop()
         self.update_status("running", "Training")
 
