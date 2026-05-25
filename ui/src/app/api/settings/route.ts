@@ -46,14 +46,19 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER } = body;
+    const { HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER } = body;
 
-    // Upsert both settings
+    // Upsert all settings
     await Promise.all([
       prisma.settings.upsert({
         where: { key: 'HF_TOKEN' },
         update: { value: HF_TOKEN },
         create: { key: 'HF_TOKEN', value: HF_TOKEN },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'GEMMA_API_KEY' },
+        update: { value: GEMMA_API_KEY ?? '' },
+        create: { key: 'GEMMA_API_KEY', value: GEMMA_API_KEY ?? '' },
       }),
       prisma.settings.upsert({
         where: { key: 'TRAINING_FOLDER' },

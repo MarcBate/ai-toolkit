@@ -1,5 +1,9 @@
 from functools import partial
+import io
 import os
+import pickle
+import time
+import requests
 from typing import List, Optional
 
 import torch
@@ -20,6 +24,7 @@ from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
+from safetensors import safe_open
 from PIL import Image
 import huggingface_hub
 
@@ -80,6 +85,10 @@ vocoder_prefix = "vocoder."
 base_te_path = "Lightricks/gemma-3-12b-it-qat-q4_0-unquantized"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
+LTXV_API_BASE_URL = "https://api.ltx.video"
+LTXV_MODEL_ID_KEY = "encrypted_wandb_properties"
+# Read from env as fallback; model config gemma_api_key takes precedence if both are set
+_GEMMA_API_KEY_FROM_ENV = os.getenv("GEMMA_API_KEY", None)
 
 
 def new_save_image_function(
@@ -90,11 +99,13 @@ def new_save_image_function(
     **kwargs,
 ):
     # this replaces gen image config save image function so we can save the video with sound from ltx2
-    image["output_path"] = self.get_image_path(count, max_count)
+    output_path = self.get_image_path(count, max_count)
+    image["output_path"] = output_path
     # make sample directory if it does not exist
-    os.makedirs(os.path.dirname(image["output_path"]), exist_ok=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     encode_video(**image)
     flush()
+    self._embed_mp4_metadata(output_path)
 
 
 def blank_log_image_function(self, *args, **kwargs):
@@ -230,6 +241,21 @@ class LTX2Model(BaseModel):
         # invalidate older caches
         self.latent_space_version = f"{self.arch}_v2"
 
+        # cached model_id for Gemma API mode (extracted from checkpoint metadata at load time)
+        self._gemma_model_id: Optional[str] = None
+        self._gemma_api_last_call_time: float = 0.0
+
+        # Resolve effective API key (model config YAML > env var injected by UI from Settings)
+        if self.model_config.gemma_api_key is None:
+            if self.model_config.use_gemma_api or _GEMMA_API_KEY_FROM_ENV:
+                if _GEMMA_API_KEY_FROM_ENV:
+                    self.model_config.gemma_api_key = _GEMMA_API_KEY_FROM_ENV
+                elif self.model_config.use_gemma_api:
+                    raise ValueError(
+                        "use_gemma_api is enabled but no GEMMA_API_KEY was found. "
+                        "Set your Lightricks API key in the AI Toolkit Settings page."
+                    )
+
     # static method to get the noise scheduler
     @staticmethod
     def get_train_scheduler():
@@ -243,6 +269,19 @@ class LTX2Model(BaseModel):
         self.print_and_status_update("Loading LTX2 model")
         model_path = self.model_config.name_or_path
         base_model_path = self.model_config.extras_name_or_path
+        use_gemma_api = self.model_config.gemma_api_key is not None
+
+        # Extract model_id from checkpoint metadata early so API calls work after load
+        if use_gemma_api and model_path.endswith(".safetensors") and os.path.exists(model_path):
+            with safe_open(model_path, framework="pt", device="cpu") as f:
+                metadata = f.metadata()
+                if metadata and LTXV_MODEL_ID_KEY in metadata:
+                    self._gemma_model_id = metadata[LTXV_MODEL_ID_KEY]
+                else:
+                    raise ValueError(
+                        f"Cannot use gemma_api_key: checkpoint '{model_path}' does not contain "
+                        f"'{LTXV_MODEL_ID_KEY}' metadata required by the API."
+                    )
 
         combined_state_dict = None
 
@@ -323,133 +362,138 @@ class LTX2Model(BaseModel):
 
         flush()
 
-        self.print_and_status_update("Loading text encoder")
-        if (
-            self.model_config.te_name_or_path is not None
-            and self.model_config.te_name_or_path.endswith(".safetensors")
-        ):
-            # load from comfyui gemma3 checkpoint
-            tokenizer = GemmaTokenizerFast.from_pretrained(base_te_path)
-
-            with init_empty_weights():
-                text_encoder = Gemma3ForConditionalGeneration(
-                    Gemma3Config(
-                        **{
-                            "boi_token_index": 255999,
-                            "bos_token_id": 2,
-                            "eoi_token_index": 256000,
-                            "eos_token_id": 106,
-                            "image_token_index": 262144,
-                            "initializer_range": 0.02,
-                            "mm_tokens_per_image": 256,
-                            "model_type": "gemma3",
-                            "pad_token_id": 0,
-                            "text_config": {
-                                "attention_bias": False,
-                                "attention_dropout": 0.0,
-                                "attn_logit_softcapping": None,
-                                "cache_implementation": "hybrid",
-                                "final_logit_softcapping": None,
-                                "head_dim": 256,
-                                "hidden_activation": "gelu_pytorch_tanh",
-                                "hidden_size": 3840,
-                                "initializer_range": 0.02,
-                                "intermediate_size": 15360,
-                                "max_position_embeddings": 131072,
-                                "model_type": "gemma3_text",
-                                "num_attention_heads": 16,
-                                "num_hidden_layers": 48,
-                                "num_key_value_heads": 8,
-                                "query_pre_attn_scalar": 256,
-                                "rms_norm_eps": 1e-06,
-                                "rope_local_base_freq": 10000,
-                                "rope_scaling": {"factor": 8.0, "rope_type": "linear"},
-                                "rope_theta": 1000000,
-                                "sliding_window": 1024,
-                                "sliding_window_pattern": 6,
-                                "torch_dtype": "bfloat16",
-                                "use_cache": True,
-                                "vocab_size": 262208,
-                            },
-                            "torch_dtype": "bfloat16",
-                            "transformers_version": "4.51.3",
-                            "unsloth_fixed": True,
-                            "vision_config": {
-                                "attention_dropout": 0.0,
-                                "hidden_act": "gelu_pytorch_tanh",
-                                "hidden_size": 1152,
-                                "image_size": 896,
-                                "intermediate_size": 4304,
-                                "layer_norm_eps": 1e-06,
-                                "model_type": "siglip_vision_model",
-                                "num_attention_heads": 16,
-                                "num_channels": 3,
-                                "num_hidden_layers": 27,
-                                "patch_size": 14,
-                                "torch_dtype": "bfloat16",
-                                "vision_use_head": False,
-                            },
-                        }
-                    )
-                )
-            te_state_dict = load_file(self.model_config.te_name_or_path)
-            te_state_dict = convert_comfy_gemma3_to_transformers(te_state_dict)
-            for key in te_state_dict:
-                te_state_dict[key] = te_state_dict[key].to(dtype)
-
-            text_encoder.load_state_dict(te_state_dict, assign=True, strict=True)
-            del te_state_dict
-            flush()
-        elif self.model_config.te_name_or_path is not None:
-            # a repo or folder
-            tokenizer = GemmaTokenizerFast.from_pretrained(
-                self.model_config.te_name_or_path
-            )
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.model_config.te_name_or_path, dtype=dtype
-            )
-        elif self.ltx_te_path is not None:
-            # pull from model specific te
-            tokenizer = GemmaTokenizerFast.from_pretrained(self.ltx_te_path)
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.ltx_te_path, dtype=dtype
-            )
+        if use_gemma_api:
+            self.print_and_status_update("Skipping text encoder load (using Gemma API)")
+            text_encoder = None
+            tokenizer = None
         else:
-            # using combo hf repo
-            tokenizer = GemmaTokenizerFast.from_pretrained(
-                self.model_config.name_or_path, subfolder="tokenizer"
-            )
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.model_config.name_or_path, subfolder="text_encoder", dtype=dtype
-            )
+            self.print_and_status_update("Loading text encoder")
+            if (
+                self.model_config.te_name_or_path is not None
+                and self.model_config.te_name_or_path.endswith(".safetensors")
+            ):
+                # load from comfyui gemma3 checkpoint
+                tokenizer = GemmaTokenizerFast.from_pretrained(base_te_path)
 
-        # remove the vision tower
-        text_encoder.model.vision_tower = None
-        flush()
-        
-        self.maybe_stop()
+                with init_empty_weights():
+                    text_encoder = Gemma3ForConditionalGeneration(
+                        Gemma3Config(
+                            **{
+                                "boi_token_index": 255999,
+                                "bos_token_id": 2,
+                                "eoi_token_index": 256000,
+                                "eos_token_id": 106,
+                                "image_token_index": 262144,
+                                "initializer_range": 0.02,
+                                "mm_tokens_per_image": 256,
+                                "model_type": "gemma3",
+                                "pad_token_id": 0,
+                                "text_config": {
+                                    "attention_bias": False,
+                                    "attention_dropout": 0.0,
+                                    "attn_logit_softcapping": None,
+                                    "cache_implementation": "hybrid",
+                                    "final_logit_softcapping": None,
+                                    "head_dim": 256,
+                                    "hidden_activation": "gelu_pytorch_tanh",
+                                    "hidden_size": 3840,
+                                    "initializer_range": 0.02,
+                                    "intermediate_size": 15360,
+                                    "max_position_embeddings": 131072,
+                                    "model_type": "gemma3_text",
+                                    "num_attention_heads": 16,
+                                    "num_hidden_layers": 48,
+                                    "num_key_value_heads": 8,
+                                    "query_pre_attn_scalar": 256,
+                                    "rms_norm_eps": 1e-06,
+                                    "rope_local_base_freq": 10000,
+                                    "rope_scaling": {"factor": 8.0, "rope_type": "linear"},
+                                    "rope_theta": 1000000,
+                                    "sliding_window": 1024,
+                                    "sliding_window_pattern": 6,
+                                    "torch_dtype": "bfloat16",
+                                    "use_cache": True,
+                                    "vocab_size": 262208,
+                                },
+                                "torch_dtype": "bfloat16",
+                                "transformers_version": "4.51.3",
+                                "unsloth_fixed": True,
+                                "vision_config": {
+                                    "attention_dropout": 0.0,
+                                    "hidden_act": "gelu_pytorch_tanh",
+                                    "hidden_size": 1152,
+                                    "image_size": 896,
+                                    "intermediate_size": 4304,
+                                    "layer_norm_eps": 1e-06,
+                                    "model_type": "siglip_vision_model",
+                                    "num_attention_heads": 16,
+                                    "num_channels": 3,
+                                    "num_hidden_layers": 27,
+                                    "patch_size": 14,
+                                    "torch_dtype": "bfloat16",
+                                    "vision_use_head": False,
+                                },
+                            }
+                        )
+                    )
+                te_state_dict = load_file(self.model_config.te_name_or_path)
+                te_state_dict = convert_comfy_gemma3_to_transformers(te_state_dict)
+                for key in te_state_dict:
+                    te_state_dict[key] = te_state_dict[key].to(dtype)
 
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
+                text_encoder.load_state_dict(te_state_dict, assign=True, strict=True)
+                del te_state_dict
+                flush()
+            elif self.model_config.te_name_or_path is not None:
+                # a repo or folder
+                tokenizer = GemmaTokenizerFast.from_pretrained(
+                    self.model_config.te_name_or_path
+                )
+                text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                    self.model_config.te_name_or_path, dtype=dtype
+                )
+            elif self.ltx_te_path is not None:
+                # pull from model specific te
+                tokenizer = GemmaTokenizerFast.from_pretrained(self.ltx_te_path)
+                text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                    self.ltx_te_path, dtype=dtype
+                )
+            else:
+                # using combo hf repo
+                tokenizer = GemmaTokenizerFast.from_pretrained(
+                    self.model_config.name_or_path, subfolder="tokenizer"
+                )
+                text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                    self.model_config.name_or_path, subfolder="text_encoder", dtype=dtype
+                )
+
+            # remove the vision tower
+            text_encoder.model.vision_tower = None
             flush()
 
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-                ignore_modules=[
-                    text_encoder.model.language_model.base_model.embed_tokens
-                ],
-            )
+            self.maybe_stop()
 
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
+            if self.model_config.quantize_te:
+                self.print_and_status_update("Quantizing Text Encoder")
+                quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+                freeze(text_encoder)
+                flush()
+
+            if (
+                self.model_config.layer_offloading
+                and self.model_config.layer_offloading_text_encoder_percent > 0
+            ):
+                MemoryManager.attach(
+                    text_encoder,
+                    self.device_torch,
+                    offload_percent=self.model_config.layer_offloading_text_encoder_percent,
+                    ignore_modules=[
+                        text_encoder.model.language_model.base_model.embed_tokens
+                    ],
+                )
+
+            text_encoder.to(self.device_torch, dtype=dtype)
+            flush()
 
         self.print_and_status_update("Loading VAEs and other components")
         if combined_state_dict is not None:
@@ -523,18 +567,21 @@ class LTX2Model(BaseModel):
 
         self.print_and_status_update("Preparing Model")
 
-        text_encoder = [pipe.text_encoder]
-        tokenizer = [pipe.tokenizer]
-
         # leave it on cpu for now
         if not self.low_vram:
             pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
-        text_encoder[0].requires_grad_(False)
-        text_encoder[0].eval()
+
+        if pipe.text_encoder is not None:
+            text_encoder = [pipe.text_encoder]
+            tokenizer = [pipe.tokenizer]
+            text_encoder[0].to(self.device_torch)
+            text_encoder[0].requires_grad_(False)
+            text_encoder[0].eval()
+        else:
+            text_encoder = []
+            tokenizer = []
         flush()
 
         # save it to the model class
@@ -680,7 +727,7 @@ class LTX2Model(BaseModel):
             vocoder=unwrap_model(self.pipeline.vocoder),
         )
         pipeline.transformer = unwrap_model(self.model)
-        pipeline.text_encoder = unwrap_model(self.text_encoder[0])
+        pipeline.text_encoder = unwrap_model(self.text_encoder[0]) if self.text_encoder else None
 
         pipeline = pipeline.to(self.device_torch)
 
@@ -783,6 +830,21 @@ class LTX2Model(BaseModel):
         if self._has_distill_lora():
             self._apply_distill_lora(pipeline)
 
+        # When using Gemma API the pipeline receives post-connector embeddings [batch, seq, 4096+2048].
+        # Temporarily replace pipeline.connectors with a passthrough that splits them.
+        _orig_connectors = None
+        if self.model_config.gemma_api_key is not None:
+            _video_hidden_dim = pipeline.connectors.config.video_hidden_dim
+
+            class _GemmaAPIConnectorPassthrough(torch.nn.Module):
+                def forward(self, text_embeds, attn_mask, **kwargs):
+                    video = text_embeds[..., :_video_hidden_dim]
+                    audio = text_embeds[..., _video_hidden_dim:]
+                    return video, audio, attn_mask
+
+            _orig_connectors = pipeline.connectors
+            pipeline.connectors = _GemmaAPIConnectorPassthrough()
+
         try:
             video, audio = pipeline(
                 prompt_embeds=conditional_embeds.text_embeds.to(
@@ -812,6 +874,8 @@ class LTX2Model(BaseModel):
         finally:
             if self._has_distill_lora():
                 self._remove_distill_lora(pipeline)
+            if _orig_connectors is not None:
+                pipeline.connectors = _orig_connectors
 
         if self.low_vram:
             # Restore no tiling
@@ -1046,22 +1110,31 @@ class LTX2Model(BaseModel):
                     latents=None,
                 )
 
-            if self.pipeline.connectors.device != self.transformer.device:
-                self.pipeline.connectors.to(self.transformer.device)
+            if self.model_config.gemma_api_key is not None:
+                # API returns post-connector embeddings: [batch, seq, video_hidden_dim + audio_hidden_dim]
+                # e.g. [batch, seq, 4096 + 2048] = [batch, seq, 6144] — connectors already applied server-side
+                video_hidden_dim = self.pipeline.connectors.config.video_hidden_dim
+                api_embeds = text_embeddings.text_embeds.to(self.transformer.dtype)
+                connector_prompt_embeds = api_embeds[..., :video_hidden_dim]
+                connector_audio_prompt_embeds = api_embeds[..., video_hidden_dim:]
+                connector_attention_mask = text_embeddings.attention_mask
+            else:
+                if self.pipeline.connectors.device != self.transformer.device:
+                    self.pipeline.connectors.to(self.transformer.device)
 
-            # Padding side for default Gemma3-12B text encoder
-            tokenizer_padding_side = "left"
-            if getattr(self, "tokenizer", None) is not None:
-                tokenizer_padding_side = getattr(self.tokenizer, "padding_side", "left")
-            (
-                connector_prompt_embeds,
-                connector_audio_prompt_embeds,
-                connector_attention_mask,
-            ) = self.pipeline.connectors(
-                text_embeddings.text_embeds,
-                text_embeddings.attention_mask.to(self.transformer.dtype),
-                padding_side=tokenizer_padding_side,
-            )
+                # Padding side for default Gemma3-12B text encoder
+                tokenizer_padding_side = "left"
+                if getattr(self, "tokenizer", None) is not None:
+                    tokenizer_padding_side = getattr(self.tokenizer, "padding_side", "left")
+                (
+                    connector_prompt_embeds,
+                    connector_audio_prompt_embeds,
+                    connector_attention_mask,
+                ) = self.pipeline.connectors(
+                    text_embeddings.text_embeds,
+                    text_embeddings.attention_mask.to(self.transformer.dtype),
+                    padding_side=tokenizer_padding_side,
+                )
 
             # compute video and audio positional ids
             video_coords = self.transformer.rope.prepare_video_coords(
@@ -1121,7 +1194,65 @@ class LTX2Model(BaseModel):
 
         return unpacked_output
 
+    # Minimum seconds between consecutive API calls to stay within rate limits
+    _GEMMA_API_CALL_INTERVAL = 0.25
+
+    def _encode_via_gemma_api(self, prompts: List[str]) -> PromptEmbeds:
+        if self._gemma_model_id is None:
+            raise RuntimeError(
+                "Gemma model_id not available. Ensure name_or_path is a .safetensors checkpoint "
+                "with 'encrypted_wandb_properties' metadata."
+            )
+        api_key = self.model_config.gemma_api_key
+        all_embeds = []
+        all_masks = []
+        for prompt in prompts:
+            # Throttle consecutive calls to respect API rate limits
+            elapsed = time.monotonic() - self._gemma_api_last_call_time
+            if elapsed < self._GEMMA_API_CALL_INTERVAL:
+                time.sleep(self._GEMMA_API_CALL_INTERVAL - elapsed)
+            # API rejects empty strings; use a single space for unconditional/negative prompts
+            api_prompt = prompt if prompt and prompt.strip() else " "
+            payload = {"prompt": api_prompt, "model_id": self._gemma_model_id, "enhance_prompt": False}
+            try:
+                response = requests.post(
+                    f"{LTXV_API_BASE_URL}/v1/prompt-embedding",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    timeout=60,
+                )
+                if response.status_code == 401:
+                    raise RuntimeError("Invalid Gemma API key. Generate one at: https://console.ltx.video/")
+                if response.status_code == 429:
+                    # Rate limited — back off and retry once
+                    time.sleep(5.0)
+                    response = requests.post(
+                        f"{LTXV_API_BASE_URL}/v1/prompt-embedding",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        timeout=60,
+                    )
+                if response.status_code != 200:
+                    raise RuntimeError(f"Gemma API request failed ({response.status_code}): {response.text}")
+                self._gemma_api_last_call_time = time.monotonic()
+                conditioning = pickle.load(io.BytesIO(response.content))
+                # response format: [[text_embeds[1,1024,6144], {"pooled_output": None, "attention_mask": mask[1,1024]}]]
+                text_embeds = conditioning[0][0].cpu().to(self.torch_dtype)
+                attention_mask = conditioning[0][1]["attention_mask"].cpu()
+                all_embeds.append(text_embeds)
+                all_masks.append(attention_mask)
+            except RuntimeError:
+                raise
+            except Exception as e:
+                raise RuntimeError(f"Gemma API request failed: {e}") from e
+        pe = PromptEmbeds([torch.cat(all_embeds, dim=0), None])
+        pe.attention_mask = torch.cat(all_masks, dim=0)
+        return pe
+
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
+        if self.model_config.gemma_api_key is not None:
+            return self._encode_via_gemma_api(prompt)
+
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
 

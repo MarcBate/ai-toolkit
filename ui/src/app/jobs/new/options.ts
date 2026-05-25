@@ -30,6 +30,7 @@ type AdditionalSections =
   | 'model.multistage'
   | 'model.layer_offloading'
   | 'model.low_vram'
+  | 'model.gemma_api'
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path';
 
@@ -683,7 +684,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'model.gemma_api', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
   },
   {
     name: 'ltx2.3',
@@ -711,7 +712,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'model.gemma_api', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
   },
   {
     name: 'flux2_klein_4b',

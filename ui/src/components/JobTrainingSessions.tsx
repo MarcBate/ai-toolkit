@@ -65,49 +65,49 @@ export default function JobTrainingSessions({ job }: Props) {
   const anyEstimated = data.sessions.some(s => s.estimated);
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 text-sm">
+    <div className="text-sm">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-gray-200 hover:bg-gray-700/50 rounded-lg transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2 text-gray-400 hover:text-gray-300 transition-colors"
       >
         <div className="flex items-center gap-3">
-          <div className="h-2 w-2 rounded-full bg-purple-400 shrink-0" />
-          <span className="font-medium">Training time</span>
-          <span className="text-gray-400 font-normal">
+          <div className="h-1.5 w-1.5 rounded-full bg-purple-500/70 shrink-0" />
+          <span className="text-gray-400">Training time</span>
+          <span className="text-gray-600">
             {formatDuration(data.total_seconds)} total
-            <span className="ml-2 text-gray-500">
+            <span className="ml-2">
               ({data.sessions.length} {data.sessions.length === 1 ? 'session' : 'sessions'})
             </span>
             {anyEstimated && (
-              <span className="ml-2 text-yellow-600/70 text-xs">estimated</span>
+              <span className="ml-2 text-yellow-700/60 text-xs">estimated</span>
             )}
           </span>
         </div>
         {expanded ? (
-          <MdExpandLess className="text-gray-400 shrink-0" />
+          <MdExpandLess className="text-gray-600 shrink-0" />
         ) : (
-          <MdExpandMore className="text-gray-400 shrink-0" />
+          <MdExpandMore className="text-gray-600 shrink-0" />
         )}
       </button>
 
       {expanded && (
-        <div className="border-t border-gray-700 px-4 py-2 space-y-1">
+        <div className="px-4 pt-1 pb-2 space-y-0.5">
           {anyEstimated && (
-            <p className="text-xs text-yellow-600/70 pb-1">
+            <p className="text-xs text-yellow-700/60 pb-1">
               Durations are estimated from step timestamps — model load time is not included.
             </p>
           )}
           {data.sessions.map((session, i) => (
-            <div key={i} className="flex items-center justify-between py-1.5 text-xs">
-              <div className="flex items-center gap-2 text-gray-300">
-                <span className="text-gray-500 w-5 text-right">{i + 1}.</span>
+            <div key={i} className="flex items-center justify-between py-1 text-xs">
+              <div className="flex items-center gap-2 text-gray-500">
+                <span className="w-5 text-right">{i + 1}.</span>
                 <span>{formatDateTime(session.start_time)}</span>
               </div>
-              <span className="text-gray-400 font-mono">
+              <span className="text-gray-600 font-mono">
                 {session.duration_seconds !== null
                   ? formatDuration(session.duration_seconds)
-                  : <span className="text-gray-600">in progress</span>}
+                  : <span className="text-gray-700">in progress</span>}
               </span>
             </div>
           ))}

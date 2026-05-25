@@ -29,6 +29,7 @@ import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
+import useSettings from '@/hooks/useSettings';
 
 type Props = {
   jobConfig: JobConfig;
@@ -62,6 +63,10 @@ export default function SimpleJob({
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
   }, [jobConfig.config.process[0].model.arch]);
+
+  const { settings: globalSettings } = useSettings();
+  const gemmaApiKeyConfigured = !!(globalSettings.GEMMA_API_KEY && globalSettings.GEMMA_API_KEY.trim() !== '');
+  const useGemmaApi = !!(jobConfig.config.process[0].model.use_gemma_api);
 
   const jobType = useMemo(() => {
     return jobTypeOptions.find(j => j.value === jobConfig.config.process[0].type);
@@ -313,6 +318,25 @@ export default function SimpleJob({
                   checked={jobConfig.config.process[0].model.low_vram}
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
+                {modelArch?.additionalSections?.includes('model.gemma_api') && (
+                  <Checkbox
+                    label={
+                      gemmaApiKeyConfigured
+                        ? 'Use Gemma API (saves ~24 GB VRAM)'
+                        : 'Use Gemma API (set key in Settings)'
+                    }
+                    checked={jobConfig.config.process[0].model.use_gemma_api || false}
+                    docKey="model.gemma_api"
+                    disabled={!gemmaApiKeyConfigured}
+                    onChange={value => {
+                      setJobConfig(value, 'config.process[0].model.use_gemma_api');
+                      if (value) {
+                        setJobConfig(true, 'config.process[0].train.cache_text_embeddings');
+                        setJobConfig(false, 'config.process[0].train.unload_text_encoder');
+                      }
+                    }}
+                  />
+                )}
               </FormGroup>
             )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
@@ -323,7 +347,7 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
               />
             )}
-            {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && (
+            {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && !useGemmaApi && (
               <>
                 <Checkbox
                   label={
@@ -382,7 +406,7 @@ export default function SimpleJob({
                 }}
                 options={transformerQuantizationOptions}
               />
-              {!disableSections.includes('model.quantize_te') && (
+              {!disableSections.includes('model.quantize_te') && !useGemmaApi && (
                 <SelectInput
                   label="Text Encoder"
                   value={

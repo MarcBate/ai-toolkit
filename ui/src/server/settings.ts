@@ -48,6 +48,23 @@ export const getTrainingFolder = async () => {
   return trainingRoot as string;
 };
 
+export const getGemmaApiKey = async () => {
+  const key = 'GEMMA_API_KEY';
+  let apiKey = myCache.get(key) as string;
+  if (apiKey) {
+    return apiKey;
+  }
+  let row = await prisma.settings.findFirst({
+    where: { key: key },
+  });
+  apiKey = '';
+  if (row?.value && row.value !== '') {
+    apiKey = row.value;
+  }
+  myCache.set(key, apiKey);
+  return apiKey;
+};
+
 export const getHFToken = async () => {
   const key = 'HF_TOKEN';
   let token = myCache.get(key) as string;

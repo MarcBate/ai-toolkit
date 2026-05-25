@@ -679,7 +679,14 @@ class ModelConfig:
         self.split_model_other_module_param_count_scale = kwargs.get("split_model_other_module_param_count_scale", 0.3)
         
         self.te_name_or_path = kwargs.get("te_name_or_path", None)
-        
+
+        # API key for LTX Gemma text encoding — skips loading the 12B Gemma model locally.
+        # Can also be set via the GEMMA_API_KEY environment variable (injected by the UI from Settings).
+        self.gemma_api_key: Optional[str] = kwargs.get("gemma_api_key", None)
+        # When True and no explicit gemma_api_key is given, read the key from the GEMMA_API_KEY env var.
+        # Set this via the UI checkbox; the key itself comes from Settings.
+        self.use_gemma_api: bool = kwargs.get("use_gemma_api", False)
+
         self.arch: ModelArch = kwargs.get("arch", None)
         
         # auto memory management, only for some models
@@ -1211,7 +1218,33 @@ class GenerateImageConfig:
         # join with folder
         return os.path.join(self.output_folder, filename)
 
+    def _build_civitai_parameters(self) -> str:
+        parts = [self.prompt]
+        if self.negative_prompt:
+            parts.append(f"Negative prompt: {self.negative_prompt}")
+        meta_parts = [
+            f"Steps: {self.num_inference_steps}",
+            f"CFG scale: {self.guidance_scale}",
+            f"Seed: {self.seed}",
+            f"Size: {self.width}x{self.height}",
+        ]
+        if self.num_frames > 1:
+            meta_parts.append(f"Frames: {self.num_frames}")
+            meta_parts.append(f"FPS: {self.fps}")
+        parts.append(", ".join(meta_parts))
+        return "\n".join(parts)
+
+    def _embed_mp4_metadata(self, output_path: str):
+        try:
+            from mutagen.mp4 import MP4
+            mp4 = MP4(output_path)
+            mp4['©cmt'] = [self._build_civitai_parameters()]
+            mp4.save()
+        except Exception:
+            pass
+
     def save_image(self, image, count: int = 0, max_count=0):
+        import numpy as np
         # make parent dirs
         os.makedirs(self.output_folder, exist_ok=True)
         self.set_gen_time()
@@ -1219,13 +1252,14 @@ class GenerateImageConfig:
             # video
             if self.num_frames == 1:
                 raise ValueError(f"Expected 1 img but got a list {len(image)}")
-            if self.num_frames > 1 and self.output_ext not in ['webp']:
+            if self.num_frames > 1 and self.output_ext not in ['webp', 'mp4']:
                 self.output_ext = 'webp'
+            output_path = self.get_image_path(count, max_count)
             if self.output_ext == 'webp':
                 # save as animated webp
                 duration = 1000 // self.fps  # Convert fps to milliseconds per frame
                 image[0].save(
-                    self.get_image_path(count, max_count),
+                    output_path,
                     format='WEBP',
                     append_images=image[1:],
                     save_all=True,
@@ -1233,23 +1267,45 @@ class GenerateImageConfig:
                     loop=0,  # 0 means loop forever
                     quality=80  # Quality setting (0-100)
                 )
+            elif self.output_ext == 'mp4':
+                import av
+                container = av.open(output_path, mode='w')
+                stream = container.add_stream('libx264', rate=self.fps)
+                first_np = np.array(image[0])
+                stream.height = first_np.shape[0]
+                stream.width = first_np.shape[1]
+                stream.pix_fmt = 'yuv420p'
+                for pil_frame in image:
+                    frame = av.VideoFrame.from_ndarray(np.array(pil_frame), format='rgb24')
+                    for packet in stream.encode(frame):
+                        container.mux(packet)
+                for packet in stream.encode():
+                    container.mux(packet)
+                container.close()
+                self._embed_mp4_metadata(output_path)
             else:
                 raise ValueError(f"Unsupported video format {self.output_ext}")
         elif self.output_ext in ['wav', 'mp3', 'flac', 'ogg']:
             # save audio file
             audio_path = self.get_image_path(count, max_count)
             torchaudio.save(
-                audio_path, 
+                audio_path,
                 image[0].to('cpu'),
-                sample_rate=48000, 
-                format=None, 
+                sample_rate=48000,
+                format=None,
                 backend=None
             )
             if self.output_ext == 'mp3':
                 add_album_artwork(audio_path)
         else:
-            # TODO save image gen header info for A1111 and us, our seeds probably wont match
-            image.save(self.get_image_path(count, max_count))
+            output_path = self.get_image_path(count, max_count)
+            if self.output_ext == 'png':
+                from PIL import PngImagePlugin
+                pnginfo = PngImagePlugin.PngInfo()
+                pnginfo.add_text("parameters", self._build_civitai_parameters())
+                image.save(output_path, pnginfo=pnginfo)
+            else:
+                image.save(output_path)
             # do prompt file
             if self.add_prompt_file:
                 self.save_prompt_file(count, max_count)

@@ -35,3 +35,15 @@ export const getHFToken = async () => {
   }
   return token;
 };
+
+export const getGemmaApiKey = async () => {
+  const key = 'GEMMA_API_KEY';
+  let row = await prisma.settings.findFirst({
+    where: { key: key },
+  });
+  let apiKey = '';
+  if (row?.value && row.value !== '') {
+    apiKey = row.value;
+  }
+  return apiKey;
+};

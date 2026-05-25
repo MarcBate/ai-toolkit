@@ -310,9 +310,13 @@ def quantize_model(
             freeze(block)
             block.to("cpu", non_blocking=True)
 
-        # todo, on extras find a universal way to quantize them on device and move them back to their original
-        # device without having to move the transformer blocks to the device first
+        # Quantize the extras (non-transformer-block children) that weren't handled block-by-block above.
+        # We skip the already-frozen transformer block lists to avoid rescanning thousands of frozen
+        # sub-modules, which would be extremely slow on large models like LTX2-22B.
         base_model.print_and_status_update(" - quantizing extras")
-        # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
-        quantize(model_to_quantize, weights=quantization_type)
+        skip_children = set(name for name in transformer_block_names if getattr(model_to_quantize, name, None) is not None)
+        for child_name, child_module in model_to_quantize.named_children():
+            if child_name not in skip_children:
+                quantize(child_module, weights=quantization_type)
+                freeze(child_module)
         freeze(model_to_quantize)

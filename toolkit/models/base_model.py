@@ -1587,6 +1587,8 @@ class BaseModel:
         self.set_device_state(state)
 
     def text_encoder_to(self, *args, **kwargs):
+        if self.text_encoder is None:
+            return
         if isinstance(self.text_encoder, list):
             for encoder in self.text_encoder:
                 encoder.to(*args, **kwargs)

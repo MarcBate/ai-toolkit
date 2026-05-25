@@ -5,6 +5,7 @@ import { apiClient } from '@/utils/api';
 
 export interface Settings {
   HF_TOKEN: string;
+  GEMMA_API_KEY: string;
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
   VERSION: string;
@@ -13,6 +14,7 @@ export interface Settings {
 export default function useSettings() {
   const [settings, setSettings] = useState({
     HF_TOKEN: '',
+    GEMMA_API_KEY: '',
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
     VERSION: '',
@@ -26,6 +28,7 @@ export default function useSettings() {
         console.log('Settings:', data);
         setSettings({
           HF_TOKEN: data.HF_TOKEN || '',
+          GEMMA_API_KEY: data.GEMMA_API_KEY || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
           VERSION: data.VERSION || '',

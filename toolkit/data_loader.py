@@ -532,7 +532,11 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
-                    text_embedding_space_version=self.sd.model_config.arch if self.sd else "sd1",
+                    text_embedding_space_version=(
+                        (self.sd.model_config.arch + "_gemma_api")
+                        if self.sd and getattr(self.sd.model_config, 'gemma_api_key', None) is not None
+                        else (self.sd.model_config.arch if self.sd else "sd1")
+                    ),
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
                     temporal_compression=temporal_compression,

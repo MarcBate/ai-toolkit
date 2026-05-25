@@ -15,6 +15,7 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 - Edit sample prompts while training, but not applied yet if you unloaded text encoder
 - Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
 - Generate LTX-2.3 sample videos in 8 steps with the distilled LoRA instead of 30 steps.
+- Train LTX-2.3 without loading the 12B Gemma text encoder locally — use the free LTX Gemma API instead.
 - Stop training job even in the middle of sample generation or model quantization.
 
 ### UI — Queue & Job Management
@@ -791,3 +792,49 @@ model:
 Includes the same PEFT 0.18.x `dispatch_torchao` workaround and stale-adapter
 cleanup used by the LightX2V implementation so it works on quantized models and
 doesn't raise "adapter name already in use" on repeated sample calls.
+
+---
+
+#### 2026-05-25 — LTX-2.3 Gemma API text encoding (skip loading the 12B text encoder)
+
+`extensions_built_in/diffusion_models/ltx2/ltx2.py`, `toolkit/config_modules.py`:
+
+Adds a `gemma_api_key` model config option that routes all text encoding through
+the free [LTX Gemma Text Encoding API](https://api.ltx.video) instead of loading
+the 12B Gemma model locally. This frees ~24 GB of VRAM/RAM during LTX-2.3 training.
+
+The API returns post-connector embeddings (`[batch, 1024, 6144]` bfloat16 —
+4096 video + 2048 audio dims), which are split and passed directly to the transformer,
+bypassing the local connector step. Caching, training, and sampling all work
+transparently; the API cache uses a separate on-disk key from local-encoder caches
+so switching between modes never causes stale-embedding mismatches.
+
+**How to use:**
+
+1. Get a free key: visit [console.ltx.video](https://console.ltx.video), sign up or
+   log in, then navigate to the API section to generate your key.
+
+2. Add to your training config:
+
+```yaml
+model:
+  name_or_path: "/path/to/ltx-2.3-22b-dev.safetensors"
+  gemma_api_key: "ltxv_your_key_here"
+```
+
+3. Enable text embedding caching in your dataset config so API calls happen once
+   per caption up front, not on every training step:
+
+```yaml
+datasets:
+  - folder_path: "/path/to/dataset"
+    cache_text_embeddings: true
+```
+
+**Notes:**
+- `name_or_path` must be the `.safetensors` combined checkpoint (not a folder/repo).
+  The model ID is extracted from the file's metadata at load time.
+- Sampling prompts are encoded live via the API each time a sample is generated
+  (one call per prompt per sample run). This is fast enough for infrequent sampling.
+- `te_name_or_path`, `quantize_te`, and `layer_offloading_text_encoder_percent`
+  are ignored when `gemma_api_key` is set.

@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken } from '../paths';
+import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey } from '../paths';
 import { resolvePythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -126,6 +126,12 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
     const hfToken = await getHFToken();
     if (hfToken && hfToken.trim() !== '') {
       additionalEnv.HF_TOKEN = hfToken;
+    }
+
+    // GEMMA_API_KEY — injected so Python can use it without embedding it in the config YAML
+    const gemmaApiKey = await getGemmaApiKey();
+    if (gemmaApiKey && gemmaApiKey.trim() !== '') {
+      additionalEnv.GEMMA_API_KEY = gemmaApiKey;
     }
 
     // Add the --log argument to the command

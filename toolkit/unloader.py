@@ -41,6 +41,10 @@ def unload_text_encoder(model: "BaseModel"):
 
     if model.text_encoder is not None:
         if isinstance(model.text_encoder, list):
+            # Empty list means no text encoder was loaded (e.g. API mode) — nothing to unload
+            if not model.text_encoder:
+                flush()
+                return
             text_encoder_list = []
             pipe = model.pipeline
 
@@ -49,7 +53,8 @@ def unload_text_encoder(model: "BaseModel"):
                 original_config = getattr(pipe.text_encoder, 'config', None)
                 te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype, config=original_config)
                 text_encoder_list.append(te)
-                pipe.text_encoder.to('cpu')
+                if pipe.text_encoder is not None:
+                    pipe.text_encoder.to('cpu')
                 pipe.text_encoder = te
 
             i = 2

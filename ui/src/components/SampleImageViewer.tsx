@@ -158,6 +158,28 @@ export default function SampleImageViewer({
     return sampleConfig.samples[imgInfo.promptIdx];
   }, [sampleConfig, imgInfo.promptIdx]);
 
+  const [metadataPrompt, setMetadataPrompt] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!imgPath) {
+      setMetadataPrompt(null);
+      return;
+    }
+    setMetadataPrompt(null);
+    let cancelled = false;
+    apiClient
+      .post('/api/img/metadata', { imgPath })
+      .then(res => {
+        if (!cancelled && res.data?.prompt) setMetadataPrompt(res.data.prompt);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [imgPath]);
+
+  const displayedPrompt = metadataPrompt ?? sampleItem?.prompt ?? null;
+
   const controlImages = useMemo<string[]>(() => {
     if (!imgPath) return [];
     let controlImageArr: string[] = [];
@@ -341,11 +363,11 @@ export default function SampleImageViewer({
             {/* # make full width */}
             <div className="bg-gray-950 text-sm flex justify-between items-center px-4 py-2">
               <div className="flex-1 relative h-10 min-w-0">
-                {sampleItem?.prompt && (
+                {displayedPrompt && (
                   <div className="absolute inset-0 grid place-items-center overflow-auto mr-4">
                     <div className="w-full">
                       <span className="text-gray-400 mr-1">Prompt:</span>
-                      <span className="whitespace-pre-wrap break-words">{sampleItem.prompt}</span>
+                      <span className="whitespace-pre-wrap break-words">{displayedPrompt}</span>
                     </div>
                   </div>
                 )}
