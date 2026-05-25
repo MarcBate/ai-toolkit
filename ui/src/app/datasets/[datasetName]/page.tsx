@@ -3,7 +3,9 @@
 import { useEffect, useState, use, useMemo, useRef, useCallback } from 'react';
 import { LuImageOff, LuLoader, LuBan, LuSearch } from 'react-icons/lu';
 import { FaChevronLeft, FaChevronUp, FaChevronDown, FaExclamationTriangle } from 'react-icons/fa';
+import { VirtuosoGrid, VirtuosoGridHandle } from 'react-virtuoso';
 import DatasetImageCard from '@/components/DatasetImageCard';
+import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
@@ -38,6 +40,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const [findNavKey, setFindNavKey] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
   const { settings, isSettingsLoaded } = useSettings();
+  const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
+  const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
+  const virtuosoRef = useRef<VirtuosoGridHandle | null>(null);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('filterHistory');
@@ -62,14 +69,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
-    console.log('Fetching images for dataset:', dbName);
     apiClient
       .post('/api/datasets/listImages', { datasetName: dbName })
       .then((res: any) => {
         const data = res.data;
-        console.log('Images:', data.images);
-        // sort
-        data.images.sort((a: { img_path: string }, b: { img_path: string }) => a.img_path.localeCompare(b.img_path));
+        // Server already sorts; avoid the client-side sort that's expensive on large lists.
         setImgList(data.images);
         setStatus('success');
       })
@@ -89,9 +93,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const filteredImgList = useMemo(() => {
     if (!filter) return imgList;
 
-    const lowerFilter = filter.toLowerCase();
-
-    // Helper to escape regex special characters
     const escapeRegExp = (string: string) => {
       return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     };
@@ -100,22 +101,16 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
       term = term.trim();
       if (!term) return true;
 
-      // Check if term is quoted
       if (term.startsWith('"') && term.endsWith('"')) {
         const exactTerm = term.slice(1, -1);
         if (!exactTerm) return true;
-        // Whole word search using regex with word boundaries
-        // Ensure we support Unicode word boundaries if needed,
-        // but for "he" standard \b should work unless there are punctuation issues
         const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escapeRegExp(exactTerm)}([^a-zA-Z0-9_]|$)`, 'i');
         return regex.test(caption);
       }
 
-      // Default partial match
       return caption.toLowerCase().includes(term.toLowerCase());
     };
 
-    // Function to split by operator while respecting quotes
     const splitByOperator = (input: string, operator: 'and' | 'or') => {
       const regex = new RegExp(`\\s+${operator}\\s+`, 'gi');
       const parts: string[] = [];
@@ -124,7 +119,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
       while ((match = regex.exec(input)) !== null) {
         const part = input.slice(lastIndex, match.index).trim();
-        // Only split if we're not inside quotes
         const quoteCount = (part.match(/"/g) || []).length;
         if (quoteCount % 2 === 0) {
           parts.push(part);
@@ -135,14 +129,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
       return parts.filter(p => p !== '');
     };
 
-    // support OR and AND
-    // if there is an OR, split by OR and check if any part matches
     const orParts = splitByOperator(filter, 'or');
     if (orParts.length > 1) {
       return imgList.filter(img => {
         const caption = img.caption || '';
         return orParts.some(part => {
-          // even in OR parts, there might be ANDs
           const andParts = splitByOperator(part, 'and');
           if (andParts.length > 1) {
             return andParts.every(subPart => matchesTerm(caption, subPart));
@@ -152,7 +143,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
       });
     }
 
-    // if there is an AND, split by AND and check if all parts match
     const andParts = splitByOperator(filter, 'and');
     if (andParts.length > 1) {
       return imgList.filter(img => {
@@ -161,10 +151,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
       });
     }
 
-    // default simple search
     return imgList.filter(img => matchesTerm(img.caption || '', filter));
   }, [imgList, filter]);
   useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
+
+  const imgPaths = useMemo(() => imgList.map(img => img.img_path), [imgList]);
 
   useEffect(() => {
     if (datasetName) {
@@ -200,7 +191,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
     let found = false;
 
-    // Search from searchIdx to end
     for (let i = 0; i < imgList.length; i++) {
       const idx = direction === 'prev'
         ? (searchIdx - i + imgList.length) % imgList.length
@@ -210,7 +200,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
       const match = caption.match(regex);
       if (match) {
         let charIndex = match.index || 0;
-        // If wholeWord, match[1] might be the prefix boundary, so skip it
         if (wholeWord && match[1]) {
             charIndex += match[1].length;
         }
@@ -220,10 +209,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
         setFindResultStatus('found');
         setFindNavKey(prev => prev + 1);
         found = true;
-        // Scroll to the image
-        const element = document.getElementById(`image-card-${idx}`);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Scroll to the item via VirtuosoGrid (works even with virtualized rendering).
+        const filteredIdx = filteredImgList.findIndex(i => i.img_path === imgList[idx].img_path);
+        if (filteredIdx !== -1 && virtuosoRef.current) {
+          virtuosoRef.current.scrollToIndex({ index: filteredIdx, behavior: 'smooth', align: 'center' });
         }
         break;
       }
@@ -245,11 +235,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     let newCaption = oldCaption;
 
     if (wholeWord) {
-      // For whole word replacement with regex that has captures, we need to be careful
-      // to preserve the boundaries.
       newCaption = oldCaption.replace(regex, (match, p1, p2) => {
-        // match might include boundaries if wholeWord is true
-        // My pattern for wholeWord: (^|[^a-zA-Z0-9_])PATTERN([^a-zA-Z0-9_]|$)
         return (p1 || '') + replaceText + (p2 || '');
       });
     } else {
@@ -257,7 +243,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     }
 
     if (newCaption !== oldCaption) {
-      // Save to backend
       apiClient
         .post('/api/img/caption', { imgPath: currentImg.img_path, caption: newCaption })
         .then(() => {
@@ -301,10 +286,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
     if (updates.length === 0) return;
 
-    // Send all updates to backend
-    // Assuming backend can handle multiple or we do them in sequence
-    // For now, let's do them in sequence or check if there's a bulk API
-    // Since there isn't a known bulk API, we'll do them one by one but update UI immediately
     setImgList(newList);
 
     Promise.all(
@@ -313,7 +294,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
       ),
     ).catch(err => {
       console.error('Error during replace all:', err);
-      // Optional: refresh list if something failed to be sure UI is in sync
       refreshImageList(datasetName);
     });
   };
@@ -321,7 +301,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const openFindReplace = useCallback(() => {
     setIsFindReplaceOpen(true);
     setFindResultStatus('none');
-    // Focus the input in the next tick
     setTimeout(() => {
       findInputRef.current?.focus();
       findInputRef.current?.select();
@@ -423,7 +402,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
             onChange={e => setFilter(e.target.value)}
             onFocus={() => setShowHistory(true)}
             onBlur={() => {
-              // Delay hiding to allow clicking on history items
               setTimeout(() => setShowHistory(false), 200);
               addToHistory(filter);
             }}
@@ -479,44 +457,59 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
           </Button>
         </div>
       </TopBar>
-      <MainContent>
+      <MainContent ref={scrollParentCallback}>
         {PageInfoContent}
-        {status === 'success' && filteredImgList.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {filteredImgList.map((img, index) => {
+        {status === 'success' && filteredImgList.length > 0 && scrollParent && (
+          <VirtuosoGrid
+            ref={virtuosoRef}
+            totalCount={filteredImgList.length}
+            customScrollParent={scrollParent}
+            overscan={400}
+            listClassName="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
+            itemContent={index => {
+              const img = filteredImgList[index];
+              if (!img) return null;
               const globalIndex = imgList.findIndex(i => i.img_path === img.img_path);
               const isMatch = globalIndex === findNextIndex;
               return (
-                <div key={img.img_path} id={`image-card-${globalIndex}`}>
-                  <DatasetImageCard
-                    alt="image"
-                    imageUrl={img.img_path}
-                    className={classNames({
-                      'ring-4 ring-blue-500 rounded-lg': isMatch,
-                    })}
-                    isHighlighted={isMatch}
-                    highlightText={isMatch ? findText : undefined}
-                    highlightCharIndex={isMatch ? findMatchCharIndex : -1}
-                    isAutoCaptioning={isAutoCaptioning}
-                    resetEditKey={findNavKey}
-                    onDelete={() => refreshImageList(datasetName)}
-                    onCaptionSave={(newCaption, imgPath) => {
-                      setImgList(prev =>
-                        prev.map(item => (item.img_path === imgPath ? { ...item, caption: newCaption } : item)),
-                      );
-                    }}
-                    initialCaption={img.caption}
-                  />
-                </div>
+                <DatasetImageCard
+                  alt="image"
+                  imageUrl={img.img_path}
+                  className={classNames({
+                    'ring-4 ring-blue-500 rounded-lg': isMatch,
+                  })}
+                  isHighlighted={isMatch}
+                  highlightText={isMatch ? findText : undefined}
+                  highlightCharIndex={isMatch ? findMatchCharIndex : -1}
+                  isAutoCaptioning={isAutoCaptioning}
+                  resetEditKey={findNavKey}
+                  onDelete={() => refreshImageList(datasetName)}
+                  onImageClick={() => setSelectedImgPath(img.img_path)}
+                  onCaptionSave={(newCaption, imgPath) => {
+                    setImgList(prev =>
+                      prev.map(item => (item.img_path === imgPath ? { ...item, caption: newCaption } : item)),
+                    );
+                  }}
+                  captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
+                  initialCaption={img.caption}
+                />
               );
-            })}
-          </div>
+            }}
+            computeItemKey={index => filteredImgList[index]?.img_path ?? index}
+          />
         )}
       </MainContent>
       <AddImagesModal />
       <FullscreenDropOverlay
         datasetName={datasetName}
         onComplete={() => refreshImageList(datasetName)}
+      />
+      <DatasetImageViewer
+        imgPath={selectedImgPath}
+        imageList={imgPaths}
+        onChange={setSelectedImgPath}
+        refreshImages={() => refreshImageList(datasetName)}
+        onCaptionSaved={path => setCaptionRefreshKeys(prev => ({ ...prev, [path]: (prev[path] || 0) + 1 }))}
       />
 
       <FloatingWindow
