@@ -1901,6 +1901,7 @@ class LatentCachingMixin:
 
             # use tqdm to show progress
             i = 0
+            failed_items = []
             for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
                 file_item.is_caching_to_disk = to_disk
                 file_item.is_caching_to_memory = to_memory
@@ -1936,7 +1937,12 @@ class LatentCachingMixin:
                     except Exception as e:
                         print_acc(f"Error processing image: {file_item.path}")
                         print_acc(f"Error: {str(e)}")
-                        raise e
+                        print_acc(f"Skipping image and continuing...")
+                        if hasattr(file_item, 'tensor') and file_item.tensor is not None:
+                            del file_item.tensor
+                        file_item.cleanup()
+                        failed_items.append(file_item)
+                        continue
                     # do first frame
                     is_video = self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1
                     if is_video and self.dataset_config.do_i2v:
@@ -1986,6 +1992,11 @@ class LatentCachingMixin:
 
                 file_item.is_latent_cached = True
                 i += 1
+
+            if failed_items:
+                print_acc(f" - Skipped {len(failed_items)} images due to encode errors")
+                for item in failed_items:
+                    self.file_list.remove(item)
 
             # restore device state
             print_acc(" - Latent caching complete. Restoring device state...")

@@ -1223,9 +1223,13 @@ class LTX2Model(BaseModel):
                 )
                 if response.status_code == 401:
                     raise RuntimeError("Invalid Gemma API key. Generate one at: https://console.ltx.video/")
-                if response.status_code == 429:
-                    # Rate limited — back off and retry once
-                    time.sleep(5.0)
+                # Retry on 429 (concurrency/rate limit) with exponential backoff
+                retry_delays = [5.0, 10.0, 20.0, 40.0]
+                for delay in retry_delays:
+                    if response.status_code != 429:
+                        break
+                    print(f"Gemma API rate limited, retrying in {delay:.0f}s...")
+                    time.sleep(delay)
                     response = requests.post(
                         f"{LTXV_API_BASE_URL}/v1/prompt-embedding",
                         json=payload,
