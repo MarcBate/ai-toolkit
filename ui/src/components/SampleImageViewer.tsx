@@ -31,6 +31,7 @@ export default function SampleImageViewer({
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
   const [showingControlIdx, setShowingControlIdx] = useState<number | null>(null);
+  const [promptExpanded, setPromptExpanded] = useState(false);
 
   useEffect(() => setMounted(true), []);
 
@@ -362,13 +363,21 @@ export default function SampleImageViewer({
             </div>
             {/* # make full width */}
             <div className="bg-gray-950 text-sm flex justify-between items-center px-4 py-2">
-              <div className="flex-1 relative h-10 min-w-0">
+              <div className="flex-1 min-w-0 mr-4">
                 {displayedPrompt && (
-                  <div className="absolute inset-0 grid place-items-center overflow-auto mr-4">
-                    <div className="w-full">
-                      <span className="text-gray-400 mr-1">Prompt:</span>
-                      <span className="whitespace-pre-wrap break-words">{displayedPrompt}</span>
-                    </div>
+                  <div>
+                    <span className="text-gray-400 mr-1">Prompt:</span>
+                    <span
+                      className={`whitespace-pre-wrap break-words cursor-pointer select-text block overflow-hidden transition-all duration-200 ${
+                        promptExpanded ? '' : 'line-clamp-3'
+                      }`}
+                      onClick={() => setPromptExpanded(true)}
+                      onBlur={() => setPromptExpanded(false)}
+                      tabIndex={0}
+                      title={promptExpanded ? 'Click outside to collapse' : 'Click to expand'}
+                    >
+                      {displayedPrompt}
+                    </span>
                   </div>
                 )}
               </div>
