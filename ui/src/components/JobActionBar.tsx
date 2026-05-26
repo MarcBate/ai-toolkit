@@ -13,7 +13,6 @@ import {
   markJobAsStopped,
   saveJob,
   sampleJob,
-  saveJobNow,
 } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
@@ -221,7 +220,7 @@ export default function JobActionBar({
               <div
                 className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
                 onClick={async () => {
-                  await saveJobNow(job.id);
+                  await saveJob(job.id);
                   if (onRefresh) onRefresh();
                 }}
               >

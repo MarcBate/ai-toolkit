@@ -94,7 +94,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const numSamples = useMemo(() => {
+  const configNumSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
@@ -105,14 +105,56 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return 10;
   }, [job]);
 
-  // Group samples into rows of `numSamples` for the virtualized list — one row per sample iteration.
+  // Build sampleSlots: a sparse (string | null)[] with null for steps that haven't been sampled yet,
+  // plus the sorted steps array so rows can show a step-count label.
+  const { sampleSlots, numSamples, steps } = useMemo(() => {
+    const defaultRes = { sampleSlots: sampleImages as (string | null)[], numSamples: configNumSamples, steps: [] as number[] };
+    if (sampleImages.length === 0) return defaultRes;
+
+    // 1. Parse filenames to extract step + promptIdx
+    const parsedImages = sampleImages.map(path => {
+      const filename = (path.includes('\\') ? path.split('\\') : path.split('/')).pop() || null;
+      if (!filename) return { path, step: -1, promptIdx: -1 };
+      const parts = filename.split('.')[0].split('_').filter(p => p !== '');
+      if (parts.length >= 2) {
+        const promptIdx = parseInt(parts[parts.length - 1]);
+        const step = parseInt(parts[parts.length - 2]);
+        return { path, step, promptIdx };
+      }
+      return { path, step: -1, promptIdx: -1 };
+    });
+
+    const validParsed = parsedImages.filter(
+      img => !isNaN(img.step) && img.step !== -1 && !isNaN(img.promptIdx) && img.promptIdx !== -1,
+    );
+    if (validParsed.length === 0) return defaultRes;
+
+    // 2. Identify all unique steps (sorted ascending)
+    const steps = Array.from(new Set(validParsed.map(img => img.step))).sort((a, b) => a - b);
+    const maxIdxInFiles = Math.max(...validParsed.map(img => img.promptIdx));
+    const eNumSamples = Math.max(configNumSamples, maxIdxInFiles + 1);
+
+    // 3. Build sparse slots array (null where a sample hasn't been generated yet)
+    const slots: (string | null)[] = [];
+    steps.forEach(step => {
+      const stepImages = validParsed.filter(img => img.step === step);
+      for (let i = 0; i < eNumSamples; i++) {
+        const found = stepImages.find(img => img.promptIdx === i);
+        slots.push(found ? found.path : null);
+      }
+    });
+
+    return { sampleSlots: slots, numSamples: eNumSamples, steps };
+  }, [sampleImages, configNumSamples]);
+
+  // Group sampleSlots into rows of `numSamples` for the virtualized list — one row per sample iteration.
   const rows = useMemo(() => {
-    const out: string[][] = [];
-    for (let i = 0; i < sampleImages.length; i += numSamples) {
-      out.push(sampleImages.slice(i, i + numSamples));
+    const out: (string | null)[][] = [];
+    for (let i = 0; i < sampleSlots.length; i += numSamples) {
+      out.push(sampleSlots.slice(i, i + numSamples));
     }
     return out;
-  }, [sampleImages, numSamples]);
+  }, [sampleSlots, numSamples]);
 
   const scrollToBottom = () => {
     virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end' });
@@ -284,7 +326,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
             initialTopMostItemIndex={rows.length - 1}
             followOutput="auto"
             increaseViewportBy={400}
-            computeItemKey={index => rows[index]?.[0] ?? index}
+            computeItemKey={index => rows[index]?.find(s => s !== null) ?? index}
             itemContent={index => {
               const row = rows[index];
               if (!row) return null;
@@ -294,20 +336,49 @@ export default function SampleImages({ job }: SampleImagesProps) {
               const shouldPad = numSamples < MIN_COLS && row.length < MIN_COLS;
               const padsNeeded = shouldPad ? MIN_COLS - row.length : 0;
 
+              // Step label for this row (shown on the first slot, real or placeholder)
+              const rowStepLabel = steps.length > index ? steps[index] : undefined;
+
               return (
                 // pb-1 recreates the vertical gap between rows that the original single CSS grid provided via `gap-1`.
                 <div className={`grid ${gridColsClass} gap-1 pb-1`}>
-                  {row.map(sample => (
-                    <SampleImageCard
-                      key={sample}
-                      imageUrl={sample}
-                      numSamples={numSamples}
-                      sampleImages={sampleImages}
-                      alt="Sample Image"
-                      onClick={() => setSelectedSamplePath(sample)}
-                      observerRoot={scrollParent}
-                    />
-                  ))}
+                  {row.map((sample, slotIdx) =>
+                    sample ? (
+                      <SampleImageCard
+                        key={sample}
+                        imageUrl={sample}
+                        numSamples={numSamples}
+                        sampleImages={sampleImages}
+                        alt="Sample Image"
+                        onClick={() => setSelectedSamplePath(sample)}
+                        observerRoot={scrollParent}
+                        stepLabel={slotIdx === 0 ? rowStepLabel : undefined}
+                      />
+                    ) : (
+                      <div key={`empty-${index}-${slotIdx}`} className="flex flex-col">
+                        <div className="relative w-full" style={{ paddingBottom: '100%' }}>
+                          <div
+                            className="absolute inset-0 rounded-t-lg shadow-md bg-gray-950 flex items-center justify-center border border-gray-800"
+                            style={{ containerType: 'size' }}
+                          >
+                            <span className="text-[10px] text-gray-500 font-mono">NOT SAMPLED</span>
+                            {slotIdx === 0 && rowStepLabel !== undefined && (
+                              <div
+                                className="absolute top-0 left-0 z-10 text-white font-bold leading-none select-none pointer-events-none"
+                                style={{
+                                  fontSize: '10cqmin',
+                                  padding: '0.1em 0.15em',
+                                  textShadow: '0 0 6px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,0.9)',
+                                }}
+                              >
+                                {rowStepLabel}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ),
+                  )}
                   {Array.from({ length: padsNeeded }).map((_, i) => (
                     <div key={`pad-${index}-${i}`} className="invisible" />
                   ))}
@@ -320,7 +391,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
       <SampleImageViewer
         imgPath={selectedSamplePath}
         numSamples={numSamples}
-        sampleImages={sampleImages}
+        sampleImages={sampleSlots}
         onChange={setPath => setSelectedSamplePath(setPath)}
         sampleConfig={sampleConfig}
         refreshSampleImages={refreshSampleImages}

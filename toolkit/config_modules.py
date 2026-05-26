@@ -1115,6 +1115,7 @@ class GenerateImageConfig:
             fps: int = 15,
             ctrl_idx: int = 0,
             do_cfg_norm: bool = False,
+            sampler: str = '',
     ):
         self.width: int = width
         self.height: int = height
@@ -1145,6 +1146,7 @@ class GenerateImageConfig:
         self.extra_values = extra_values if extra_values is not None else []
         self.num_frames = num_frames
         self.fps = fps
+        self.sampler = sampler
         self.ctrl_img = ctrl_img
         self.ctrl_idx = ctrl_idx
         
@@ -1219,26 +1221,104 @@ class GenerateImageConfig:
         return os.path.join(self.output_folder, filename)
 
     def _build_civitai_parameters(self) -> str:
-        parts = [self.prompt]
+        # Matches the exact A1111 format CivitAI parses: prompt, then optional
+        # "Negative prompt:" line, then comma-separated settings — no trailing newline.
+        metadata_text = f"{self.prompt}\n"
         if self.negative_prompt:
-            parts.append(f"Negative prompt: {self.negative_prompt}")
-        meta_parts = [
-            f"Steps: {self.num_inference_steps}",
-            f"CFG scale: {self.guidance_scale}",
-            f"Seed: {self.seed}",
-            f"Size: {self.width}x{self.height}",
-        ]
+            metadata_text += f"Negative prompt: {self.negative_prompt}\n"
+        settings_parts = [f"Steps: {self.num_inference_steps}"]
+        if self.sampler:
+            settings_parts.append(f"Sampler: {self.sampler}")
+        settings_parts.append(f"CFG scale: {self.guidance_scale}")
+        settings_parts.append(f"Seed: {self.seed}")
+        settings_parts.append(f"Size: {self.width}x{self.height}")
         if self.num_frames > 1:
-            meta_parts.append(f"Frames: {self.num_frames}")
-            meta_parts.append(f"FPS: {self.fps}")
-        parts.append(", ".join(meta_parts))
-        return "\n".join(parts)
+            settings_parts.append(f"Frames: {self.num_frames}")
+            settings_parts.append(f"FPS: {self.fps}")
+        metadata_text += ", ".join(settings_parts)
+        return metadata_text
 
     def _embed_mp4_metadata(self, output_path: str):
+        """
+        Embeds generation metadata into an MP4 using ffmpeg FFMETADATA1 format
+        (same approach as ComfyUI VideoHelperSuite).  The 'parameters' key is
+        stored as a named container tag readable by ffprobe / CivitAI.
+        Falls back to mutagen ©cmt if ffmpeg is not available.
+        """
+        import shutil
+        import subprocess
+        import tempfile
+
+        params = self._build_civitai_parameters()
+
+        def escape_ffmetadata(value: str) -> str:
+            # FFMETADATA1 requires escaping of = ; # \ and newlines
+            value = value.replace('\\', '\\\\')
+            value = value.replace(';', '\\;')
+            value = value.replace('#', '\\#')
+            value = value.replace('=', '\\=')
+            value = value.replace('\n', '\\\n')
+            return value
+
+        ffmpeg_exe = shutil.which('ffmpeg')
+        if ffmpeg_exe:
+            metadata_file = None
+            temp_path = output_path + '.tmp.mp4'
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.txt', delete=False, encoding='utf-8'
+                ) as f:
+                    metadata_file = f.name
+                    f.write(';FFMETADATA1\n')
+                    f.write(f'parameters={escape_ffmetadata(params)}\n')
+                    f.write(f'comment={escape_ffmetadata(params)}\n')
+
+                result = subprocess.run(
+                    [ffmpeg_exe, '-y', '-v', 'error',
+                     '-i', output_path,
+                     '-i', metadata_file,
+                     '-map_metadata', '1',
+                     '-c', 'copy',
+                     '-movflags', 'use_metadata_tags',
+                     temp_path],
+                    capture_output=True,
+                )
+                if result.returncode == 0 and os.path.exists(temp_path):
+                    try:
+                        os.replace(temp_path, output_path)
+                    except OSError:
+                        # os.replace / os.rename fail on NTFS via WSL (DrvFs
+                        # does not allow atomic rename-over-existing).
+                        # Copy bytes in-place instead — this always works
+                        # because the file is open-for-write (mutagen does it).
+                        import shutil as _shutil
+                        with open(temp_path, 'rb') as _src, \
+                                open(output_path, 'wb') as _dst:
+                            _shutil.copyfileobj(_src, _dst)
+                        try:
+                            os.unlink(temp_path)
+                        except OSError:
+                            pass
+                    return
+            except Exception:
+                pass
+            finally:
+                if metadata_file and os.path.exists(metadata_file):
+                    try:
+                        os.unlink(metadata_file)
+                    except Exception:
+                        pass
+                if os.path.exists(temp_path):
+                    try:
+                        os.unlink(temp_path)
+                    except Exception:
+                        pass
+
+        # Fallback: mutagen ©cmt (readable by our binary parser in the UI)
         try:
             from mutagen.mp4 import MP4
             mp4 = MP4(output_path)
-            mp4['©cmt'] = [self._build_civitai_parameters()]
+            mp4['©cmt'] = [params]
             mp4.save()
         except Exception:
             pass
@@ -1303,7 +1383,7 @@ class GenerateImageConfig:
                 from PIL import PngImagePlugin
                 pnginfo = PngImagePlugin.PngInfo()
                 pnginfo.add_text("parameters", self._build_civitai_parameters())
-                image.save(output_path, pnginfo=pnginfo)
+                image.save(output_path, "PNG", pnginfo=pnginfo)
             else:
                 image.save(output_path)
             # do prompt file
