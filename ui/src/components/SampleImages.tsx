@@ -1,4 +1,5 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
@@ -90,10 +91,10 @@ interface SampleImagesProps {
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const didFirstScroll = useRef(false);
-
-  const configNumSamples = useMemo(() => {
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
@@ -104,68 +105,21 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return 10;
   }, [job]);
 
-  const { sampleSlots, numSamples, steps } = useMemo(() => {
-    const defaultRes = { sampleSlots: sampleImages as (string | null)[], numSamples: configNumSamples, steps: [] as number[] };
-    if (sampleImages.length === 0) return defaultRes;
-
-    // 1. Parse all images
-    const parsedImages = sampleImages.map(path => {
-      let filename: string | null = null;
-      if (path.includes('\\')) {
-        const parts = path.split('\\');
-        filename = parts[parts.length - 1];
-      } else {
-        filename = path.split('/').pop() || null;
-      }
-
-      if (!filename) return { path, step: -1, promptIdx: -1 };
-
-      const parts = filename
-        .split('.')[0]
-        .split('_')
-        .filter(p => p !== '');
-      if (parts.length >= 2) {
-        const promptIdx = parseInt(parts[parts.length - 1]);
-        const step = parseInt(parts[parts.length - 2]);
-        return { path, step, promptIdx };
-      }
-      return { path, step: -1, promptIdx: -1 };
-    });
-
-    const validParsed = parsedImages.filter(
-      img => !isNaN(img.step) && img.step !== -1 && !isNaN(img.promptIdx) && img.promptIdx !== -1,
-    );
-
-    if (validParsed.length === 0) return defaultRes;
-
-    // 2. Identify all unique steps (sorted ascending)
-    const steps = Array.from(new Set(validParsed.map(img => img.step))).sort((a, b) => a - b);
-    const maxIdxInFiles = Math.max(...validParsed.map(img => img.promptIdx));
-    const eNumSamples = Math.max(configNumSamples, maxIdxInFiles + 1);
-
-    // 3. Create slots
-    const slots: (string | null)[] = [];
-    steps.forEach(step => {
-      const stepImages = validParsed.filter(img => img.step === step);
-      for (let i = 0; i < eNumSamples; i++) {
-        const found = stepImages.find(img => img.promptIdx === i);
-        slots.push(found ? found.path : null);
-      }
-    });
-
-    return { sampleSlots: slots, numSamples: eNumSamples, steps };
-  }, [sampleImages, configNumSamples]);
+  // Group samples into rows of `numSamples` for the virtualized list — one row per sample iteration.
+  const rows = useMemo(() => {
+    const out: string[][] = [];
+    for (let i = 0; i < sampleImages.length; i += numSamples) {
+      out.push(sampleImages.slice(i, i + numSamples));
+    }
+    return out;
+  }, [sampleImages, numSamples]);
 
   const scrollToBottom = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'instant' });
-    }
+    virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end' });
   };
 
   const scrollToTop = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({ top: 0, behavior: 'instant' });
-    }
+    virtuosoRef.current?.scrollToIndex({ index: 0, align: 'start' });
   };
 
   const PageInfoContent = useMemo(() => {
@@ -318,90 +272,55 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return null;
   }, [job]);
 
-  // scroll to bottom on first load of samples
-  useEffect(() => {
-    if (status === 'success' && sampleImages.length > 0 && !didFirstScroll.current) {
-      didFirstScroll.current = true;
-      setTimeout(() => {
-        scrollToBottom();
-      }, 100);
-    }
-  }, [status, sampleImages.length]);
-
   return (
-    <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
+    <div ref={scrollParentCallback} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
         {PageInfoContent}
-        {sampleSlots && (
-          <div className={`grid ${gridColsClass} gap-1`}>
-            {sampleSlots.map((sample: string | null, idx: number) => {
-              // Compute current group (groups are size = numSamples)
-              const groupIndex = Math.floor(idx / numSamples);
-              const groupStart = groupIndex * numSamples;
-              const groupEnd = Math.min(groupStart + numSamples, sampleSlots.length);
-              const groupSize = groupEnd - groupStart;
-              const isEndOfGroup = idx === groupEnd - 1;
+        {sampleImages && rows.length > 0 && scrollParent && (
+          <Virtuoso
+            ref={virtuosoRef}
+            customScrollParent={scrollParent}
+            totalCount={rows.length}
+            initialTopMostItemIndex={rows.length - 1}
+            followOutput="auto"
+            increaseViewportBy={400}
+            computeItemKey={index => rows[index]?.[0] ?? index}
+            itemContent={index => {
+              const row = rows[index];
+              if (!row) return null;
 
-              // Only enforce a MIN of 3 when the group's planned width is < 3
+              // Only pad the final row when numSamples < MIN_COLS and the row is short.
               const MIN_COLS = 3;
-              const shouldPad = numSamples < MIN_COLS && groupSize < MIN_COLS;
-              const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
-
-              const isFirstOfRow = idx % numSamples === 0;
-              const rowStepLabel = isFirstOfRow && steps.length > groupIndex ? steps[groupIndex] : undefined;
+              const shouldPad = numSamples < MIN_COLS && row.length < MIN_COLS;
+              const padsNeeded = shouldPad ? MIN_COLS - row.length : 0;
 
               return (
-                <div key={sample || `empty-${idx}`} className="contents">
-                  {sample ? (
+                // pb-1 recreates the vertical gap between rows that the original single CSS grid provided via `gap-1`.
+                <div className={`grid ${gridColsClass} gap-1 pb-1`}>
+                  {row.map(sample => (
                     <SampleImageCard
+                      key={sample}
                       imageUrl={sample}
                       numSamples={numSamples}
                       sampleImages={sampleImages}
                       alt="Sample Image"
                       onClick={() => setSelectedSamplePath(sample)}
-                      observerRoot={containerRef.current}
-                      stepLabel={rowStepLabel}
+                      observerRoot={scrollParent}
                     />
-                  ) : (
-                    <div className="flex flex-col">
-                      <div className="relative w-full" style={{ paddingBottom: '100%' }}>
-                        <div
-                          className="absolute inset-0 rounded-t-lg shadow-md bg-gray-950 flex items-center justify-center border border-gray-800"
-                          style={{ containerType: 'size' }}
-                        >
-                          <span className="text-[10px] text-gray-500 font-mono">NOT SAMPLED</span>
-                          {rowStepLabel !== undefined && (
-                            <div
-                              className="absolute top-0 left-0 z-10 text-white font-bold leading-none select-none pointer-events-none"
-                              style={{
-                                fontSize: '10cqmin',
-                                padding: '0.1em 0.15em',
-                                textShadow: '0 0 6px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,0.9)',
-                              }}
-                            >
-                              {rowStepLabel}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {isEndOfGroup &&
-                    padsNeeded > 0 &&
-                    Array.from({ length: padsNeeded }).map((_, i) => (
-                      <div key={`pad-${groupIndex}-${i}`} className="invisible" />
-                    ))}
+                  ))}
+                  {Array.from({ length: padsNeeded }).map((_, i) => (
+                    <div key={`pad-${index}-${i}`} className="invisible" />
+                  ))}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </div>
       <SampleImageViewer
         imgPath={selectedSamplePath}
         numSamples={numSamples}
-        sampleImages={sampleSlots}
+        sampleImages={sampleImages}
         onChange={setPath => setSelectedSamplePath(setPath)}
         sampleConfig={sampleConfig}
         refreshSampleImages={refreshSampleImages}

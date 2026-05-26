@@ -492,6 +492,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
                   }}
                   captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
                   initialCaption={img.caption}
+                  observerRoot={scrollParent}
                 />
               );
             }}

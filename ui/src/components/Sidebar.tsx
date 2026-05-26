@@ -9,6 +9,7 @@ import { createGlobalState } from 'react-global-hooks';
 import ThemeToggle from './ThemeToggle';
 import ThemeLogo from './ThemeLogo';
 import useSettings from '@/hooks/useSettings';
+import ActiveJobWidget from './ActiveJobWidget';
 
 export const mobileSidebarState = createGlobalState<boolean>(false);
 
@@ -78,6 +79,7 @@ const Sidebar = () => {
         </ul>
       </nav>
       <div className="mt-auto">
+        <ActiveJobWidget />
         <div className="px-4 py-2 text-[10px] text-gray-600 uppercase tracking-widest border-t border-gray-800/50">
           v{settings?.VERSION || '0.0.0'}
         </div>
@@ -85,19 +87,22 @@ const Sidebar = () => {
           href="https://ostris.com/support"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center space-x-2 px-4 py-3 border-t border-gray-800/50"
+          className="group flex items-center space-x-2 px-4 py-3 text-gray-400 hover:text-gray-200 transition-colors border-t border-gray-800/50"
         >
-          <div className="min-w-[24px] min-h-[24px]">
-            <svg height="24" version="1.1" width="24" xmlns="http://www.w3.org/2000/svg">
-              <g transform="translate(0 0)">
-                <path
-                  d="m7 3c-1.5355 0-3.0784 0.5-4.25 1.7-2.3431 2.4-2.2788 6.1 0 8.5l9.25 9.8 9.25-9.8c2.279-2.4 2.343-6.1 0-8.5-2.343-2.3-6.157-2.3-8.5 0l-0.75 0.8-0.75-0.8c-1.172-1.2-2.7145-1.7-4.25-1.7z"
-                  fill="#c0392b"
-                />
-              </g>
-            </svg>
-          </div>
-          <div className="uppercase text-gray-500 text-sm flex-1">Support AI-Toolkit</div>
+          <svg
+            height="20"
+            width="20"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            style={{ overflow: 'visible' }}
+          >
+            <path
+              className="animate-heartbeat"
+              d="m7 3c-1.5355 0-3.0784 0.5-4.25 1.7-2.3431 2.4-2.2788 6.1 0 8.5l9.25 9.8 9.25-9.8c2.279-2.4 2.343-6.1 0-8.5-2.343-2.3-6.157-2.3-8.5 0l-0.75 0.8-0.75-0.8c-1.172-1.2-2.7145-1.7-4.25-1.7z"
+              fill="#c0392b"
+            />
+          </svg>
+          <span className="uppercase text-sm font-medium tracking-wide">Support AI-Toolkit</span>
         </a>
 
         {/* Social links grid */}
