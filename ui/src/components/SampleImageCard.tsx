@@ -109,6 +109,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
           className={`absolute inset-0 rounded-t-lg shadow-md bg-gray-900 ${
             isVisible && isImageType && !loaded ? 'animate-pulse' : ''
           }`}
+          style={{ containerType: 'size' }}
         >
           {isVisible ? (
             isItAudio ? (
