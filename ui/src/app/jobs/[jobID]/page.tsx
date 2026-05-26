@@ -23,7 +23,7 @@ interface Page {
   value: PageKey;
   icon: React.ComponentType<{ className?: string }>;
   component: React.ComponentType<{ job: Job }>;
-  menuItem?: React.ComponentType<{ job: Job; onRefresh?: () => void }> | null;
+  menuItem?: React.ComponentType<{ job: Job; onRefresh?: () => void; hasSamples?: boolean; isAnyJobRunning?: boolean }> | null;
   mainCss?: string;
   jobTypes?: string[]; // if specified, only show this page for these job types
 }
@@ -66,7 +66,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const usableParams = use(params as any) as { jobID: string };
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
-  const { jobs } = useJobsList(true, 5000); // Only active jobs
+  const { jobs } = useJobsList({ onlyActive: true, reloadInterval: 5000 });
   const { sampleImages } = useSampleImages(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
 

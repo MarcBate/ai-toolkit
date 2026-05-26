@@ -173,6 +173,8 @@ export interface ModelConfig {
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
   assistant_lora_path?: string;
+  gemma_api_key?: string;
+  use_gemma_api?: boolean;
 }
 
 export interface SampleItem {
