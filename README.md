@@ -32,9 +32,11 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 ### UI — Samples page
 
 - added placeholders for any image/videos not sampled so grid lines up correctly
+- step count overlay on the first cell of each sample row so you can see which checkpoint each row came from
 - expands prompt height when caption is active to show entire prompt to make it easier to edit. reverts to 3 lines when lost focus
+- **CivitAI metadata** — sample PNG and MP4 outputs embed A1111-format `parameters` metadata so CivitAI auto-detects the prompt, model, and settings on upload
 - **Find & replace captions** —  find-and-replace across all captions in a dataset, with a replace-all button
-- **Caption filtering** — filter dataset images by caption content 
+- **Caption filtering** — filter dataset images by caption content
 
 ____________________________________
 
@@ -838,3 +840,51 @@ datasets:
   (one call per prompt per sample run). This is fast enough for infrequent sampling.
 - `te_name_or_path`, `quantize_te`, and `layer_offloading_text_encoder_percent`
   are ignored when `gemma_api_key` is set.
+
+---
+
+#### 2026-05-26 — CivitAI metadata in sample outputs; save-before-pause fix; restore Virtuoso sample features
+
+**CivitAI metadata in PNG and MP4 sample outputs**
+
+`toolkit/config_modules.py` — sample outputs now embed A1111-format metadata so
+CivitAI auto-detects the prompt, model, and settings on upload:
+
+- **PNG** — `parameters` tEXt chunk written via `PIL.PngImagePlugin.PngInfo`,
+  matching the format CivitAI reads from A1111/ComfyUI outputs.
+- **MP4** — ffmpeg FFMETADATA1 re-mux writes `parameters=` and `comment=` keys
+  with `-movflags use_metadata_tags` so the metadata survives container copying.
+- **WSL/NTFS fix** — `os.replace()` raises `EPERM` on `/mnt/c/` paths because
+  NTFS via DrvFs does not allow atomic rename-over-existing. The code now catches
+  `OSError` and falls back to copying bytes in-place, ensuring the re-muxed MP4
+  is actually written instead of silently falling back to the mutagen path that
+  only wrote `©cmt` (which CivitAI does not read).
+
+**Save-before-pause integrity fix**
+
+`extensions_built_in/sd_trainer/DiffusionTrainer.py`, `ui/src/components/JobActionBar.tsx`:
+
+After the upstream Virtuoso merge, two duplicate `should_save()` / `maybe_save()`
+methods existed in `DiffusionTrainer`. Python silently used the last definition —
+ostris's version, which read the unused `save_now` column instead of the canonical
+`save` column. This broke "Save and Continue" and "Save and Pause" entirely.
+
+- Removed the duplicate methods; `should_save()` reads the `save` column and
+  `maybe_save()` incorporates ostris's progress-bar pause/unpause and
+  `optimizer.zero_grad()` / `flush()` improvements.
+- `JobActionBar` "Save Next Step" Cog menu item now calls `saveJob()` (sets
+  `save` flag) instead of `saveJobNow()` (sets the unused `save_now` flag).
+
+**Restore sample grid features lost in Virtuoso merge**
+
+`ui/src/components/SampleImages.tsx` — the upstream Virtuoso rewrite replaced the
+old single CSS grid with a row-by-row virtualized list, inadvertently dropping two
+of our features:
+
+- **NOT SAMPLED placeholders** — null slots in the sparse `sampleSlots` array now
+  render a dark `NOT SAMPLED` cell so the grid stays aligned when a prompt was
+  skipped at a given checkpoint.
+- **Step count overlay** — the first cell of each row shows the training step
+  number at which those samples were generated, on both real images and placeholder
+  cells. `SampleImageViewer` navigation also receives the sparse array so
+  arrow-key traversal skips null gaps correctly.
