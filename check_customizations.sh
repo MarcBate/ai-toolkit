@@ -205,6 +205,9 @@ echo "── Python: LTX-2.3 distilled LoRA ──────────"
 check "distill_lora_path support in ltx2.py" \
   "extensions_built_in/diffusion_models/ltx2/ltx2.py" \
   "distill_lora"
+check "Filter patchify_proj from distill LoRA (prevents weight=None on quantized proj_in)" \
+  "extensions_built_in/diffusion_models/ltx2/ltx2.py" \
+  "patchify_proj.*skip\|skip.*patchify_proj\|_skip_prefixes"
 
 echo
 echo "── Python: Gemma API ────────────────────────"

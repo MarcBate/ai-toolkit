@@ -660,6 +660,7 @@ class LTX2Model(BaseModel):
     def _apply_distill_lora(self, pipeline: "LTX2Pipeline"):
         """Load the distilled LoRA onto the pipeline transformer for fast sampling."""
         import peft.tuners.lora.model as _peft_lora_model
+        from safetensors.torch import load_file as _load_safetensors
 
         lora_path = self.model_config.distill_lora_path
         strength = self.model_config.distill_lora_strength
@@ -686,8 +687,33 @@ class LTX2Model(BaseModel):
                     except Exception:
                         pass
 
+            # Load the LoRA state dict and filter out patchify_proj / audio_patchify_proj
+            # keys.  These layers (proj_in / audio_proj_in on the transformer) are
+            # quantized with optimum.quanto (qfloat8).  When PEFT's load_lora_weights
+            # wraps a quanto-quantized nn.Linear it replaces the module via setattr and
+            # can leave the weight as None after delete_adapter, causing a TypeError on
+            # the very next training step.  Skipping them here is safe: they are tiny
+            # input-projection layers and omitting their LoRA contribution has negligible
+            # effect on sample quality.
+            lora_state_dict = _load_safetensors(lora_path)
+            _skip_prefixes = (
+                "diffusion_model.patchify_proj.",
+                "diffusion_model.audio_patchify_proj.",
+            )
+            n_before = len(lora_state_dict)
+            lora_state_dict = {
+                k: v for k, v in lora_state_dict.items()
+                if not any(k.startswith(p) for p in _skip_prefixes)
+            }
+            n_skipped = n_before - len(lora_state_dict)
+            if n_skipped:
+                self.print_and_status_update(
+                    f"Distill LoRA: skipping {n_skipped} quantized-layer keys "
+                    f"(patchify_proj / audio_patchify_proj) to avoid weight corruption"
+                )
+
             self.print_and_status_update(f"Applying distill LoRA (strength={strength})")
-            pipeline.load_lora_weights(lora_path, adapter_name="distill_lora")
+            pipeline.load_lora_weights(lora_state_dict, adapter_name="distill_lora")
 
             # Move LoRA weights to device in case they landed on CPU
             for module in pipeline.transformer.modules():
