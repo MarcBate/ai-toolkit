@@ -10,6 +10,7 @@ import ThemeToggle from './ThemeToggle';
 import ThemeLogo from './ThemeLogo';
 import useSettings from '@/hooks/useSettings';
 import ActiveJobWidget from './ActiveJobWidget';
+import OstrisCloudBalance from './OstrisCloudBalance';
 
 export const mobileSidebarState = createGlobalState<boolean>(false);
 
@@ -63,6 +64,7 @@ const Sidebar = () => {
           <X className="w-5 h-5" />
         </button>
       </div>
+      <OstrisCloudBalance />
       <nav className="flex-1">
         <ul className="px-2 py-4 space-y-2">
           {navigation.map(item => (
