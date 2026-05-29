@@ -104,7 +104,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                   >
                     <Box className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
                     <div className="flex flex-col min-w-0">
-                      <div className="flex text-sm text-gray-200">
+                      <div className="flex text-xs text-gray-200">
                         <span className="overflow-hidden text-ellipsis direction-rtl whitespace-nowrap">
                           {nameWithoutExt}
                         </span>
