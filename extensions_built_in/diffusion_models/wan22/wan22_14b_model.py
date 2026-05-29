@@ -582,22 +582,24 @@ class Wan2214bModel(Wan21):
         try:
             high_path = self.model_config.lightx2v_high_noise_lora_path
             low_path = self.model_config.lightx2v_low_noise_lora_path
+            strength = self.model_config.lightx2v_lora_strength
 
             if not low_only and high_path is not None:
                 if not os.path.exists(high_path):
                     self.print_and_status_update(f"Warning: LightX2V high noise LoRA not found: {high_path}")
                 else:
-                    self.print_and_status_update("Applying LightX2V high noise LoRA to transformer 1")
+                    self.print_and_status_update(f"Applying LightX2V high noise LoRA to transformer 1 (strength={strength})")
                     # pipeline.transformer already points to transformer_1
                     _ensure_adapter_absent(pipeline.transformer, "lightx2v_high")
                     pipeline.load_lora_weights(high_path, adapter_name="lightx2v_high")
                     _move_lora_to_device(pipeline.transformer, "lightx2v_high", self.device_torch)
+                    pipeline.set_adapters(["lightx2v_high"], adapter_weights=[strength])
 
             if not high_only and low_path is not None and pipeline.transformer_2 is not None:
                 if not os.path.exists(low_path):
                     self.print_and_status_update(f"Warning: LightX2V low noise LoRA not found: {low_path}")
                 else:
-                    self.print_and_status_update("Applying LightX2V low noise LoRA to transformer 2")
+                    self.print_and_status_update(f"Applying LightX2V low noise LoRA to transformer 2 (strength={strength})")
                     # Temporarily swap so load_lora_weights targets transformer_2
                     orig_transformer = pipeline.transformer
                     pipeline.transformer = pipeline.transformer_2
@@ -605,6 +607,7 @@ class Wan2214bModel(Wan21):
                         _ensure_adapter_absent(pipeline.transformer_2, "lightx2v_low")
                         pipeline.load_lora_weights(low_path, adapter_name="lightx2v_low")
                         _move_lora_to_device(pipeline.transformer_2, "lightx2v_low", self.device_torch)
+                        pipeline.set_adapters(["lightx2v_low"], adapter_weights=[strength])
                     finally:
                         pipeline.transformer = orig_transformer
         finally:

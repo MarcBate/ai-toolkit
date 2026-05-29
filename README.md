@@ -15,6 +15,7 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 - Edit sample prompts while training, but not applied yet if you unloaded text encoder
 - Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
 - Generate LTX-2.3 sample videos in 8 steps with the distilled LoRA instead of 30 steps.
+- Generate Qwen Image sample images faster using a Lightning LoRA (e.g. 4 steps at CFG 1 instead of 20+ steps).
 - Train LTX-2.3 without loading the 12B Gemma text encoder locally — use the free LTX Gemma API instead.
 - Stop training job even in the middle of sample generation or model quantization.
 
@@ -888,3 +889,45 @@ of our features:
   number at which those samples were generated, on both real images and placeholder
   cells. `SampleImageViewer` navigation also receives the sparse array so
   arrow-key traversal skips null gaps correctly.
+
+---
+
+#### 2026-05-29 — Sampling LoRA support for Qwen Image models (Lightning / distilled inference)
+
+`extensions_built_in/diffusion_models/qwen_image/qwen_image.py`,
+`qwen_image_edit.py`, `qwen_image_edit_plus.py`, `toolkit/config_modules.py`:
+
+Adds a `sampling_lora_path` model config option that loads a LoRA only during
+sample generation, not during training steps. Designed for Lightning / distilled
+LoRAs that reduce the required inference steps (e.g. 4 steps at CFG 1 instead of
+20+), matching what LightX2V does for WAN 2.2 and `distill_lora_path` does for
+LTX-2.3. Works for all three Qwen Image variants: `qwen_image`, `qwen_image_edit`,
+and `qwen_image_edit_plus`.
+
+Also adds `lightx2v_lora_strength` to WAN 2.2 LightX2V (previously hardcoded at
+full strength), so all three fast-sampling features now expose a strength knob.
+
+**How to use:**
+
+Add to the `model:` block of your training config:
+
+```yaml
+model:
+  name_or_path: "/path/to/your/qwen-model"
+  arch: qwen_image_edit        # or qwen_image / qwen_image_edit_plus
+  sampling_lora_path: "/path/to/lightning-lora.safetensors"
+  sampling_lora_strength: 1.0  # optional, default 1.0
+```
+
+In your `sample:` config set the matching step count and CFG for the LoRA:
+
+```yaml
+sample:
+  num_inference_steps: 4
+  guidance_scale: 1.0
+```
+
+The LoRA is applied immediately before each pipeline call and removed
+unconditionally in a `try/finally` block so training weights are never affected.
+Uses the same PEFT 0.18.x `dispatch_torchao` workaround and stale-adapter cleanup
+as the LightX2V and LTX-2.3 distill implementations.

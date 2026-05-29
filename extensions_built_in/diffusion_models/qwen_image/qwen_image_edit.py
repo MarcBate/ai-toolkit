@@ -116,25 +116,31 @@ class QwenImageEditModel(QwenImageModel):
 
             return {"latents": latents}
 
-        img = pipeline(
-            image=control_img,
-            prompt_embeds=conditional_embeds.text_embeds,
-            prompt_embeds_mask=conditional_embeds.attention_mask.to(
-                self.device_torch, dtype=torch.int64
-            ),
-            negative_prompt_embeds=unconditional_embeds.text_embeds,
-            negative_prompt_embeds_mask=unconditional_embeds.attention_mask.to(
-                self.device_torch, dtype=torch.int64
-            ),
-            height=gen_config.height,
-            width=gen_config.width,
-            num_inference_steps=gen_config.num_inference_steps,
-            true_cfg_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            generator=generator,
-            callback_on_step_end=callback_on_step_end,
-            **extra,
-        ).images[0]
+        if self._has_sampling_lora():
+            self._apply_sampling_lora(pipeline)
+        try:
+            img = pipeline(
+                image=control_img,
+                prompt_embeds=conditional_embeds.text_embeds,
+                prompt_embeds_mask=conditional_embeds.attention_mask.to(
+                    self.device_torch, dtype=torch.int64
+                ),
+                negative_prompt_embeds=unconditional_embeds.text_embeds,
+                negative_prompt_embeds_mask=unconditional_embeds.attention_mask.to(
+                    self.device_torch, dtype=torch.int64
+                ),
+                height=gen_config.height,
+                width=gen_config.width,
+                num_inference_steps=gen_config.num_inference_steps,
+                true_cfg_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                generator=generator,
+                callback_on_step_end=callback_on_step_end,
+                **extra,
+            ).images[0]
+        finally:
+            if self._has_sampling_lora():
+                self._remove_sampling_lora(pipeline)
         return img
 
     def condition_noisy_latents(

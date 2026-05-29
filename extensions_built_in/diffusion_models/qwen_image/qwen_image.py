@@ -295,24 +295,31 @@ class QwenImageModel(BaseModel):
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
-        img = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds,
-            prompt_embeds_mask=conditional_embeds.attention_mask.to(
-                self.device_torch, dtype=torch.int64
-            ),
-            negative_prompt_embeds=unconditional_embeds.text_embeds,
-            negative_prompt_embeds_mask=unconditional_embeds.attention_mask.to(
-                self.device_torch, dtype=torch.int64
-            ),
-            height=gen_config.height,
-            width=gen_config.width,
-            num_inference_steps=gen_config.num_inference_steps,
-            true_cfg_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            generator=generator,
-            callback_on_step_end=callback_on_step_end,
-            **extra,
-        ).images[0]
+
+        if self._has_sampling_lora():
+            self._apply_sampling_lora(pipeline)
+        try:
+            img = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds,
+                prompt_embeds_mask=conditional_embeds.attention_mask.to(
+                    self.device_torch, dtype=torch.int64
+                ),
+                negative_prompt_embeds=unconditional_embeds.text_embeds,
+                negative_prompt_embeds_mask=unconditional_embeds.attention_mask.to(
+                    self.device_torch, dtype=torch.int64
+                ),
+                height=gen_config.height,
+                width=gen_config.width,
+                num_inference_steps=gen_config.num_inference_steps,
+                true_cfg_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                generator=generator,
+                callback_on_step_end=callback_on_step_end,
+                **extra,
+            ).images[0]
+        finally:
+            if self._has_sampling_lora():
+                self._remove_sampling_lora(pipeline)
         return img
 
     def get_noise_prediction(
@@ -385,6 +392,64 @@ class QwenImageModel(BaseModel):
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
+
+    def _has_sampling_lora(self):
+        return self.model_config.sampling_lora_path is not None
+
+    def _apply_sampling_lora(self, pipeline):
+        """Load the sampling-only LoRA (e.g. Lightning) onto the pipeline transformer."""
+        import peft.tuners.lora.model as _peft_lora_model
+
+        lora_path = self.model_config.sampling_lora_path
+        strength = self.model_config.sampling_lora_strength
+
+        if not os.path.exists(lora_path):
+            self.print_and_status_update(f"Warning: sampling LoRA not found: {lora_path}")
+            return
+
+        # PEFT 0.18.x bug: dispatch_torchao called without required kwarg on quantized weights
+        _orig_dispatch_torchao = _peft_lora_model.dispatch_torchao
+        _peft_lora_model.dispatch_torchao = lambda *args, **kwargs: None
+
+        try:
+            # Clear any stale adapter registration before loading
+            if hasattr(pipeline.transformer, 'peft_config') and 'sampling_lora' in pipeline.transformer.peft_config:
+                try:
+                    del pipeline.transformer.peft_config['sampling_lora']
+                except Exception:
+                    pass
+            for module in pipeline.transformer.modules():
+                if hasattr(module, 'delete_adapter'):
+                    try:
+                        module.delete_adapter('sampling_lora')
+                    except Exception:
+                        pass
+
+            self.print_and_status_update(f"Applying sampling LoRA (strength={strength})")
+            pipeline.load_lora_weights(lora_path, adapter_name="sampling_lora")
+
+            for module in pipeline.transformer.modules():
+                if hasattr(module, 'lora_A') and 'sampling_lora' in module.lora_A:
+                    module.lora_A['sampling_lora'].to(self.device_torch)
+                    module.lora_B['sampling_lora'].to(self.device_torch)
+
+            pipeline.set_adapters(["sampling_lora"], adapter_weights=[strength])
+        finally:
+            _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
+
+    def _remove_sampling_lora(self, pipeline):
+        """Remove the sampling LoRA adapter from the pipeline transformer."""
+        if hasattr(pipeline.transformer, 'peft_config') and 'sampling_lora' in pipeline.transformer.peft_config:
+            try:
+                del pipeline.transformer.peft_config['sampling_lora']
+            except Exception:
+                pass
+        for module in pipeline.transformer.modules():
+            if hasattr(module, 'delete_adapter'):
+                try:
+                    module.delete_adapter('sampling_lora')
+                except Exception:
+                    pass
 
     def get_model_has_grad(self):
         return False
