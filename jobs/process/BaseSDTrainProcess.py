@@ -364,6 +364,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
         
+        # expose sample_config to the model so it can read sampling-only LoRA paths
+        self.sd.sample_config = sample_config
+
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
 

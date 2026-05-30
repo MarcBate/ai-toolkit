@@ -84,6 +84,23 @@ export const getHFToken = async () => {
   return token;
 };
 
+export const getQuantizationCacheDir = async () => {
+  const key = 'QUANTIZATION_CACHE_DIR';
+  let cacheDir = myCache.get(key) as string;
+  if (cacheDir) {
+    return cacheDir;
+  }
+  let row = await prisma.settings.findFirst({
+    where: { key: key },
+  });
+  cacheDir = '';
+  if (row?.value && row.value !== '') {
+    cacheDir = row.value;
+  }
+  myCache.set(key, cacheDir);
+  return cacheDir;
+};
+
 export const getDataRoot = async () => {
   const key = 'DATA_ROOT';
   let dataRoot = myCache.get(key) as string;

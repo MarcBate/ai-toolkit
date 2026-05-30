@@ -8,6 +8,7 @@ export interface Settings {
   GEMMA_API_KEY: string;
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
+  QUANTIZATION_CACHE_DIR: string;
   VERSION: string;
 }
 
@@ -17,6 +18,7 @@ export default function useSettings() {
     GEMMA_API_KEY: '',
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
+    QUANTIZATION_CACHE_DIR: '',
     VERSION: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
@@ -31,6 +33,7 @@ export default function useSettings() {
           GEMMA_API_KEY: data.GEMMA_API_KEY || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
+          QUANTIZATION_CACHE_DIR: data.QUANTIZATION_CACHE_DIR || '',
           VERSION: data.VERSION || '',
         });
         setIsLoaded(true);

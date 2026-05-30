@@ -122,6 +122,7 @@ class BaseModel:
         self.te_torch_dtype = get_torch_dtype(model_config.te_dtype)
 
         self.model_config = model_config
+        self.sample_config = None  # set by trainer before sampling; models prefer this over model_config for LoRA paths
         self.prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
 
         self.device_state = None

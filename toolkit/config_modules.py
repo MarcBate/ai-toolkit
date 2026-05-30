@@ -113,7 +113,19 @@ class SampleConfig:
         self.samples = [SampleItem(self, **item) for item in raw_samples]
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
-        
+
+        # Speed-up LoRAs applied during sampling only (not training)
+        # WAN 2.2 LightX2V distillation LoRAs
+        self.lightx2v_high_noise_lora_path: Optional[str] = kwargs.get('lightx2v_high_noise_lora_path', None) or None
+        self.lightx2v_low_noise_lora_path: Optional[str] = kwargs.get('lightx2v_low_noise_lora_path', None) or None
+        self.lightx2v_lora_strength: float = kwargs.get('lightx2v_lora_strength', 1.0)
+        # LTX-2/2.3 distilled LoRA
+        self.distill_lora_path: Optional[str] = kwargs.get('distill_lora_path', None) or None
+        self.distill_lora_strength: float = kwargs.get('distill_lora_strength', 0.6)
+        # Qwen Image sampling-only LoRA
+        self.sampling_lora_path: Optional[str] = kwargs.get('sampling_lora_path', None) or None
+        self.sampling_lora_strength: float = kwargs.get('sampling_lora_strength', 1.0)
+
     @property
     def prompts(self):
         # for backwards compatibility as this is checked for length frequently
@@ -690,6 +702,11 @@ class ModelConfig:
         # When True and no explicit gemma_api_key is given, read the key from the GEMMA_API_KEY env var.
         # Set this via the UI checkbox; the key itself comes from Settings.
         self.use_gemma_api: bool = kwargs.get("use_gemma_api", False)
+
+        # When True, save the quantized transformer to disk after the first run and reload it on
+        # subsequent runs, skipping the slow GPU quantization step. Cache dir is supplied via the
+        # AITK_QUANTIZATION_CACHE_DIR env var (injected by the UI from Settings).
+        self.cache_quantized_model: bool = kwargs.get("cache_quantized_model", False)
 
         self.arch: ModelArch = kwargs.get("arch", None)
         

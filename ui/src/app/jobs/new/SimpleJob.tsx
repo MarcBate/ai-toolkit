@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   modelArchs,
   ModelArch,
@@ -22,7 +22,7 @@ import {
   SliderInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X, Copy } from 'lucide-react';
+import { X, Copy, ChevronDown } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -30,6 +30,93 @@ import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
 import useSettings from '@/hooks/useSettings';
+
+const MRU_LORA_KEY = 'aitk_mru_lora_paths';
+const MRU_MAX = 8;
+
+function getMruLoraList(): string[] {
+  try {
+    const raw = localStorage.getItem(MRU_LORA_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function addMruLoraPath(path: string) {
+  if (!path?.trim()) return;
+  const list = getMruLoraList().filter(p => p !== path);
+  list.unshift(path.trim());
+  localStorage.setItem(MRU_LORA_KEY, JSON.stringify(list.slice(0, MRU_MAX)));
+}
+
+function LoraPathInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mru, setMru] = useState<string[]>([]);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const refreshMru = useCallback(() => setMru(getMruLoraList()), []);
+
+  useEffect(() => {
+    if (open) refreshMru();
+  }, [open, refreshMru]);
+
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="flex items-center gap-1">
+        <div className="flex-1">
+          <TextInput
+            label={label}
+            value={value}
+            onChange={v => onChange(v)}
+            placeholder={placeholder ?? 'Path or HuggingFace repo/file'}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => { if (value?.trim()) addMruLoraPath(value); setOpen(o => !o); }}
+          className="mt-5 p-2 rounded bg-gray-700 hover:bg-gray-600"
+          title="Recent paths"
+        >
+          <ChevronDown className="w-4 h-4" />
+        </button>
+      </div>
+      {open && mru.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full bg-gray-800 border border-gray-600 rounded shadow-lg max-h-48 overflow-y-auto">
+          {mru.map(p => (
+            <button
+              key={p}
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-700 truncate"
+              onClick={() => { onChange(p); setOpen(false); }}
+              title={p}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 type Props = {
   jobConfig: JobConfig;
@@ -422,6 +509,13 @@ export default function SimpleJob({
                     setJobConfig(value, 'config.process[0].model.qtype_te');
                   }}
                   options={quantizationOptions}
+                />
+              )}
+              {jobConfig.config.process[0].model.quantize && (
+                <Checkbox
+                  label="Cache quantized model (skip re-quantization on subsequent runs)"
+                  checked={jobConfig.config.process[0].model.cache_quantized_model ?? false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.cache_quantized_model')}
                 />
               )}
             </Card>
@@ -1571,6 +1665,133 @@ export default function SimpleJob({
               <p className="text-xs text-yellow-500 mt-1">
                 CFG = 1 — negative prompt will be ignored.
               </p>
+            )}
+
+            {/* LightX2V speed-up LoRAs — WAN 2.2 */}
+            {modelArch?.additionalSections?.includes('sample.lightx2v_loras') && (
+              <div className="mt-4 border-t border-gray-700 pt-4">
+                <Checkbox
+                  label="Enable LightX2V during sampling"
+                  docKey="sample.lightx2v_loras"
+                  checked={
+                    jobConfig.config.process[0].sample.lightx2v_high_noise_lora_path !== null &&
+                    jobConfig.config.process[0].sample.lightx2v_high_noise_lora_path !== undefined
+                  }
+                  onChange={value => {
+                    if (value) {
+                      setJobConfig('', 'config.process[0].sample.lightx2v_high_noise_lora_path');
+                      setJobConfig('', 'config.process[0].sample.lightx2v_low_noise_lora_path');
+                      setJobConfig(1.0, 'config.process[0].sample.lightx2v_lora_strength');
+                    } else {
+                      setJobConfig(null, 'config.process[0].sample.lightx2v_high_noise_lora_path');
+                      setJobConfig(null, 'config.process[0].sample.lightx2v_low_noise_lora_path');
+                    }
+                  }}
+                />
+                {jobConfig.config.process[0].sample.lightx2v_high_noise_lora_path !== null &&
+                  jobConfig.config.process[0].sample.lightx2v_high_noise_lora_path !== undefined && (
+                  <div className="mt-2 pl-2 space-y-2">
+                    <LoraPathInput
+                      label="High Noise LoRA"
+                      value={jobConfig.config.process[0].sample.lightx2v_high_noise_lora_path ?? ''}
+                      onChange={v => setJobConfig(v, 'config.process[0].sample.lightx2v_high_noise_lora_path')}
+                    />
+                    <LoraPathInput
+                      label="Low Noise LoRA"
+                      value={jobConfig.config.process[0].sample.lightx2v_low_noise_lora_path ?? ''}
+                      onChange={v => setJobConfig(v, 'config.process[0].sample.lightx2v_low_noise_lora_path')}
+                    />
+                    <SliderInput
+                      label="Strength"
+                      value={jobConfig.config.process[0].sample.lightx2v_lora_strength ?? 1.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.lightx2v_lora_strength')}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Distill LoRA speed-up — LTX-2 / LTX-2.3 */}
+            {modelArch?.additionalSections?.includes('sample.distill_lora') && (
+              <div className="mt-4 border-t border-gray-700 pt-4">
+                <Checkbox
+                  label="Enable distill LoRA during sampling"
+                  docKey="sample.distill_lora"
+                  checked={
+                    jobConfig.config.process[0].sample.distill_lora_path !== null &&
+                    jobConfig.config.process[0].sample.distill_lora_path !== undefined
+                  }
+                  onChange={value => {
+                    if (value) {
+                      setJobConfig('', 'config.process[0].sample.distill_lora_path');
+                      setJobConfig(0.6, 'config.process[0].sample.distill_lora_strength');
+                    } else {
+                      setJobConfig(null, 'config.process[0].sample.distill_lora_path');
+                    }
+                  }}
+                />
+                {jobConfig.config.process[0].sample.distill_lora_path !== null &&
+                  jobConfig.config.process[0].sample.distill_lora_path !== undefined && (
+                  <div className="mt-2 pl-2 space-y-2">
+                    <LoraPathInput
+                      label="Distill LoRA Path"
+                      value={jobConfig.config.process[0].sample.distill_lora_path ?? ''}
+                      onChange={v => setJobConfig(v, 'config.process[0].sample.distill_lora_path')}
+                    />
+                    <SliderInput
+                      label="Strength"
+                      value={jobConfig.config.process[0].sample.distill_lora_strength ?? 0.6}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.distill_lora_strength')}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sampling-only LoRA — Qwen Image */}
+            {modelArch?.additionalSections?.includes('sample.sampling_lora') && (
+              <div className="mt-4 border-t border-gray-700 pt-4">
+                <Checkbox
+                  label="Enable sampling LoRA during sampling"
+                  docKey="sample.sampling_lora"
+                  checked={
+                    jobConfig.config.process[0].sample.sampling_lora_path !== null &&
+                    jobConfig.config.process[0].sample.sampling_lora_path !== undefined
+                  }
+                  onChange={value => {
+                    if (value) {
+                      setJobConfig('', 'config.process[0].sample.sampling_lora_path');
+                      setJobConfig(1.0, 'config.process[0].sample.sampling_lora_strength');
+                    } else {
+                      setJobConfig(null, 'config.process[0].sample.sampling_lora_path');
+                    }
+                  }}
+                />
+                {jobConfig.config.process[0].sample.sampling_lora_path !== null &&
+                  jobConfig.config.process[0].sample.sampling_lora_path !== undefined && (
+                  <div className="mt-2 pl-2 space-y-2">
+                    <LoraPathInput
+                      label="Sampling LoRA Path"
+                      value={jobConfig.config.process[0].sample.sampling_lora_path ?? ''}
+                      onChange={v => setJobConfig(v, 'config.process[0].sample.sampling_lora_path')}
+                    />
+                    <SliderInput
+                      label="Strength"
+                      value={jobConfig.config.process[0].sample.sampling_lora_strength ?? 1.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.sampling_lora_strength')}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                    />
+                  </div>
+                )}
+              </div>
             )}
           </Card>
         </div>

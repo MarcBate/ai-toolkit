@@ -47,3 +47,16 @@ export const getGemmaApiKey = async () => {
   }
   return apiKey;
 };
+
+export const getQuantizationCacheDir = async () => {
+  const key = 'QUANTIZATION_CACHE_DIR';
+  let row = await prisma.settings.findFirst({
+    where: { key: key },
+  });
+  if (row?.value && row.value !== '') {
+    return row.value;
+  }
+  // Default: {trainingFolder}/quantized
+  const trainingFolder = await getTrainingFolder();
+  return path.join(trainingFolder, 'quantized');
+};

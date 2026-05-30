@@ -246,15 +246,15 @@ class LTX2Model(BaseModel):
         self._gemma_api_last_call_time: float = 0.0
 
         # Resolve effective API key (model config YAML > env var injected by UI from Settings)
-        if self.model_config.gemma_api_key is None:
-            if self.model_config.use_gemma_api or _GEMMA_API_KEY_FROM_ENV:
-                if _GEMMA_API_KEY_FROM_ENV:
-                    self.model_config.gemma_api_key = _GEMMA_API_KEY_FROM_ENV
-                elif self.model_config.use_gemma_api:
-                    raise ValueError(
-                        "use_gemma_api is enabled but no GEMMA_API_KEY was found. "
-                        "Set your Lightricks API key in the AI Toolkit Settings page."
-                    )
+        # use_gemma_api: false explicitly disables the API even if the env var is set.
+        if self.model_config.gemma_api_key is None and self.model_config.use_gemma_api:
+            if _GEMMA_API_KEY_FROM_ENV:
+                self.model_config.gemma_api_key = _GEMMA_API_KEY_FROM_ENV
+            else:
+                raise ValueError(
+                    "use_gemma_api is enabled but no GEMMA_API_KEY was found. "
+                    "Set your Lightricks API key in the AI Toolkit Settings page."
+                )
 
     # static method to get the noise scheduler
     @staticmethod
@@ -655,6 +655,9 @@ class LTX2Model(BaseModel):
         return latents.to(device, dtype=dtype)
 
     def _has_distill_lora(self):
+        sc = getattr(self, 'sample_config', None)
+        if sc is not None and getattr(sc, 'distill_lora_path', None):
+            return True
         return self.model_config.distill_lora_path is not None
 
     def _apply_distill_lora(self, pipeline: "LTX2Pipeline"):
@@ -662,8 +665,9 @@ class LTX2Model(BaseModel):
         import peft.tuners.lora.model as _peft_lora_model
         from safetensors.torch import load_file as _load_safetensors
 
-        lora_path = self.model_config.distill_lora_path
-        strength = self.model_config.distill_lora_strength
+        sc = getattr(self, 'sample_config', None)
+        lora_path = (getattr(sc, 'distill_lora_path', None) if sc else None) or self.model_config.distill_lora_path
+        strength = (getattr(sc, 'distill_lora_strength', None) if sc else None) or self.model_config.distill_lora_strength
 
         if not os.path.exists(lora_path):
             self.print_and_status_update(f"Warning: distill LoRA not found: {lora_path}")

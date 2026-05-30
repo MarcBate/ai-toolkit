@@ -539,6 +539,10 @@ class Wan2214bModel(Wan21):
         return combined_dict
     
     def _has_lightx2v_loras(self):
+        sc = getattr(self, 'sample_config', None)
+        if sc is not None:
+            if getattr(sc, 'lightx2v_high_noise_lora_path', None) or getattr(sc, 'lightx2v_low_noise_lora_path', None):
+                return True
         return (
             self.model_config.lightx2v_high_noise_lora_path is not None
             or self.model_config.lightx2v_low_noise_lora_path is not None
@@ -580,9 +584,10 @@ class Wan2214bModel(Wan21):
                         pass
 
         try:
-            high_path = self.model_config.lightx2v_high_noise_lora_path
-            low_path = self.model_config.lightx2v_low_noise_lora_path
-            strength = self.model_config.lightx2v_lora_strength
+            sc = getattr(self, 'sample_config', None)
+            high_path = (getattr(sc, 'lightx2v_high_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_high_noise_lora_path
+            low_path = (getattr(sc, 'lightx2v_low_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_low_noise_lora_path
+            strength = (getattr(sc, 'lightx2v_lora_strength', None) if sc else None) or self.model_config.lightx2v_lora_strength
 
             if not low_only and high_path is not None:
                 if not os.path.exists(high_path):
@@ -615,8 +620,9 @@ class Wan2214bModel(Wan21):
 
     def _remove_lightx2v_loras(self, pipeline):
         """Remove LightX2V LoRA adapters from both transformers after sampling."""
-        high_path = self.model_config.lightx2v_high_noise_lora_path
-        low_path = self.model_config.lightx2v_low_noise_lora_path
+        sc = getattr(self, 'sample_config', None)
+        high_path = (getattr(sc, 'lightx2v_high_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_high_noise_lora_path
+        low_path = (getattr(sc, 'lightx2v_low_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_low_noise_lora_path
 
         def _delete_adapter_from_model(model, adapter_name):
             # peft_config is the model-level registry that load_lora_weights checks

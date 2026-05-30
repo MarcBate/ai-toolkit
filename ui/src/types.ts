@@ -175,6 +175,8 @@ export interface ModelConfig {
   assistant_lora_path?: string;
   gemma_api_key?: string;
   use_gemma_api?: boolean;
+  cache_quantized_model?: boolean;
+  extras_name_or_path?: string;
 }
 
 export interface SampleItem {
@@ -209,6 +211,16 @@ export interface SampleConfig {
   sample_steps: number;
   num_frames: number;
   fps: number;
+  // Speed-up LoRAs — WAN 2.2 LightX2V
+  lightx2v_high_noise_lora_path?: string | null;
+  lightx2v_low_noise_lora_path?: string | null;
+  lightx2v_lora_strength?: number;
+  // Speed-up LoRA — LTX-2 / LTX-2.3
+  distill_lora_path?: string | null;
+  distill_lora_strength?: number;
+  // Sampling-only LoRA — Qwen Image
+  sampling_lora_path?: string | null;
+  sampling_lora_strength?: number;
 }
 
 export interface LoggingConfig {

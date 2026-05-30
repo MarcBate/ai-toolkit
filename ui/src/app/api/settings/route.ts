@@ -22,6 +22,10 @@ export async function GET() {
     if (!settingsObject.DATASETS_FOLDER || settingsObject.DATASETS_FOLDER === '') {
       settingsObject.DATASETS_FOLDER = defaultDatasetsFolder;
     }
+    // QUANTIZATION_CACHE_DIR defaults to empty (cron/paths.ts computes the fallback at job start)
+    if (!settingsObject.QUANTIZATION_CACHE_DIR) {
+      settingsObject.QUANTIZATION_CACHE_DIR = '';
+    }
 
     // Read version from version.py in root
     let version = 'unknown';
@@ -46,7 +50,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER } = body;
+    const { HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR } = body;
 
     // Upsert all settings
     await Promise.all([
@@ -69,6 +73,11 @@ export async function POST(request: Request) {
         where: { key: 'DATASETS_FOLDER' },
         update: { value: DATASETS_FOLDER },
         create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'QUANTIZATION_CACHE_DIR' },
+        update: { value: QUANTIZATION_CACHE_DIR ?? '' },
+        create: { key: 'QUANTIZATION_CACHE_DIR', value: QUANTIZATION_CACHE_DIR ?? '' },
       }),
     ]);
 

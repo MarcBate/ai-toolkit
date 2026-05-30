@@ -131,6 +131,26 @@ export default function Settings() {
                     placeholder="Enter datasets folder path"
                   />
                 </div>
+
+                <div>
+                  <label htmlFor="QUANTIZATION_CACHE_DIR" className="block text-sm font-medium mb-2">
+                    Quantization Cache Directory
+                    <div className="text-gray-500 text-sm ml-1">
+                      Where pre-quantized models are stored so the slow quantization step can be skipped
+                      on subsequent runs. Must be an absolute path. If blank, defaults to{' '}
+                      <code className="text-gray-300">quantized/</code> inside the Training Folder.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="QUANTIZATION_CACHE_DIR"
+                    name="QUANTIZATION_CACHE_DIR"
+                    value={settings.QUANTIZATION_CACHE_DIR}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="Leave blank to use Training Folder/quantized"
+                  />
+                </div>
               </div>
             </div>
           </div>

@@ -16,8 +16,10 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 - Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
 - Generate LTX-2.3 sample videos in 8 steps with the distilled LoRA instead of 30 steps.
 - Generate Qwen Image sample images faster using a Lightning LoRA (e.g. 4 steps at CFG 1 instead of 20+ steps).
+- Speed-up LoRA settings (LightX2V, distill, sampling) are configured under `sample:` in YAML and exposed in the UI's Sample card with a toggle, path, and strength slider.
 - Train LTX-2.3 without loading the 12B Gemma text encoder locally — use the free LTX Gemma API instead.
 - Stop training job even in the middle of sample generation or model quantization.
+- Quantization cache filenames include the model's basename so different checkpoints (e.g. Sulphur 2 vs vanilla LTX-2.3) never share a cache file.
 
 ### UI — Queue & Job Management
 
@@ -931,3 +933,60 @@ The LoRA is applied immediately before each pipeline call and removed
 unconditionally in a `try/finally` block so training weights are never affected.
 Uses the same PEFT 0.18.x `dispatch_torchao` workaround and stale-adapter cleanup
 as the LightX2V and LTX-2.3 distill implementations.
+
+---
+
+#### 2026-05-30 — Speed-up LoRAs moved to `sample:` config; quantization cache per-model slug
+
+**Speed-up LoRAs moved from `model:` to `sample:` in YAML config**
+
+`toolkit/config_modules.py`, `extensions_built_in/diffusion_models/wan22/wan22_14b_model.py`,
+`ltx2/ltx2.py`, `qwen_image/qwen_image.py`, `jobs/process/BaseSDTrainProcess.py`,
+`toolkit/models/base_model.py`:
+
+The speed-up LoRA fields (`lightx2v_high_noise_lora_path`, `lightx2v_low_noise_lora_path`,
+`lightx2v_lora_strength`, `distill_lora_path`, `distill_lora_strength`,
+`sampling_lora_path`, `sampling_lora_strength`) are now read from the `sample:` block
+instead of `model:`. Old YAML files that still have them under `model:` continue to
+work unchanged (backwards compatible).
+
+New `sample:` config location:
+
+```yaml
+sample:
+  distill_lora_path: "/path/to/ltx-2.3-22b-distilled-lora.safetensors"
+  distill_lora_strength: 0.6
+  # or for WAN 2.2:
+  lightx2v_high_noise_lora_path: "/path/to/high.safetensors"
+  lightx2v_low_noise_lora_path: "/path/to/low.safetensors"
+  lightx2v_lora_strength: 1.0
+  # or for Qwen Image:
+  sampling_lora_path: "/path/to/lightning-lora.safetensors"
+  sampling_lora_strength: 1.0
+```
+
+`BaseSDTrainProcess` sets `self.sd.sample_config` before each `generate_images` call
+so model methods can find the sample-level LoRA paths. `BaseModel.__init__` initialises
+`self.sample_config = None` as the base.
+
+**UI: Sample card LoRA toggles**
+
+`ui/src/app/jobs/new/SimpleJob.tsx`, `options.ts`:
+
+Each model family now shows a LoRA section at the bottom of the Sample card (after
+Negative Prompt) with a toggle, a path textbox with MRU dropdown (localStorage key
+`aitk_mru_lora_paths`, max 8 entries), and a strength slider:
+
+- **WAN 2.2** (`sample.lightx2v_loras`) — high-noise path + low-noise path + strength
+- **LTX-2 / LTX-2.3** (`sample.distill_lora`) — path + strength
+- **Qwen Image** (`sample.sampling_lora`) — path + strength
+
+**Quantization cache filenames include model slug**
+
+`toolkit/util/quantize.py`:
+
+Cache files are now named `quant_{slug}_{hash20}.safetensors` / `quant_{slug}_{hash20}_qmap.json`
+where `slug` is the sanitised basename of `name_or_path` (e.g. `sulphur_dev_bf16`).
+This prevents a custom checkpoint (e.g. Sulphur 2) from silently reusing a cache file
+built from a different checkpoint with the same architecture. The underlying hash is
+unchanged (v1), so existing renamed cache files remain valid.

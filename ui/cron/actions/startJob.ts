@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey } from '../paths';
+import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getQuantizationCacheDir } from '../paths';
 import { resolvePythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -132,6 +132,12 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
     const gemmaApiKey = await getGemmaApiKey();
     if (gemmaApiKey && gemmaApiKey.trim() !== '') {
       additionalEnv.GEMMA_API_KEY = gemmaApiKey;
+    }
+
+    // AITK_QUANTIZATION_CACHE_DIR — only injected when the job opts in via cache_quantized_model
+    if (jobConfig?.config?.process?.[0]?.model?.cache_quantized_model) {
+      const quantCacheDir = await getQuantizationCacheDir();
+      additionalEnv.AITK_QUANTIZATION_CACHE_DIR = quantCacheDir;
     }
 
     // Add the --log argument to the command
