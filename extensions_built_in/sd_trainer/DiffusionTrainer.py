@@ -448,6 +448,8 @@ class DiffusionTrainer(SDTrainer):
                 print(f"\nWarning: Sample generation failed at step {step}, continuing training:\n{e}")
                 traceback.print_exc()
                 self.update_status("running", f"Sample failed (step {step}), continuing training")
+                import torch as _torch
+                _torch.cuda.empty_cache()
         finally:
             if self.is_ui_trainer:
                 self.logger.record_sample_end()

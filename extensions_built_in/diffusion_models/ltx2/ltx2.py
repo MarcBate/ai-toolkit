@@ -691,29 +691,39 @@ class LTX2Model(BaseModel):
                     except Exception:
                         pass
 
-            # Load the LoRA state dict and filter out patchify_proj / audio_patchify_proj
-            # keys.  These layers (proj_in / audio_proj_in on the transformer) are
-            # quantized with optimum.quanto (qfloat8).  When PEFT's load_lora_weights
-            # wraps a quanto-quantized nn.Linear it replaces the module via setattr and
-            # can leave the weight as None after delete_adapter, causing a TypeError on
-            # the very next training step.  Skipping them here is safe: they are tiny
-            # input-projection layers and omitting their LoRA contribution has negligible
-            # effect on sample quality.
+            # Build the set of quantized module names dynamically so we never
+            # hardcode a list that goes stale when the model has extra quantized layers
+            # (e.g. Sulphur 2 quantizes time_embed layers that vanilla LTX-2.3 does not).
+            # PEFT's load_lora_weights with assign=True will corrupt quantized QLinear
+            # weights (QBytesTensor._data KeyError) if we try to load LoRA into them.
+            _Q_CLASSES = frozenset([
+                'QLinear', 'QConv2d', 'QEmbedding', 'QBatchNorm2d',
+                'QLayerNorm', 'QConvTranspose2d', 'QEmbeddingBag',
+            ])
+            _quantized_modules = {
+                name for name, mod in pipeline.transformer.named_modules()
+                if mod.__class__.__name__ in _Q_CLASSES
+            }
+
+            def _lora_module_name(key: str) -> str:
+                # LTX2 LoRA keys start with 'diffusion_model.' — strip it
+                k = key[len('diffusion_model.'):] if key.startswith('diffusion_model.') else key
+                for marker in ('.lora_A.', '.lora_B.', '.lora_alpha', '.lora_embedding_A', '.lora_embedding_B'):
+                    i = k.find(marker)
+                    if i >= 0:
+                        return k[:i]
+                return k
+
             lora_state_dict = _load_safetensors(lora_path)
-            _skip_prefixes = (
-                "diffusion_model.patchify_proj.",
-                "diffusion_model.audio_patchify_proj.",
-            )
             n_before = len(lora_state_dict)
             lora_state_dict = {
                 k: v for k, v in lora_state_dict.items()
-                if not any(k.startswith(p) for p in _skip_prefixes)
+                if _lora_module_name(k) not in _quantized_modules
             }
             n_skipped = n_before - len(lora_state_dict)
             if n_skipped:
                 self.print_and_status_update(
-                    f"Distill LoRA: skipping {n_skipped} quantized-layer keys "
-                    f"(patchify_proj / audio_patchify_proj) to avoid weight corruption"
+                    f"Sampling LoRA: skipping {n_skipped} keys for quantized layers to avoid weight corruption"
                 )
 
             self.print_and_status_update(f"Applying distill LoRA (strength={strength})")
