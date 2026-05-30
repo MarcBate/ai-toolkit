@@ -391,6 +391,7 @@ class BaseModel:
     ):
         network = self.network
         merge_multiplier = 1.0
+        self.print_and_status_update("Switching to inference mode")
         flush()
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
@@ -699,6 +700,7 @@ class BaseModel:
             torch.cuda.set_rng_state(cuda_rng_state)
 
         self.restore_device_state()
+        self.print_and_status_update("Resuming training mode")
         if network is not None:
             network.train()
             network.multiplier = start_multiplier

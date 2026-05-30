@@ -19,6 +19,8 @@ sys.path.insert(0, os.getcwd())
 # turn off diffusers telemetry until I can figure out how to make it opt-in
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
+print("AI Toolkit: loading libraries...", flush=True)
+
 # set torch to trace mode
 import torch
     
@@ -40,6 +42,7 @@ from toolkit.accelerator import get_accelerator
 from toolkit.print import print_acc, setup_log_to_file
 from toolkit.ui_utils import update_job_status_to_ui, JobStoppedException
 
+print("AI Toolkit: initializing accelerator...", flush=True)
 accelerator = get_accelerator()
 
 
@@ -111,6 +114,8 @@ def main():
 
     for config_file in config_file_list:
         try:
+            if accelerator.is_main_process:
+                print_acc(f"Loading config: {os.path.basename(config_file)}")
             sample_only = os.environ.get("AITK_SAMPLE_ONLY", "0") == "1"
             job = get_job(config_file, args.name, sample_only=sample_only)
             job.run()

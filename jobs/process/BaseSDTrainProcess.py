@@ -1830,6 +1830,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         flush()
         if not self.is_fine_tuning:
             if self.network_config is not None:
+                print_acc("Setting up LoRA network...")
                 # TODO should we completely switch to LycorisSpecialNetwork?
                 network_kwargs = self.network_config.network_kwargs
                 is_lycoris = False

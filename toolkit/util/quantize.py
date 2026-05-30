@@ -174,11 +174,14 @@ def _load_from_quant_cache(
     with open(cache_qmap_path, "r", encoding="utf-8") as f:
         qmap = json.load(f)
 
-    # Recreate QLinear module structure from the qmap (no GPU, no freeze computation)
-    for name, m in model_to_quantize.named_modules():
-        qconfig = qmap.get(name, None)
-        if qconfig is None:
-            continue
+    # Recreate QLinear module structure from the qmap (no GPU, no freeze computation).
+    # Pre-filter to only quantized entries so tqdm reflects real work items.
+    quantized_items = [
+        (name, m) for name, m in model_to_quantize.named_modules()
+        if name in qmap
+    ]
+    for name, m in tqdm(quantized_items, desc=" - rebuilding quantization structure"):
+        qconfig = qmap[name]
         w = qconfig["weights"]
         a = qconfig["activations"]
         weights_qt = get_qtype(w) if w != "none" else None
@@ -188,7 +191,9 @@ def _load_from_quant_cache(
 
     # Load the frozen QTensor state — QModuleMixin._load_from_state_dict reconstructs
     # QBytesTensors from _data/_scale without re-running any quantization math.
+    print_acc(f" - loading quantized weights from cache...")
     state_dict = load_file(cache_path, device="cpu")
+    print_acc(" - applying weights to model...")
     model_to_quantize.load_state_dict(state_dict, strict=False)
     freeze(model_to_quantize)
 
