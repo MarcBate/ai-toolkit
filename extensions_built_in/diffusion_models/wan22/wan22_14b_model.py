@@ -541,11 +541,11 @@ class Wan2214bModel(Wan21):
     def _has_lightx2v_loras(self):
         sc = getattr(self, 'sample_config', None)
         if sc is not None:
-            if getattr(sc, 'lightx2v_high_noise_lora_path', None) or getattr(sc, 'lightx2v_low_noise_lora_path', None):
+            if getattr(sc, 'sample_lora_path', None) or getattr(sc, 'sample_lora_path_2', None):
                 return True
         return (
-            self.model_config.lightx2v_high_noise_lora_path is not None
-            or self.model_config.lightx2v_low_noise_lora_path is not None
+            self.model_config.sample_lora_path is not None
+            or self.model_config.sample_lora_path_2 is not None
         )
 
     def _apply_lightx2v_loras(self, pipeline, high_only: bool = False, low_only: bool = False):
@@ -585,26 +585,27 @@ class Wan2214bModel(Wan21):
 
         try:
             sc = getattr(self, 'sample_config', None)
-            high_path = (getattr(sc, 'lightx2v_high_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_high_noise_lora_path
-            low_path = (getattr(sc, 'lightx2v_low_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_low_noise_lora_path
-            strength = (getattr(sc, 'lightx2v_lora_strength', None) if sc else None) or self.model_config.lightx2v_lora_strength
+            high_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+            low_path = (getattr(sc, 'sample_lora_path_2', None) if sc else None) or self.model_config.sample_lora_path_2
+            high_strength = (getattr(sc, 'sample_lora_strength', None) if sc else None) or self.model_config.sample_lora_strength
+            low_strength = (getattr(sc, 'sample_lora_strength_2', None) if sc else None) or self.model_config.sample_lora_strength_2
 
             if not low_only and high_path is not None:
                 if not os.path.exists(high_path):
                     self.print_and_status_update(f"Warning: LightX2V high noise LoRA not found: {high_path}")
                 else:
-                    self.print_and_status_update(f"Applying LightX2V high noise LoRA to transformer 1 (strength={strength})")
+                    self.print_and_status_update(f"Applying LightX2V high noise LoRA to transformer 1 (strength={high_strength})")
                     # pipeline.transformer already points to transformer_1
                     _ensure_adapter_absent(pipeline.transformer, "lightx2v_high")
                     pipeline.load_lora_weights(high_path, adapter_name="lightx2v_high")
                     _move_lora_to_device(pipeline.transformer, "lightx2v_high", self.device_torch)
-                    pipeline.set_adapters(["lightx2v_high"], adapter_weights=[strength])
+                    pipeline.set_adapters(["lightx2v_high"], adapter_weights=[high_strength])
 
             if not high_only and low_path is not None and pipeline.transformer_2 is not None:
                 if not os.path.exists(low_path):
                     self.print_and_status_update(f"Warning: LightX2V low noise LoRA not found: {low_path}")
                 else:
-                    self.print_and_status_update(f"Applying LightX2V low noise LoRA to transformer 2 (strength={strength})")
+                    self.print_and_status_update(f"Applying LightX2V low noise LoRA to transformer 2 (strength={low_strength})")
                     # Temporarily swap so load_lora_weights targets transformer_2
                     orig_transformer = pipeline.transformer
                     pipeline.transformer = pipeline.transformer_2
@@ -612,7 +613,7 @@ class Wan2214bModel(Wan21):
                         _ensure_adapter_absent(pipeline.transformer_2, "lightx2v_low")
                         pipeline.load_lora_weights(low_path, adapter_name="lightx2v_low")
                         _move_lora_to_device(pipeline.transformer_2, "lightx2v_low", self.device_torch)
-                        pipeline.set_adapters(["lightx2v_low"], adapter_weights=[strength])
+                        pipeline.set_adapters(["lightx2v_low"], adapter_weights=[low_strength])
                     finally:
                         pipeline.transformer = orig_transformer
         finally:
@@ -621,8 +622,8 @@ class Wan2214bModel(Wan21):
     def _remove_lightx2v_loras(self, pipeline):
         """Remove LightX2V LoRA adapters from both transformers after sampling."""
         sc = getattr(self, 'sample_config', None)
-        high_path = (getattr(sc, 'lightx2v_high_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_high_noise_lora_path
-        low_path = (getattr(sc, 'lightx2v_low_noise_lora_path', None) if sc else None) or self.model_config.lightx2v_low_noise_lora_path
+        high_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+        low_path = (getattr(sc, 'sample_lora_path_2', None) if sc else None) or self.model_config.sample_lora_path_2
 
         def _delete_adapter_from_model(model, adapter_name):
             # peft_config is the model-level registry that load_lora_weights checks

@@ -114,17 +114,28 @@ class SampleConfig:
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
 
-        # Speed-up LoRAs applied during sampling only (not training)
-        # WAN 2.2 LightX2V distillation LoRAs
-        self.lightx2v_high_noise_lora_path: Optional[str] = kwargs.get('lightx2v_high_noise_lora_path', None) or None
-        self.lightx2v_low_noise_lora_path: Optional[str] = kwargs.get('lightx2v_low_noise_lora_path', None) or None
-        self.lightx2v_lora_strength: float = kwargs.get('lightx2v_lora_strength', 1.0)
-        # LTX-2/2.3 distilled LoRA
-        self.distill_lora_path: Optional[str] = kwargs.get('distill_lora_path', None) or None
-        self.distill_lora_strength: float = kwargs.get('distill_lora_strength', 0.6)
-        # Qwen Image sampling-only LoRA
-        self.sampling_lora_path: Optional[str] = kwargs.get('sampling_lora_path', None) or None
-        self.sampling_lora_strength: float = kwargs.get('sampling_lora_strength', 1.0)
+        # LoRA applied during sampling only (not training).
+        # Accepts old arch-specific names as backwards-compatible aliases.
+        self.sample_lora_path: Optional[str] = (
+            kwargs.get('sample_lora_path', None)
+            or kwargs.get('lightx2v_high_noise_lora_path', None)
+            or kwargs.get('distill_lora_path', None)
+            or kwargs.get('sampling_lora_path', None)
+            or None
+        )
+        # Second path for two-stage models (WAN 2.2 LightX2V low-noise stage)
+        self.sample_lora_path_2: Optional[str] = (
+            kwargs.get('sample_lora_path_2', None)
+            or kwargs.get('lightx2v_low_noise_lora_path', None)
+            or None
+        )
+        # Strength — check new name first, then old arch-specific names
+        self.sample_lora_strength: float = next(
+            (kwargs[k] for k in ('sample_lora_strength', 'lightx2v_lora_strength', 'distill_lora_strength', 'sampling_lora_strength') if k in kwargs),
+            1.0
+        )
+        # Second strength for two-stage models (WAN 2.2 low-noise stage)
+        self.sample_lora_strength_2: float = kwargs.get('sample_lora_strength_2', 1.0)
 
     @property
     def prompts(self):
@@ -637,16 +648,33 @@ class ModelConfig:
         # mainly for decompression loras for distilled models
         self.assistant_lora_path = kwargs.get('assistant_lora_path', None)
         self.inference_lora_path = kwargs.get('inference_lora_path', None)
-        # LightX2V distillation LoRAs for WAN 2.2 sample generation (not applied during training)
-        self.lightx2v_high_noise_lora_path = kwargs.get('lightx2v_high_noise_lora_path', None)
-        self.lightx2v_low_noise_lora_path = kwargs.get('lightx2v_low_noise_lora_path', None)
-        self.lightx2v_lora_strength = kwargs.get('lightx2v_lora_strength', 1.0)
-        # LTX-2.3 distilled LoRA for fast sample generation (not applied during training)
-        self.distill_lora_path = kwargs.get('distill_lora_path', None)
-        self.distill_lora_strength = kwargs.get('distill_lora_strength', 0.6)
-        # Sampling-only LoRA applied during sample generation but not training steps (e.g. Lightning LoRAs for Qwen Image)
-        self.sampling_lora_path = kwargs.get('sampling_lora_path', None)
-        self.sampling_lora_strength = kwargs.get('sampling_lora_strength', 1.0)
+        # Generic sampling LoRA — applied during sample generation only, not training.
+        # New canonical names; old arch-specific names accepted as aliases for YAML backwards compat.
+        self.sample_lora_path = (
+            kwargs.get('sample_lora_path', None)
+            or kwargs.get('lightx2v_high_noise_lora_path', None)
+            or kwargs.get('distill_lora_path', None)
+            or kwargs.get('sampling_lora_path', None)
+            or None
+        )
+        self.sample_lora_path_2 = (
+            kwargs.get('sample_lora_path_2', None)
+            or kwargs.get('lightx2v_low_noise_lora_path', None)
+            or None
+        )
+        self.sample_lora_strength = next(
+            (kwargs[k] for k in ('sample_lora_strength', 'lightx2v_lora_strength', 'distill_lora_strength', 'sampling_lora_strength') if k in kwargs),
+            1.0
+        )
+        self.sample_lora_strength_2 = kwargs.get('sample_lora_strength_2', 1.0)
+        # Old field aliases — kept so any code still referencing them directly continues to work
+        self.lightx2v_high_noise_lora_path = self.sample_lora_path
+        self.lightx2v_low_noise_lora_path = self.sample_lora_path_2
+        self.lightx2v_lora_strength = self.sample_lora_strength
+        self.distill_lora_path = self.sample_lora_path
+        self.distill_lora_strength = self.sample_lora_strength
+        self.sampling_lora_path = self.sample_lora_path
+        self.sampling_lora_strength = self.sample_lora_strength
         self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now

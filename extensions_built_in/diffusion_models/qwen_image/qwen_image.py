@@ -395,17 +395,17 @@ class QwenImageModel(BaseModel):
 
     def _has_sampling_lora(self):
         sc = getattr(self, 'sample_config', None)
-        if sc is not None and getattr(sc, 'sampling_lora_path', None):
+        if sc is not None and getattr(sc, 'sample_lora_path', None):
             return True
-        return self.model_config.sampling_lora_path is not None
+        return self.model_config.sample_lora_path is not None
 
     def _apply_sampling_lora(self, pipeline):
-        """Load the sampling-only LoRA (e.g. Lightning) onto the pipeline transformer."""
+        """Load the sampling LoRA onto the pipeline transformer."""
         import peft.tuners.lora.model as _peft_lora_model
 
         sc = getattr(self, 'sample_config', None)
-        lora_path = (getattr(sc, 'sampling_lora_path', None) if sc else None) or self.model_config.sampling_lora_path
-        strength = (getattr(sc, 'sampling_lora_strength', None) if sc else None) or self.model_config.sampling_lora_strength
+        lora_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+        strength = (getattr(sc, 'sample_lora_strength', None) if sc else None) or self.model_config.sample_lora_strength
 
         if not os.path.exists(lora_path):
             self.print_and_status_update(f"Warning: sampling LoRA not found: {lora_path}")

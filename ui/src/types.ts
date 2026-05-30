@@ -211,16 +211,11 @@ export interface SampleConfig {
   sample_steps: number;
   num_frames: number;
   fps: number;
-  // Speed-up LoRAs — WAN 2.2 LightX2V
-  lightx2v_high_noise_lora_path?: string | null;
-  lightx2v_low_noise_lora_path?: string | null;
-  lightx2v_lora_strength?: number;
-  // Speed-up LoRA — LTX-2 / LTX-2.3
-  distill_lora_path?: string | null;
-  distill_lora_strength?: number;
-  // Sampling-only LoRA — Qwen Image
-  sampling_lora_path?: string | null;
-  sampling_lora_strength?: number;
+  // LoRA applied only during sampling (not training). WAN 2.2 uses path + path_2 for two-stage LightX2V.
+  sample_lora_path?: string | null;
+  sample_lora_path_2?: string | null;
+  sample_lora_strength?: number;
+  sample_lora_strength_2?: number;
 }
 
 export interface LoggingConfig {
