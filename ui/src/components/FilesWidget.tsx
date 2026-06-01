@@ -2,11 +2,21 @@ import React from 'react';
 import useFilesList from '@/hooks/useFilesList';
 import { Loader2, AlertCircle, Download, Box, Brain, Trash2, SlidersHorizontal } from 'lucide-react';
 import { openMergeLoRAsModal } from './MergeLoRAsModal';
+import { openStripAudioModal } from './StripAudioModal';
 import { getFilename, getFoldername } from '@/utils/basic';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
 
-export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName: string }) {
+const isLtxJob = (jobConfig: string): boolean => {
+  try {
+    const nop: string = JSON.parse(jobConfig)?.config?.process?.[0]?.model?.name_or_path ?? '';
+    return /lightricks|ltx/i.test(nop);
+  } catch {
+    return false;
+  }
+};
+
+export default function FilesWidget({ jobID, jobName, jobConfig }: { jobID: string; jobName: string; jobConfig?: string }) {
   const { files, status, refreshFiles } = useFilesList(jobID, 5000);
 
   const isOptimizerFile = (filePath: string) => getFilename(filePath) === 'optimizer.pt';
@@ -54,22 +64,38 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
           <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">{checkpointFiles.length}</span>
         </div>
         {checkpointFiles.length > 0 && (
-          <span
-            className="px-3 py-1 rounded-full text-sm bg-purple-500/10 text-purple-500 uppercase cursor-pointer hover:bg-purple-500/20"
-            onClick={() => {
-              const outputName = `${jobName}_merged`;
-              openMergeLoRAsModal(
-                getFoldername(checkpointFiles[0].path),
-                outputName,
-                checkpointFiles.map(f => ({ path: f.path })),
-                () => {
-                  refreshFiles();
-                },
-              );
-            }}
-          >
-            merge
-          </span>
+          <div className="flex items-center gap-2">
+            <span
+              className="px-3 py-1 rounded-full text-sm bg-purple-500/10 text-purple-500 uppercase cursor-pointer hover:bg-purple-500/20"
+              onClick={() => {
+                const outputName = `${jobName}_merged`;
+                openMergeLoRAsModal(
+                  getFoldername(checkpointFiles[0].path),
+                  outputName,
+                  checkpointFiles.map(f => ({ path: f.path })),
+                  () => {
+                    refreshFiles();
+                  },
+                );
+              }}
+            >
+              merge
+            </span>
+            {jobConfig && isLtxJob(jobConfig) && (
+              <span
+                className="px-3 py-1 rounded-full text-sm bg-cyan-500/10 text-cyan-400 uppercase cursor-pointer hover:bg-cyan-500/20"
+                onClick={() => {
+                  openStripAudioModal(
+                    getFoldername(checkpointFiles[0].path),
+                    checkpointFiles.map(f => ({ path: f.path })),
+                    refreshFiles,
+                  );
+                }}
+              >
+                strip audio
+              </span>
+            )}
+          </div>
         )}
       </div>
 

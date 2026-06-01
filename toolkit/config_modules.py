@@ -91,14 +91,15 @@ class SampleConfig:
         self.sample_steps = kwargs.get('sample_steps', 20)
         self.network_multiplier = kwargs.get('network_multiplier', 1)
         self.guidance_rescale = kwargs.get('guidance_rescale', 0.0)
-        self.ext: ImgExt = kwargs.get('format', 'jpg')
         self.adapter_conditioning_scale = kwargs.get('adapter_conditioning_scale', 1.0)
         self.refiner_start_at = kwargs.get('refiner_start_at',
                                            0.5)  # step to start using refiner on sample if it exists
         self.extra_values = kwargs.get('extra_values', [])
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
-        if self.num_frames > 1 and self.ext not in ['webp']:
+        default_ext = 'mp4' if self.num_frames > 1 else 'png'
+        self.ext: ImgExt = kwargs.get('format', default_ext)
+        if self.num_frames > 1 and self.ext not in ['webp', 'mp4']:
             print("Changing sample extention to animated webp")
             self.ext = 'webp'
         
@@ -1394,7 +1395,7 @@ class GenerateImageConfig:
                     save_all=True,
                     duration=duration,  # Duration per frame in milliseconds
                     loop=0,  # 0 means loop forever
-                    quality=80  # Quality setting (0-100)
+                    quality=100  # Quality setting (0-100)
                 )
             elif self.output_ext == 'mp4':
                 import av

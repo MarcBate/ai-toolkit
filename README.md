@@ -38,6 +38,7 @@ This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) wi
 - step count overlay on the first cell of each sample row so you can see which checkpoint each row came from
 - expands prompt height when caption is active to show entire prompt to make it easier to edit. reverts to 3 lines when lost focus
 - **CivitAI metadata** — sample PNG and MP4 outputs embed A1111-format `parameters` metadata so CivitAI auto-detects the prompt, model, and settings on upload
+- **Sample format defaults** — video samples default to MP4, image samples default to PNG; override with `format:` in the sample config
 - **Find & replace captions** —  find-and-replace across all captions in a dataset, with a replace-all button
 - **Caption filtering** — filter dataset images by caption content
 
@@ -596,6 +597,33 @@ _Last updated: 2026-03-31 18:10 UTC_
 ## Changelog
 
 ### mcb2 branch
+
+#### 2026-06-01 — Strip audio from LTX LoRA; sample format defaults (MP4/PNG)
+
+**Strip audio UI** — added a "strip audio" button to the Checkpoints panel on
+the job overview page. Visible only on LTX-2 / LTX-2.3 jobs that have at least
+one `.safetensors` checkpoint. Opens a modal to select a checkpoint, confirm the
+output filename (default `<name>.no_audio.safetensors`), and run the strip
+script with a live streaming log.
+
+**Sample format defaults** — video samples (num_frames > 1) now default to MP4
+instead of WebP; image samples default to PNG instead of JPG. Both can still be
+overridden with `format:` in the sample config block.
+
+**Files changed:**
+- `ui_scripts/strip_audio_from_ltx_lora.py` — new script adapted from standalone
+  tool; uses `--input_path` / `--output_path` named args and emits a JSON result
+  line on success
+- `ui/src/components/StripAudioModal.tsx` — new modal (checkpoint selector,
+  editable output name, streaming log pane)
+- `ui/src/components/FilesWidget.tsx` — added `jobConfig` prop, LTX detection,
+  "strip audio" button
+- `ui/src/components/JobOverview.tsx` — passes `job.job_config` to `FilesWidget`
+- `ui/src/app/layout.tsx` — mounts `<StripAudioModal />` globally
+- `toolkit/config_modules.py` — fixed MP4 being overridden to WebP; changed
+  default sample format to MP4 (video) and PNG (image)
+
+---
 
 #### 2026-04-13 — Fix UI job stop misclassified as error, causing re-queue loop
 

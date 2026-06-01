@@ -12,6 +12,7 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import MergeLoRAsModal from '@/components/MergeLoRAsModal';
+import StripAudioModal from '@/components/StripAudioModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <DocModal />
         <CaptionDatasetModal />
         <MergeLoRAsModal />
+        <StripAudioModal />
       </body>
     </html>
   );
