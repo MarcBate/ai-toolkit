@@ -21,7 +21,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 from accelerate import init_empty_weights
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.quantize import quantize, get_qtype, quantize_model, filter_lora_state_dict_for_quantized_model
 from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
 from safetensors import safe_open
@@ -660,8 +660,19 @@ class LTX2Model(BaseModel):
             return True
         return self.model_config.sample_lora_path is not None
 
-    def _apply_distill_lora(self, pipeline: "LTX2Pipeline"):
-        """Load the sampling LoRA onto the pipeline transformer."""
+    def _lora_move(self, transformer, adapter_name, device):
+        """Move LoRA adapter weights for a transformer to the given device."""
+        for module in transformer.modules():
+            if hasattr(module, 'lora_A') and adapter_name in module.lora_A:
+                module.lora_A[adapter_name].to(device)
+                module.lora_B[adapter_name].to(device)
+
+    def _prepare_distill_lora(self, pipeline: "LTX2Pipeline"):
+        """Load the distill LoRA once and park weights on CPU.
+
+        _before_generate_images_loop calls this once before the sample loop.
+        Per-sample code moves weights to GPU and back via _lora_move.
+        """
         import peft.tuners.lora.model as _peft_lora_model
         from safetensors.torch import load_file as _load_safetensors
 
@@ -696,51 +707,29 @@ class LTX2Model(BaseModel):
             # (e.g. Sulphur 2 quantizes time_embed layers that vanilla LTX-2.3 does not).
             # PEFT's load_lora_weights with assign=True will corrupt quantized QLinear
             # weights (QBytesTensor._data KeyError) if we try to load LoRA into them.
-            _Q_CLASSES = frozenset([
-                'QLinear', 'QConv2d', 'QEmbedding', 'QBatchNorm2d',
-                'QLayerNorm', 'QConvTranspose2d', 'QEmbeddingBag',
-            ])
-            _quantized_modules = {
-                name for name, mod in pipeline.transformer.named_modules()
-                if mod.__class__.__name__ in _Q_CLASSES
-            }
-
-            def _lora_module_name(key: str) -> str:
-                # LTX2 LoRA keys start with 'diffusion_model.' — strip it
-                k = key[len('diffusion_model.'):] if key.startswith('diffusion_model.') else key
-                for marker in ('.lora_A.', '.lora_B.', '.lora_alpha', '.lora_embedding_A', '.lora_embedding_B'):
-                    i = k.find(marker)
-                    if i >= 0:
-                        return k[:i]
-                return k
-
             lora_state_dict = _load_safetensors(lora_path)
             n_before = len(lora_state_dict)
-            lora_state_dict = {
-                k: v for k, v in lora_state_dict.items()
-                if _lora_module_name(k) not in _quantized_modules
-            }
+            lora_state_dict = filter_lora_state_dict_for_quantized_model(
+                pipeline.transformer, lora_state_dict
+            )
             n_skipped = n_before - len(lora_state_dict)
             if n_skipped:
                 self.print_and_status_update(
                     f"Sampling LoRA: skipping {n_skipped} keys for quantized layers to avoid weight corruption"
                 )
 
-            self.print_and_status_update(f"Applying distill LoRA (strength={strength})")
+            self.print_and_status_update(f"Loading distill LoRA (strength={strength})")
             pipeline.load_lora_weights(lora_state_dict, adapter_name="distill_lora")
-
-            # Move LoRA weights to device in case they landed on CPU
-            for module in pipeline.transformer.modules():
-                if hasattr(module, 'lora_A') and 'distill_lora' in module.lora_A:
-                    module.lora_A['distill_lora'].to(self.device_torch)
-                    module.lora_B['distill_lora'].to(self.device_torch)
-
             pipeline.set_adapters(["distill_lora"], adapter_weights=[strength])
+            # Park on CPU until needed per-sample
+            self._lora_move(pipeline.transformer, "distill_lora", "cpu")
         finally:
             _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
 
-    def _remove_distill_lora(self, pipeline: "LTX2Pipeline"):
-        """Remove the distilled LoRA adapter from the pipeline transformer."""
+        self._distill_lora_ready = True
+
+    def _teardown_distill_lora(self, pipeline: "LTX2Pipeline"):
+        """Remove the distill LoRA adapter completely after all sampling is done."""
         if hasattr(pipeline.transformer, 'peft_config') and 'distill_lora' in pipeline.transformer.peft_config:
             try:
                 del pipeline.transformer.peft_config['distill_lora']
@@ -752,6 +741,15 @@ class LTX2Model(BaseModel):
                     module.delete_adapter('distill_lora')
                 except Exception:
                     pass
+        self._distill_lora_ready = False
+
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        if self._has_distill_lora():
+            self._prepare_distill_lora(pipeline)
+
+    def _after_generate_images_loop(self, pipeline):
+        if getattr(self, '_distill_lora_ready', False):
+            self._teardown_distill_lora(pipeline)
 
     def get_generation_pipeline(self):
         scheduler = LTX2Model.get_train_scheduler()
@@ -867,8 +865,8 @@ class LTX2Model(BaseModel):
             self.maybe_stop()
             return callback_kwargs
 
-        if self._has_distill_lora():
-            self._apply_distill_lora(pipeline)
+        if getattr(self, '_distill_lora_ready', False):
+            self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
 
         # When using Gemma API the pipeline receives post-connector embeddings [batch, seq, 4096+2048].
         # Temporarily replace pipeline.connectors with a passthrough that splits them.
@@ -912,8 +910,8 @@ class LTX2Model(BaseModel):
                 **extra,
             )
         finally:
-            if self._has_distill_lora():
-                self._remove_distill_lora(pipeline)
+            if getattr(self, '_distill_lora_ready', False):
+                self._lora_move(pipeline.transformer, "distill_lora", "cpu")
             if _orig_connectors is not None:
                 pipeline.connectors = _orig_connectors
 

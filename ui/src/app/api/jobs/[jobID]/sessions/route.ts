@@ -139,9 +139,19 @@ export async function GET(_request: NextRequest, { params }: { params: { jobID: 
         return NextResponse.json({ sessions: [], total_seconds: 0 });
       }
 
+      // Estimate sessions for any steps that predate the first recorded session
+      // (i.e. training runs before this feature was added to the DB).
+      const firstSessionStart = sessionRows[0].start_time;
+      const preFeatureStepRows = await all<{ wall_time: number }>(
+        db,
+        `SELECT wall_time FROM steps WHERE wall_time < ? ORDER BY step ASC`,
+        [firstSessionStart],
+      );
+      const preFeatureSessions = estimateSessionsFromSteps(preFeatureStepRows);
+
       const hasSamplingTable = await tableExists(db, 'sampling_periods');
 
-      sessions = await Promise.all(
+      const exactSessions = await Promise.all(
         sessionRows.map(async (session, i) => {
           const nextStart = i + 1 < sessionRows.length ? sessionRows[i + 1].start_time : null;
 
@@ -181,6 +191,8 @@ export async function GET(_request: NextRequest, { params }: { params: { jobID: 
           };
         }),
       );
+
+      sessions = [...preFeatureSessions, ...exactSessions];
     }
 
     const total_seconds = sessions.reduce(

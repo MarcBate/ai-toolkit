@@ -10,7 +10,7 @@ import classNames from 'classnames';
 import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
-import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronsUp, GripVertical } from 'lucide-react';
 import { reorderJob, reorderJobToIndex } from '@/utils/jobs';
 
 interface JobsTableProps {
@@ -21,7 +21,7 @@ interface JobsTableProps {
 }
 
 export default function JobsTable({ onlyActive = false, filter = '', job_type = null }: JobsTableProps) {
-  const { jobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
+  const { jobs, setJobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
 
@@ -145,12 +145,53 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   }, [jobs, filter]);
 
   const handleReorder = async (jobID: string, direction: 'up' | 'down') => {
+    // Optimistic update: swap with neighbour immediately
+    setJobs(prev => {
+      const job = prev.find(j => j.id === jobID);
+      if (!job) return prev;
+      const queueJobs = prev
+        .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
+        .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
+      const idx = queueJobs.findIndex(j => j.id === jobID);
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= queueJobs.length) return prev;
+      const neighbour = queueJobs[swapIdx];
+      const swappedPos = neighbour.queue_position;
+      const jobPos = job.queue_position;
+      return prev.map(j => {
+        if (j.id === jobID) return { ...j, queue_position: swappedPos };
+        if (j.id === neighbour.id) return { ...j, queue_position: jobPos };
+        return j;
+      });
+    });
     try {
       await reorderJob(jobID, direction);
-      refresh();
     } catch (e) {
       console.error('Failed to reorder job:', e);
     }
+    refresh();
+  };
+
+  const handleMoveToTop = async (jobID: string) => {
+    // Optimistic update: reorder local state immediately
+    setJobs(prev => {
+      const job = prev.find(j => j.id === jobID);
+      if (!job) return prev;
+      const queueJobs = prev
+        .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
+        .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
+      if (queueJobs[0]?.id === jobID) return prev;
+      const reordered = [job, ...queueJobs.filter(j => j.id !== jobID)];
+      const basePos = Math.min(...queueJobs.map(j => j.queue_position ?? 0));
+      const updated = new Map(reordered.map((j, i) => [j.id, { ...j, queue_position: basePos + i }]));
+      return prev.map(j => updated.get(j.id) ?? j);
+    });
+    try {
+      await reorderJobToIndex(jobID, 0);
+    } catch (e) {
+      console.error('Failed to move job to top:', e);
+    }
+    refresh();
   };
 
   const columns: TableColumn[] = [
@@ -176,6 +217,13 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
                   <GripVertical size={16} />
                 </div>
                 <div className="flex flex-col mr-3 text-gray-500">
+                  <button
+                    onClick={() => handleMoveToTop(row.id)}
+                    className="hover:text-white transition-colors"
+                    title="Move to Top"
+                  >
+                    <ChevronsUp size={16} />
+                  </button>
                   <button
                     onClick={() => handleReorder(row.id, 'up')}
                     className="hover:text-white transition-colors"

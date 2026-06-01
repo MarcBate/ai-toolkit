@@ -36,6 +36,52 @@ Q_MODULES = [
     "QEmbeddingBag",
 ]
 
+
+def filter_lora_state_dict_for_quantized_model(
+    transformer: "torch.nn.Module",
+    lora_state_dict: dict,
+) -> dict:
+    """Remove LoRA keys targeting quanto-quantized layers.
+
+    PEFT's load_lora_weights with assign=True calls QModule._load_from_state_dict,
+    which unconditionally pops weight._data from the state dict — raising KeyError
+    if the key isn't present (i.e. when loading a LoRA, not a full checkpoint).
+
+    LoRA key prefixes vary by training tool:
+      - kohya / custom: 'diffusion_model.<module>.<lora_A/B>...'
+      - diffusers:      'transformer.<module>.<lora_A/B>...'
+    Both must be stripped before matching against named_modules() names.
+    """
+    quantized_modules = {
+        name
+        for name, mod in transformer.named_modules()
+        if mod.__class__.__name__ in Q_MODULES
+    }
+    if not quantized_modules:
+        return lora_state_dict
+
+    _LORA_MARKERS = (
+        ".lora_A.", ".lora_B.", ".lora_alpha",
+        ".lora_embedding_A.", ".lora_embedding_B.",
+    )
+    _STRIP_PREFIXES = ("diffusion_model.", "transformer.")
+
+    def _module_name(key: str) -> str:
+        for pfx in _STRIP_PREFIXES:
+            if key.startswith(pfx):
+                key = key[len(pfx):]
+                break
+        for marker in _LORA_MARKERS:
+            i = key.find(marker)
+            if i >= 0:
+                return key[:i]
+        return key
+
+    return {
+        k: v for k, v in lora_state_dict.items()
+        if _module_name(k) not in quantized_modules
+    }
+
 torchao_qtypes = {
     # "int4": Int4WeightOnlyConfig(),
     "uint2": UIntXWeightOnlyConfig(torch.uint2),
@@ -366,11 +412,25 @@ def quantize_model(
 
         # Cache check: skip GPU quantization if a pre-computed cache exists
         cache_dir = os.environ.get("AITK_QUANTIZATION_CACHE_DIR", None)
+        wants_cache = getattr(base_model.model_config, "cache_quantized_model", False)
         use_cache = (
             cache_dir
-            and getattr(base_model.model_config, "cache_quantized_model", False)
+            and wants_cache
             and not isinstance(quantization_type, aotype)  # quanto only; torchao not supported
         )
+        if wants_cache and not use_cache:
+            if isinstance(quantization_type, aotype):
+                base_model.print_and_status_update(
+                    f" - Note: cache_quantized_model is enabled but caching is not supported "
+                    f"for torchao quantization (qtype={base_model.model_config.qtype}). "
+                    f"This happens when layer_offloading=true forces qfloat8 → float8. "
+                    f"Model will be re-quantized each run."
+                )
+            elif not cache_dir:
+                base_model.print_and_status_update(
+                    f" - Note: cache_quantized_model is enabled but AITK_QUANTIZATION_CACHE_DIR "
+                    f"is not set. Configure a cache directory in Settings."
+                )
         cache_path = cache_qmap_path = None
         if use_cache:
             slug, cache_key = _compute_quant_cache_key(base_model)

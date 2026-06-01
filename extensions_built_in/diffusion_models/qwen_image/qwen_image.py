@@ -14,7 +14,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.quantize import quantize, get_qtype, quantize_model, filter_lora_state_dict_for_quantized_model
 import torch.nn.functional as F
 from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
@@ -296,8 +296,8 @@ class QwenImageModel(BaseModel):
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
-        if self._has_sampling_lora():
-            self._apply_sampling_lora(pipeline)
+        if getattr(self, '_sampling_lora_ready', False):
+            self._lora_move(pipeline.transformer, "sampling_lora", self.device_torch)
         try:
             img = pipeline(
                 prompt_embeds=conditional_embeds.text_embeds,
@@ -318,8 +318,8 @@ class QwenImageModel(BaseModel):
                 **extra,
             ).images[0]
         finally:
-            if self._has_sampling_lora():
-                self._remove_sampling_lora(pipeline)
+            if getattr(self, '_sampling_lora_ready', False):
+                self._lora_move(pipeline.transformer, "sampling_lora", "cpu")
         return img
 
     def get_noise_prediction(
@@ -399,8 +399,19 @@ class QwenImageModel(BaseModel):
             return True
         return self.model_config.sample_lora_path is not None
 
-    def _apply_sampling_lora(self, pipeline):
-        """Load the sampling LoRA onto the pipeline transformer."""
+    def _lora_move(self, transformer, adapter_name, device):
+        """Move LoRA adapter weights for a transformer to the given device."""
+        for module in transformer.modules():
+            if hasattr(module, 'lora_A') and adapter_name in module.lora_A:
+                module.lora_A[adapter_name].to(device)
+                module.lora_B[adapter_name].to(device)
+
+    def _prepare_sampling_lora(self, pipeline):
+        """Load the sampling LoRA once and park weights on CPU.
+
+        _before_generate_images_loop calls this once before the sample loop.
+        Per-sample code moves weights to GPU and back via _lora_move.
+        """
         import peft.tuners.lora.model as _peft_lora_model
 
         sc = getattr(self, 'sample_config', None)
@@ -429,20 +440,29 @@ class QwenImageModel(BaseModel):
                     except Exception:
                         pass
 
-            self.print_and_status_update(f"Applying sampling LoRA (strength={strength})")
-            pipeline.load_lora_weights(lora_path, adapter_name="sampling_lora")
-
-            for module in pipeline.transformer.modules():
-                if hasattr(module, 'lora_A') and 'sampling_lora' in module.lora_A:
-                    module.lora_A['sampling_lora'].to(self.device_torch)
-                    module.lora_B['sampling_lora'].to(self.device_torch)
-
+            from safetensors.torch import load_file as _load_safetensors
+            lora_state_dict = _load_safetensors(lora_path)
+            n_before = len(lora_state_dict)
+            lora_state_dict = filter_lora_state_dict_for_quantized_model(
+                pipeline.transformer, lora_state_dict
+            )
+            n_skipped = n_before - len(lora_state_dict)
+            if n_skipped:
+                self.print_and_status_update(
+                    f"Sampling LoRA: skipping {n_skipped} keys for quantized layers to avoid weight corruption"
+                )
+            self.print_and_status_update(f"Loading sampling LoRA (strength={strength})")
+            pipeline.load_lora_weights(lora_state_dict, adapter_name="sampling_lora")
             pipeline.set_adapters(["sampling_lora"], adapter_weights=[strength])
+            # Park on CPU until needed per-sample
+            self._lora_move(pipeline.transformer, "sampling_lora", "cpu")
         finally:
             _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
 
-    def _remove_sampling_lora(self, pipeline):
-        """Remove the sampling LoRA adapter from the pipeline transformer."""
+        self._sampling_lora_ready = True
+
+    def _teardown_sampling_lora(self, pipeline):
+        """Remove the sampling LoRA adapter completely after all sampling is done."""
         if hasattr(pipeline.transformer, 'peft_config') and 'sampling_lora' in pipeline.transformer.peft_config:
             try:
                 del pipeline.transformer.peft_config['sampling_lora']
@@ -454,6 +474,15 @@ class QwenImageModel(BaseModel):
                     module.delete_adapter('sampling_lora')
                 except Exception:
                     pass
+        self._sampling_lora_ready = False
+
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        if self._has_sampling_lora():
+            self._prepare_sampling_lora(pipeline)
+
+    def _after_generate_images_loop(self, pipeline):
+        if getattr(self, '_sampling_lora_ready', False):
+            self._teardown_sampling_lora(pipeline)
 
     def get_model_has_grad(self):
         return False

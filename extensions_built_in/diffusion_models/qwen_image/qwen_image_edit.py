@@ -116,8 +116,8 @@ class QwenImageEditModel(QwenImageModel):
 
             return {"latents": latents}
 
-        if self._has_sampling_lora():
-            self._apply_sampling_lora(pipeline)
+        if getattr(self, '_sampling_lora_ready', False):
+            self._lora_move(pipeline.transformer, "sampling_lora", self.device_torch)
         try:
             img = pipeline(
                 image=control_img,
@@ -139,8 +139,8 @@ class QwenImageEditModel(QwenImageModel):
                 **extra,
             ).images[0]
         finally:
-            if self._has_sampling_lora():
-                self._remove_sampling_lora(pipeline)
+            if getattr(self, '_sampling_lora_ready', False):
+                self._lora_move(pipeline.transformer, "sampling_lora", "cpu")
         return img
 
     def condition_noisy_latents(

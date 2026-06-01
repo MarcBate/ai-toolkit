@@ -15,7 +15,7 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.util.quantize import quantize_model
+from toolkit.util.quantize import quantize_model, filter_lora_state_dict_for_quantized_model
 from .wan22_pipeline import Wan22Pipeline
 from diffusers import WanTransformer3DModel
 
@@ -548,29 +548,31 @@ class Wan2214bModel(Wan21):
             or self.model_config.sample_lora_path_2 is not None
         )
 
-    def _apply_lightx2v_loras(self, pipeline, high_only: bool = False, low_only: bool = False):
-        """Inject LightX2V distillation LoRAs into transformer_1 (high noise) and/or transformer_2 (low noise).
+    def _lx2v_move_lora(self, transformer, adapter_name, device):
+        """Move LoRA adapter weights for one transformer to the given device."""
+        for module in transformer.modules():
+            if hasattr(module, 'lora_A') and adapter_name in module.lora_A:
+                module.lora_A[adapter_name].to(device)
+                module.lora_B[adapter_name].to(device)
 
-        high_only: only apply the high-noise LoRA (for stage 1 of two-stage inference)
-        low_only:  only apply the low-noise LoRA (for stage 2 of two-stage inference)
+    def _prepare_lightx2v_loras(self, pipeline):
+        """Load both LightX2V LoRAs once at the start of a sampling session.
+
+        Applies adapters to both transformers, then immediately parks the weights
+        on CPU. _lightx2v_generate moves them to GPU per-stage and back to CPU
+        after each stage, avoiding a disk load on every sample.
         """
         import peft.tuners.lora.model as _peft_lora_model
+        from safetensors.torch import load_file as _load_sf
 
         # PEFT 0.18.x bug: dispatch_torchao calls TorchaoLoraLinear without the
-        # required get_apply_tensor_subclass kwarg.  Bypass it so PEFT falls back to
-        # the standard Linear LoRA handler, which works fine for inference-time
-        # (non-merged) adapters on quantized weights.
+        # required get_apply_tensor_subclass kwarg. Bypass it so PEFT falls back
+        # to the standard Linear LoRA handler for inference-time adapters on
+        # quantized weights.
         _orig_dispatch_torchao = _peft_lora_model.dispatch_torchao
         _peft_lora_model.dispatch_torchao = lambda *args, **kwargs: None
 
-        def _move_lora_to_device(transformer, adapter_name, device):
-            for module in transformer.modules():
-                if hasattr(module, 'lora_A') and adapter_name in module.lora_A:
-                    module.lora_A[adapter_name].to(device)
-                    module.lora_B[adapter_name].to(device)
-
         def _ensure_adapter_absent(model, adapter_name):
-            """Remove any stale peft_config entry before loading to avoid 'already in use'."""
             if hasattr(model, 'peft_config') and adapter_name in model.peft_config:
                 try:
                     del model.peft_config[adapter_name]
@@ -590,45 +592,44 @@ class Wan2214bModel(Wan21):
             high_strength = (getattr(sc, 'sample_lora_strength', None) if sc else None) or self.model_config.sample_lora_strength
             low_strength = (getattr(sc, 'sample_lora_strength_2', None) if sc else None) or self.model_config.sample_lora_strength_2
 
-            if not low_only and high_path is not None:
+            if high_path is not None:
                 if not os.path.exists(high_path):
                     self.print_and_status_update(f"Warning: LightX2V high noise LoRA not found: {high_path}")
                 else:
-                    self.print_and_status_update(f"Applying LightX2V high noise LoRA to transformer 1 (strength={high_strength})")
-                    # pipeline.transformer already points to transformer_1
+                    self.print_and_status_update(f"Loading LightX2V high noise LoRA (strength={high_strength})")
                     _ensure_adapter_absent(pipeline.transformer, "lightx2v_high")
-                    pipeline.load_lora_weights(high_path, adapter_name="lightx2v_high")
-                    _move_lora_to_device(pipeline.transformer, "lightx2v_high", self.device_torch)
+                    _high_sd = filter_lora_state_dict_for_quantized_model(pipeline.transformer, _load_sf(high_path))
+                    pipeline.load_lora_weights(_high_sd, adapter_name="lightx2v_high")
                     pipeline.set_adapters(["lightx2v_high"], adapter_weights=[high_strength])
+                    self._lx2v_move_lora(pipeline.transformer, "lightx2v_high", "cpu")
 
-            if not high_only and low_path is not None and pipeline.transformer_2 is not None:
+            if low_path is not None and pipeline.transformer_2 is not None:
                 if not os.path.exists(low_path):
                     self.print_and_status_update(f"Warning: LightX2V low noise LoRA not found: {low_path}")
                 else:
-                    self.print_and_status_update(f"Applying LightX2V low noise LoRA to transformer 2 (strength={low_strength})")
-                    # Temporarily swap so load_lora_weights targets transformer_2
+                    self.print_and_status_update(f"Loading LightX2V low noise LoRA (strength={low_strength})")
                     orig_transformer = pipeline.transformer
                     pipeline.transformer = pipeline.transformer_2
                     try:
                         _ensure_adapter_absent(pipeline.transformer_2, "lightx2v_low")
-                        pipeline.load_lora_weights(low_path, adapter_name="lightx2v_low")
-                        _move_lora_to_device(pipeline.transformer_2, "lightx2v_low", self.device_torch)
+                        _low_sd = filter_lora_state_dict_for_quantized_model(pipeline.transformer_2, _load_sf(low_path))
+                        pipeline.load_lora_weights(_low_sd, adapter_name="lightx2v_low")
                         pipeline.set_adapters(["lightx2v_low"], adapter_weights=[low_strength])
+                        self._lx2v_move_lora(pipeline.transformer_2, "lightx2v_low", "cpu")
                     finally:
                         pipeline.transformer = orig_transformer
         finally:
             _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
 
-    def _remove_lightx2v_loras(self, pipeline):
-        """Remove LightX2V LoRA adapters from both transformers after sampling."""
+        self._lx2v_loras_ready = True
+
+    def _teardown_lightx2v_loras(self, pipeline):
+        """Remove LightX2V LoRA adapters completely after all sampling is done."""
         sc = getattr(self, 'sample_config', None)
         high_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
         low_path = (getattr(sc, 'sample_lora_path_2', None) if sc else None) or self.model_config.sample_lora_path_2
 
-        def _delete_adapter_from_model(model, adapter_name):
-            # peft_config is the model-level registry that load_lora_weights checks
-            # before adding a new adapter — must clear it or the next load raises
-            # "Adapter name X already in use".
+        def _delete_adapter(model, adapter_name):
             if hasattr(model, 'peft_config') and adapter_name in model.peft_config:
                 try:
                     del model.peft_config[adapter_name]
@@ -642,10 +643,19 @@ class Wan2214bModel(Wan21):
                         pass
 
         if high_path is not None:
-            _delete_adapter_from_model(pipeline.transformer, "lightx2v_high")
-
+            _delete_adapter(pipeline.transformer, "lightx2v_high")
         if low_path is not None and pipeline.transformer_2 is not None:
-            _delete_adapter_from_model(pipeline.transformer_2, "lightx2v_low")
+            _delete_adapter(pipeline.transformer_2, "lightx2v_low")
+
+        self._lx2v_loras_ready = False
+
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        if self._has_lightx2v_loras():
+            self._prepare_lightx2v_loras(pipeline)
+
+    def _after_generate_images_loop(self, pipeline):
+        if getattr(self, '_lx2v_loras_ready', False):
+            self._teardown_lightx2v_loras(pipeline)
 
     def generate_single_image(
         self,
@@ -747,7 +757,7 @@ class Wan2214bModel(Wan21):
 
         try:
             # Stage 1: high-noise model (transformer_1) with high LoRA
-            self._apply_lightx2v_loras(pipeline, high_only=True)
+            self._lx2v_move_lora(pipeline.transformer, "lightx2v_high", self.device_torch)
             try:
                 intermediate_latents = pipeline(
                     **common_kwargs,
@@ -756,18 +766,16 @@ class Wan2214bModel(Wan21):
                     denoising_end_step=mid_step,
                 )[0]
             finally:
-                self._remove_lightx2v_loras(pipeline)
+                self._lx2v_move_lora(pipeline.transformer, "lightx2v_high", "cpu")
 
             # Stage 2: low-noise model (transformer_2) with low LoRA.
-            # Apply low LoRA to transformer_2, then swap pipeline.transformer so the
-            # pipeline's denoising loop uses transformer_2 (boundary_ratio is None so it
-            # always uses self.transformer, whichever one is set).
-            self._apply_lightx2v_loras(pipeline, low_only=True)
+            # Swap pipeline.transformer so the denoising loop uses transformer_2
+            # (boundary_ratio is None so it always uses self.transformer).
             orig_transformer = pipeline.transformer  # = transformer_1
             if self.model_config.low_vram:
-                # Free GPU memory before loading the low-noise transformer
                 orig_transformer.to("cpu")
             pipeline.transformer = pipeline.transformer_2
+            self._lx2v_move_lora(pipeline.transformer_2, "lightx2v_low", self.device_torch)
             try:
                 output = pipeline(
                     **common_kwargs,
@@ -776,8 +784,10 @@ class Wan2214bModel(Wan21):
                     denoising_start_step=mid_step,
                 )[0]
             finally:
+                self._lx2v_move_lora(pipeline.transformer_2, "lightx2v_low", "cpu")
                 pipeline.transformer = orig_transformer
-                self._remove_lightx2v_loras(pipeline)
+                if self.model_config.low_vram:
+                    pipeline.transformer.to(self.device_torch)
         finally:
             pipeline.register_to_config(boundary_ratio=orig_boundary_ratio)
 

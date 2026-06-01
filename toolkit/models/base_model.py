@@ -363,6 +363,12 @@ class BaseModel:
     def add_after_sample_image_hook(self, func):
         self._after_sample_img_hooks.append(func)
 
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        pass
+
+    def _after_generate_images_loop(self, pipeline):
+        pass
+
     def _status_update(self, status: str):
         for hook in self._status_update_hooks:
             hook(status)
@@ -443,6 +449,8 @@ class BaseModel:
             start_multiplier = network.multiplier
 
         # pipeline.to(self.device_torch)
+
+        self._before_generate_images_loop(pipeline, image_configs)
 
         with network:
             with torch.no_grad():
@@ -689,6 +697,8 @@ class BaseModel:
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                     self.adapter.clear_memory()
+
+        self._after_generate_images_loop(pipeline)
 
         # clear pipeline and cache to reduce vram usage
         del pipeline
