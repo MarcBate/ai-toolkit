@@ -225,11 +225,17 @@ export default function FullscreenDropOverlay({
       }`}
       aria-hidden={!visible && !isUploading}
       {...getRootProps()}
+      onClick={e => {
+        if (e.target === e.currentTarget && !isUploading) handleClose();
+      }}
     >
       <input {...getInputProps()} />
-      <div className={`absolute inset-0 ${isUploading ? 'bg-gray-900/70' : 'bg-gray-900/40'}`} />
+      <div
+        className={`absolute inset-0 ${isUploading ? 'bg-gray-900/70' : 'bg-gray-900/40'}`}
+        onClick={() => !isUploading && handleClose()}
+      />
 
-      <div className="absolute inset-0 flex items-center justify-center p-6">
+      <div className="absolute inset-0 flex items-center justify-center p-6" onClick={e => e.stopPropagation()}>
         <div className="w-full max-w-2xl flex flex-col gap-3">
           {/* Drop target / status box */}
           <div

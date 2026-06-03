@@ -363,6 +363,11 @@ class BaseModel:
     def add_after_sample_image_hook(self, func):
         self._after_sample_img_hooks.append(func)
 
+    def _validate_sample_config(self, image_configs):
+        """Override to raise FileNotFoundError early if required sample assets are missing.
+        Called before get_generation_pipeline() so no models are loaded for a doomed run."""
+        pass
+
     def _before_generate_images_loop(self, pipeline, image_configs):
         pass
 
@@ -436,6 +441,8 @@ class BaseModel:
         # save current seed state for training
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
+
+        self._validate_sample_config(image_configs)
 
         if pipeline is None:
             pipeline = self.get_generation_pipeline()

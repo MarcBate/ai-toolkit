@@ -391,6 +391,13 @@ class DiffusionTrainer(SDTrainer):
 
     def hook_before_model_load(self):
         super().hook_before_model_load()
+        # Validate sample LoRA paths before loading anything — fail fast rather than
+        # discovering a bad path only when the first sample is triggered mid-training.
+        from toolkit.util.get_model import get_model_class
+        ModelClass = get_model_class(self.model_config)
+        if hasattr(ModelClass, 'validate_sample_lora_paths'):
+            sample_configs = list({id(c): c for c in [self.sample_config, self.first_sample_config] if c is not None}.values())
+            ModelClass.validate_sample_lora_paths(self.model_config, *sample_configs)
         if self.is_ui_trainer:
             self.maybe_stop()
             self.update_status("running", "Loading model")

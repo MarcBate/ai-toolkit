@@ -538,6 +538,23 @@ class Wan2214bModel(Wan21):
 
         return combined_dict
     
+    @classmethod
+    def validate_sample_lora_paths(cls, model_config, *sample_configs):
+        """Called at job startup — raises FileNotFoundError if any configured LoRA path is missing."""
+        all_configs = [model_config] + list(sample_configs)
+        for cfg in all_configs:
+            if cfg is None:
+                continue
+            for attr, label in [
+                ('sample_lora_path', 'LightX2V high noise LoRA'),
+                ('sample_lora_path_2', 'LightX2V low noise LoRA'),
+            ]:
+                path = getattr(cfg, attr, None)
+                if path and not os.path.exists(path):
+                    raise FileNotFoundError(
+                        f"{label} path not found (check your config before training starts): {path}"
+                    )
+
     def _has_lightx2v_loras(self):
         sc = getattr(self, 'sample_config', None)
         if sc is not None:
@@ -648,6 +665,18 @@ class Wan2214bModel(Wan21):
             _delete_adapter(pipeline.transformer_2, "lightx2v_low")
 
         self._lx2v_loras_ready = False
+
+    def _validate_sample_config(self, image_configs):
+        if not self._has_lightx2v_loras():
+            return
+        sc = getattr(self, 'sample_config', None)
+        high_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+        low_path = (getattr(sc, 'sample_lora_path_2', None) if sc else None) or self.model_config.sample_lora_path_2
+        for label, path in [("LightX2V high noise LoRA", high_path), ("LightX2V low noise LoRA", low_path)]:
+            if path and not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Sample LoRA not found — aborting sample to avoid useless inference: {label}: {path}"
+                )
 
     def _before_generate_images_loop(self, pipeline, image_configs):
         if self._has_lightx2v_loras():

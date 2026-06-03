@@ -654,6 +654,19 @@ class LTX2Model(BaseModel):
 
         return latents.to(device, dtype=dtype)
 
+    @classmethod
+    def validate_sample_lora_paths(cls, model_config, *sample_configs):
+        """Called at job startup — raises FileNotFoundError if any configured LoRA path is missing."""
+        all_configs = [model_config] + list(sample_configs)
+        for cfg in all_configs:
+            if cfg is None:
+                continue
+            path = getattr(cfg, 'sample_lora_path', None)
+            if path and not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Distill LoRA path not found (check your config before training starts): {path}"
+                )
+
     def _has_distill_lora(self):
         sc = getattr(self, 'sample_config', None)
         if sc is not None and getattr(sc, 'sample_lora_path', None):
@@ -742,6 +755,16 @@ class LTX2Model(BaseModel):
                 except Exception:
                     pass
         self._distill_lora_ready = False
+
+    def _validate_sample_config(self, image_configs):
+        if not self._has_distill_lora():
+            return
+        sc = getattr(self, 'sample_config', None)
+        path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+        if path and not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Sample LoRA not found — aborting sample to avoid useless inference: {path}"
+            )
 
     def _before_generate_images_loop(self, pipeline, image_configs):
         if self._has_distill_lora():
