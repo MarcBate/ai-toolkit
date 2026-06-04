@@ -214,6 +214,12 @@ class LTX2Model(BaseModel):
     ltx_version = "2.0"
     ltx_te_path = None
 
+    @property
+    def text_embedding_space_version(self):
+        if getattr(self.model_config, 'gemma_api_key', None) is not None:
+            return self.arch + "_gemma_api"
+        return self.arch
+
     def __init__(
         self,
         device,
