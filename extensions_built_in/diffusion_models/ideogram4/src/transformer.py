@@ -96,7 +96,9 @@ class Ideogram4MRoPE(nn.Module):
 
         # (3, B, inv_freq_size, L)
         pos = position_ids.permute(2, 0, 1).to(dtype=torch.float32)
-        inv_freq = self.inv_freq.to(dtype=torch.float32)[None, None, :, None].expand(
+        # inv_freq is a non-persistent buffer rebuilt on CPU; with layer offloading
+        # the RotaryEmbedding is unmanaged so it may not follow position_ids to GPU.
+        inv_freq = self.inv_freq.to(dtype=torch.float32, device=pos.device)[None, None, :, None].expand(
             3, batch_size, -1, 1
         )
         freqs = inv_freq @ pos.unsqueeze(2)
