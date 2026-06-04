@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
 import GpuMonitor from '@/components/GPUMonitor';
 import JobsTable from '@/components/JobsTable';
 import { TopBar, MainContent } from '@/components/layout';
 import Link from 'next/link';
+import { useSessionFilter } from '@/hooks/useSessionFilter';
 
 export default function Dashboard() {
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useSessionFilter('jobs-filter');
 
   return (
     <>

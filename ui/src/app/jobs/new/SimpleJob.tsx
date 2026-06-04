@@ -1654,17 +1654,21 @@ export default function SimpleJob({
             >
               Add Prompt
             </button>
-            <TextAreaInput
-              label="Negative Prompt"
-              value={jobConfig.config.process[0].sample.neg || ''}
-              onChange={value => setJobConfig(value || false, 'config.process[0].sample.neg')}
-              placeholder="eg. blurry, low quality"
-              className="pt-2"
-            />
-            {jobConfig.config.process[0].sample.guidance_scale <= 1 && !!jobConfig.config.process[0].sample.neg && (
-              <p className="text-xs text-yellow-500 mt-1">
-                CFG = 1 — negative prompt will be ignored.
-              </p>
+            {!modelArch?.disableSections?.includes('sample.neg') && (
+              <>
+                <TextAreaInput
+                  label="Negative Prompt"
+                  value={jobConfig.config.process[0].sample.neg || ''}
+                  onChange={value => setJobConfig(value || false, 'config.process[0].sample.neg')}
+                  placeholder="eg. blurry, low quality"
+                  className="pt-2"
+                />
+                {jobConfig.config.process[0].sample.guidance_scale <= 1 && !!jobConfig.config.process[0].sample.neg && (
+                  <p className="text-xs text-yellow-500 mt-1">
+                    CFG = 1 — negative prompt will be ignored.
+                  </p>
+                )}
+              </>
             )}
 
             {/* Sampling LoRA — WAN 2.2 (two-stage LightX2V: high-noise + low-noise) */}

@@ -13,6 +13,7 @@ type DisableableSections =
   | 'train.diff_output_preservation'
   | 'train.blank_prompt_preservation'
   | 'train.unload_text_encoder'
+  | 'sample.neg'
   | 'slider';
 
 type AdditionalSections =
@@ -1002,6 +1003,7 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: [
       'network.conv',
+      'sample.neg',
     ],
     additionalSections: [
       'model.low_vram',
