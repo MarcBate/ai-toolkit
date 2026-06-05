@@ -14,6 +14,7 @@ import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import MergeLoRAsModal from '@/components/MergeLoRAsModal';
 import StripAudioModal from '@/components/StripAudioModal';
+import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,6 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <CaptionDatasetModal />
         <MergeLoRAsModal />
         <StripAudioModal />
+        <UpsamplePromptsModal />
       </body>
     </html>
   );
