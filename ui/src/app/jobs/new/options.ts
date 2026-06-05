@@ -37,7 +37,7 @@ type AdditionalSections =
   | 'model.gemma_api'
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path'
-  | 'upsample_prompts';
+  | 'ideogram_4_prompt';
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
@@ -1009,7 +1009,7 @@ export const modelArchs: ModelArch[] = [
     additionalSections: [
       'model.low_vram',
       'model.layer_offloading',
-      'upsample_prompts',
+      'ideogram_4_prompt',
     ],
     hasMultiLinePrompts: true,
   },
