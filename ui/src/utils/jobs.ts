@@ -34,6 +34,22 @@ export const stopJob = (jobID: string) => {
   });
 };
 
+export const gracefulStopJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/stop_graceful`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job graceful stop requested:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error requesting graceful stop:', error);
+        reject(error);
+      });
+  });
+};
+
 export const saveJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

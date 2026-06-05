@@ -28,6 +28,8 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const [filter, setFilter] = useState('');
   const [filterHistory, setFilterHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [filterDropdownRect, setFilterDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
@@ -393,16 +395,23 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
             {datasetName}
           </h1>
         </div>
-        <div className="flex-1 max-w-xl mx-4 relative">
+        <div className="flex-1 max-w-xl mx-4">
           <input
+            ref={filterInputRef}
             type="text"
             className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-1 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-slate-500"
             placeholder="Filter by caption (supports AND, OR)..."
             value={filter}
             onChange={e => setFilter(e.target.value)}
-            onFocus={() => setShowHistory(true)}
+            onFocus={() => {
+              if (filterInputRef.current) {
+                const r = filterInputRef.current.getBoundingClientRect();
+                setFilterDropdownRect({ top: r.bottom + 2, left: r.left, width: r.width });
+              }
+              setShowHistory(true);
+            }}
             onBlur={() => {
-              setTimeout(() => setShowHistory(false), 200);
+              setTimeout(() => setShowHistory(false), 150);
               addToHistory(filter);
             }}
             onKeyDown={e => {
@@ -412,13 +421,17 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
               }
             }}
           />
-          {showHistory && filterHistory.length > 0 && (
-            <div className="absolute top-full left-0 w-full mt-1 bg-slate-800 border border-slate-700 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
+          {showHistory && filterHistory.length > 0 && filterDropdownRect && (
+            <div
+              style={{ position: 'fixed', top: filterDropdownRect.top, left: filterDropdownRect.left, width: filterDropdownRect.width, zIndex: 9999 }}
+              className="bg-slate-800 border border-slate-700 rounded-md shadow-xl max-h-60 overflow-y-auto"
+            >
               {filterHistory.map((item, index) => (
                 <div
                   key={index}
                   className="px-3 py-2 text-sm text-gray-200 hover:bg-slate-700 cursor-pointer"
-                  onClick={() => {
+                  onMouseDown={e => {
+                    e.preventDefault();
                     setFilter(item);
                     setShowHistory(false);
                   }}

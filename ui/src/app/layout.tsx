@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import ConfirmModal from '@/components/ConfirmModal';
 import SaveSnapshotModal from '@/components/SaveSnapshotModal';
+import StopJobModal from '@/components/StopJobModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
@@ -66,6 +67,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </ThemeProvider>
         <ConfirmModal />
         <SaveSnapshotModal />
+        <StopJobModal />
         <DocModal />
         <CaptionDatasetModal />
         <MergeLoRAsModal />

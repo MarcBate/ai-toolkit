@@ -3,11 +3,11 @@ import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image } fr
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { openSaveSnapshotModal } from '@/components/SaveSnapshotModal';
+import { openStopJobModal } from '@/components/StopJobModal';
 import { Job } from '@prisma/client';
 import {
   startJob,
   stopJob,
-  saveAndPauseJob,
   deleteJob,
   getAvaliableJobActions,
   markJobAsStopped,
@@ -122,15 +122,7 @@ export default function JobActionBar({
         <Button
           onClick={() => {
             if (!canStop) return;
-            openConfirm({
-              title: 'Stop Job',
-              message: `Are you sure you want to stop the job "${job.name}"? This will save a snapshot (if progress has been made) and stop. You CAN resume later.`,
-              type: 'info',
-              confirmText: 'Stop',
-              onConfirm: async () => {
-                await handleAction(() => saveAndPauseJob(job.id));
-              },
-            });
+            openStopJobModal({ job, onRefresh: onRefresh });
           }}
           disabled={isProcessing}
           className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}

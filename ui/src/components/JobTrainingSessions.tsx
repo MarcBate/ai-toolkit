@@ -62,7 +62,16 @@ export default function JobTrainingSessions({ job }: Props) {
 
   if (!data || data.sessions.length === 0) return null;
 
-  const anyEstimated = data.sessions.some(s => s.estimated);
+  // Hide sessions with no steps unless it's the very last one (currently running).
+  const visibleSessions = data.sessions.filter(
+    (s, i) => s.duration_seconds !== null || i === data.sessions.length - 1,
+  );
+
+  if (visibleSessions.length === 0) return null;
+
+  const anyEstimated = visibleSessions.some(s => s.estimated);
+  const lastSession = visibleSessions[visibleSessions.length - 1];
+  const isLastInProgress = lastSession.duration_seconds === null;
 
   return (
     <div className="text-sm">
@@ -77,11 +86,8 @@ export default function JobTrainingSessions({ job }: Props) {
           <span className="text-gray-600">
             {formatDuration(data.total_seconds)} total
             <span className="ml-2">
-              ({data.sessions.length} {data.sessions.length === 1 ? 'session' : 'sessions'})
+              ({visibleSessions.length} {visibleSessions.length === 1 ? 'session' : 'sessions'})
             </span>
-            {anyEstimated && (
-              <span className="ml-2 text-yellow-700/60 text-xs">estimated</span>
-            )}
           </span>
         </div>
         {expanded ? (
@@ -95,18 +101,18 @@ export default function JobTrainingSessions({ job }: Props) {
         <div className="px-4 pt-1 pb-2 space-y-0.5">
           {anyEstimated && (
             <p className="text-xs text-yellow-700/60 pb-1">
-              Durations are estimated from step timestamps — model load time is not included.
+              ~ estimated from step timestamps — model load time not included
             </p>
           )}
-          {data.sessions.map((session, i) => (
+          {visibleSessions.map((session, i) => (
             <div key={i} className="flex items-center justify-between py-1 text-xs">
               <div className="flex items-center gap-2 text-gray-500">
                 <span className="w-5 text-right">{i + 1}.</span>
                 <span>{formatDateTime(session.start_time)}</span>
               </div>
-              <span className="text-gray-600 font-mono">
+              <span className={`font-mono ${session.estimated ? 'text-yellow-700/70' : 'text-gray-600'}`}>
                 {session.duration_seconds !== null
-                  ? formatDuration(session.duration_seconds)
+                  ? `${session.estimated ? '~' : ''}${formatDuration(session.duration_seconds)}`
                   : <span className="text-gray-700">in progress</span>}
               </span>
             </div>

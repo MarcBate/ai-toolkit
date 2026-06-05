@@ -22,7 +22,7 @@ import {
   SliderInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X, Copy, ChevronDown } from 'lucide-react';
+import { X, Copy } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -63,54 +63,63 @@ function LoraPathInput({
 }) {
   const [open, setOpen] = useState(false);
   const [mru, setMru] = useState<string[]>([]);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const refreshMru = useCallback(() => setMru(getMruLoraList()), []);
-
-  useEffect(() => {
-    if (open) refreshMru();
-  }, [open, refreshMru]);
+  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
+    setMru(getMruLoraList());
   }, []);
 
+  const handleFocus = useCallback(() => {
+    if (inputRef.current) {
+      const r = inputRef.current.getBoundingClientRect();
+      setDropdownRect({ top: r.bottom + 2, left: r.left, width: r.width });
+    }
+    setMru(getMruLoraList());
+    setOpen(true);
+  }, []);
+
+  const handleBlur = useCallback(() => {
+    setTimeout(() => {
+      setOpen(false);
+      if (value?.trim()) {
+        addMruLoraPath(value);
+        setMru(getMruLoraList());
+      }
+    }, 150);
+  }, [value]);
+
   return (
-    <div ref={ref} className="relative">
-      <div className="flex items-center gap-1">
-        <div className="flex-1">
-          <TextInput
-            label={label}
-            value={value}
-            onChange={v => onChange(v)}
-            placeholder={placeholder ?? 'Path or HuggingFace repo/file'}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => { if (value?.trim()) addMruLoraPath(value); setOpen(o => !o); }}
-          className="mt-5 p-2 rounded bg-gray-700 hover:bg-gray-600"
-          title="Recent paths"
+    <div className="relative">
+      <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
+      <input
+        ref={inputRef}
+        type="text"
+        className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        placeholder={placeholder ?? 'Path or HuggingFace repo/file'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+      />
+      {open && mru.length > 0 && dropdownRect && (
+        <div
+          style={{ position: 'fixed', top: dropdownRect.top, left: dropdownRect.left, width: dropdownRect.width, zIndex: 9999 }}
+          className="bg-gray-800 border border-gray-600 rounded shadow-xl max-h-48 overflow-y-auto"
         >
-          <ChevronDown className="w-4 h-4" />
-        </button>
-      </div>
-      {open && mru.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-gray-800 border border-gray-600 rounded shadow-lg max-h-48 overflow-y-auto">
           {mru.map(p => (
-            <button
+            <div
               key={p}
-              type="button"
-              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-700 truncate"
-              onClick={() => { onChange(p); setOpen(false); }}
+              className="px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 cursor-pointer truncate"
               title={p}
+              onMouseDown={e => {
+                e.preventDefault();
+                onChange(p);
+                setOpen(false);
+              }}
             >
               {p}
-            </button>
+            </div>
           ))}
         </div>
       )}
