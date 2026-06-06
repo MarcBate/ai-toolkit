@@ -220,7 +220,7 @@ class BucketsMixin:
         if not hasattr(self, 'dataset_config'):
             raise Exception(f'dataset_config not found on class instance {self.__class__.__name__}')
 
-        if self.epoch_num > 0 and self.dataset_config.poi is None:
+        if self.epoch_num > 0:
             # no need to rebuild buckets for now
             # todo handle random cropping for buckets
             return
@@ -243,10 +243,6 @@ class BucketsMixin:
             width = int(file_item.width * file_item.dataset_config.scale)
             height = int(file_item.height * file_item.dataset_config.scale)
 
-            did_process_poi = False
-            if file_item.has_point_of_interest:
-                # Attempt to process the poi if we can. It wont process if the image is smaller than the resolution
-                did_process_poi = file_item.setup_poi_bucket()
             if self.dataset_config.square_crop:
                 # we scale first so smallest size matches resolution
                 scale_factor_x = resolution / width
@@ -262,7 +258,7 @@ class BucketsMixin:
                 else:
                     file_item.crop_x = 0
                     file_item.crop_y = int(file_item.scale_to_height / 2 - resolution / 2)
-            elif not did_process_poi:
+            else:
                 bucket_resolution = get_bucket_for_image_size(
                     width, height,
                     resolution=resolution,
@@ -416,10 +412,6 @@ class CaptionProcessingDTOMixin:
 
         # get tokens
         token_list = raw_caption.split(',')
-        # trim whitespace
-        token_list = [x.strip() for x in token_list]
-        # remove empty strings
-        token_list = [x for x in token_list if x]
 
         # handle token dropout
         if self.dataset_config.token_dropout_rate > 0 and not short_caption and not self.dataset_config.cache_text_embeddings:
@@ -463,10 +455,6 @@ class CaptionProcessingDTOMixin:
         if self.dataset_config.shuffle_tokens:
             # shuffle again
             token_list = caption.split(',')
-            # trim whitespace
-            token_list = [x.strip() for x in token_list]
-            # remove empty strings
-            token_list = [x for x in token_list if x]
             random.shuffle(token_list)
             caption = ', '.join(token_list)
         if caption == '':
