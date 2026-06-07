@@ -56,10 +56,20 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the card is actively being edited. Used in the IntersectionObserver
+  // callback to suppress visibility-loss transitions caused by textarea expansion
+  // shifting layout and briefly pushing the card outside the scroll container boundary.
+  const effectivelyEditingRef = useRef(false);
 
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
   const isItImage = !isItAVideo && !isItAudio;
+
+  // Keep the editing ref in sync so the observer callback can read it without deps.
+  const isEditingOrHighlighted = isEditing || isHighlighted;
+  useEffect(() => {
+    effectivelyEditingRef.current = isEditingOrHighlighted;
+  });
 
   // Track actual viewport visibility — Virtuoso keeps a buffer of cards mounted
   // outside the visible region, so we can't rely on mount/unmount alone.
@@ -71,6 +81,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       entries => {
         for (const entry of entries) {
           if (entry.target === el) {
+            // Suppress visibility-loss while editing: expanding the textarea shifts
+            // layout and can push the card outside the scroll container boundary,
+            // which would trigger image blob revocation and interrupt the edit.
+            if (!entry.isIntersecting && effectivelyEditingRef.current) return;
             setIsVisible(entry.isIntersecting);
           }
         }
@@ -118,9 +132,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       cancelled = true;
       clearTimeout(timer);
       controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      setBlobUrl(null);
-      setLoaded(false);
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        setBlobUrl(null);
+        setLoaded(false);
+      }
     };
   }, [imageUrl, isItImage, isVisible]);
 

@@ -42,6 +42,9 @@ export TRANSFORMERS_CACHE="/mnt/c/Users/marc.bate/.cache/huggingface/hub"
 export GIT_LFS_SKIP_SMUDGE=1
 export PYTHONUNBUFFERED=1
 
+# Claude Code CLI (installed to user-local npm prefix, not on system PATH)
+export PATH="$HOME/.npm-global/bin:$PATH"
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -154,22 +157,75 @@ if [[ "${DO_GIT_PULL}" == "1" ]]; then
     echo "---- ${NEW_COUNT} update(s) available from origin/main:"
     git log --oneline HEAD..origin/main
     echo
-    read -r -p "Pull updates now? [y/N] " _answer
-    case "${_answer}" in
-      [Yy]|[Yy][Ee][Ss])
-        echo "---- Pulling updates..."
-        if git pull origin main; then
-          echo "---- Successfully pulled updates."
-          UPDATED="1"
-        else
-          echo "---- Pull failed! Please resolve manually."
-          exit 1
-        fi
-        ;;
-      *)
-        echo "---- Skipping pull. Continuing with current code."
-        ;;
-    esac
+
+    if have_cmd claude; then
+      read -r -p "Merge with [C]laude (recommended) / [m]anual pull / [s]kip? " _answer
+      case "${_answer}" in
+        [Mm]*)
+          echo "---- Pulling updates manually..."
+          if git pull origin main; then
+            echo "---- Successfully pulled updates."
+            UPDATED="1"
+          else
+            echo "---- Pull failed! Please resolve manually."
+            exit 1
+          fi
+          ;;
+        [Ss]*)
+          echo "---- Skipping pull. Continuing with current code."
+          ;;
+        *)
+          echo "---- Running Claude merge..."
+          if claude --dangerously-skip-permissions -p "
+Merge the latest upstream changes from origin/main into this fork's main branch.
+Run: git merge origin/main
+
+This is MarcBate's fork of ostris/ai-toolkit. Remote 'origin' = ostris upstream.
+Our branch has many customizations — if there are conflicts, keep ALL of ours:
+- toolkit/dataloader_mixins.py: keep our read_text_file + JSON parsing
+  (caption/caption_short/extra_values) and our PoiFileItemDTOMixin class
+- ui/src/app/jobs/new/SimpleJob.tsx: keep our MRU LoRA input, neg-prompt
+  hidden for ideogram4, LoraPathInput component
+- ui/src/app/jobs/new/options.ts: keep 'sample.neg' in DisableableSections
+  for ideogram4
+- ui/src/app/layout.tsx: keep StopJobModal and StripAudioModal alongside
+  any new Ostris modals
+- ui/src/helpers/defaultSamples.ts: keep guidance_scale: 7 in
+  defaultIdeogramSamplesConfig
+- ui/src/components/SampleImageViewer.tsx: keep both our promptExpanded
+  state and Ostris showBoxes state
+If ostris merged something we already built, STOP and ask the user which
+implementation to keep before proceeding.
+After resolving all conflicts, commit the merge.
+Report what was merged and any decisions made.
+"; then
+            echo "---- Claude merge complete."
+            UPDATED="1"
+          else
+            echo "---- Claude merge failed or was cancelled. Please resolve manually."
+            exit 1
+          fi
+          ;;
+      esac
+    else
+      # claude CLI not available — fall back to plain pull
+      read -r -p "Pull updates now? [y/N] " _answer
+      case "${_answer}" in
+        [Yy]|[Yy][Ee][Ss])
+          echo "---- Pulling updates..."
+          if git pull origin main; then
+            echo "---- Successfully pulled updates."
+            UPDATED="1"
+          else
+            echo "---- Pull failed! Please resolve manually."
+            exit 1
+          fi
+          ;;
+        *)
+          echo "---- Skipping pull. Continuing with current code."
+          ;;
+      esac
+    fi
   fi
 else
   echo "---- Skipping git pull"
