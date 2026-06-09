@@ -400,7 +400,11 @@ class Automagic3(torch.optim.Optimizer):
         # activation regions, low-precision underflow) are kept distinct from
         # negatives rather than bucketed with them by a bare ``> 0``.
         cur_sign = update.sign().to(torch.int8)
-        prev_sign = state["prev_sign"]
+        # Graceful fallback: checkpoints saved with the original v3 (before
+        # the RProp-style per-sign state was added) won't have prev_sign.
+        # None is already handled below — the lr nudge is simply skipped for
+        # the first step, then prev_sign is written and works normally after.
+        prev_sign = state.get("prev_sign", None)
 
         # dims: the within-row axes to reduce the per-element vote over (so each
         # output channel gets one nudge). lr_b: the per-row lr reshaped to
