@@ -4,42 +4,61 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 
 ---
 
-## Fork additions — CoachBate / mcb2 branch
+## Fork additions — CoachBate / main branch
 
-This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below that make my life easier. Full details and per-commit notes are in the [Changelog](#changelog) section at the bottom of this file.
+This fork extends [`ostris/ai-toolkit`](https://github.com/ostris/ai-toolkit) with the features and fixes below.
 
-- Restart training from any checkpoint
--   option to save optimizers needs to be checked for the job, and before restoring name the one you want to restore as 'optimizer.pt' and move any safetensor files after that one you want to restore, elsewhere
-- Save checkpoint when pausing or stopping training, on demand before the next 'save every' step
-- Generate samples on-demand while training job is running
-- Edit sample prompts while training, but not applied yet if you unloaded text encoder
-- Generate WAN 2.2 sample videos in 4 steps with Lightx2V approx 40 seconds vs 6 minutes each otherwise.
-- Generate LTX-2.3 sample videos in 8 steps with the distilled LoRA instead of 30 steps.
-- Generate Qwen Image sample images faster using a Lightning LoRA (e.g. 4 steps at CFG 1 instead of 20+ steps).
-- Speed-up LoRA settings (LightX2V, distill, sampling) are configured under `sample:` in YAML and exposed in the UI's Sample card with a toggle, path, and strength slider.
-- Train LTX-2.3 without loading the 12B Gemma text encoder locally — use the free LTX Gemma API instead.
-- Stop training job even in the middle of sample generation or model quantization.
-- Quantization cache filenames include the model's basename so different checkpoints (e.g. Sulphur 2 vs vanilla LTX-2.3) never share a cache file.
+### Training
+
+- **Restart from checkpoint** — resume training from any saved checkpoint; save the optimizer state with the job, then rename the one you want to restore as `optimizer.pt` before restarting
+- **Save-before-pause** — saving and pausing are atomic; the trainer always saves a checkpoint before stopping so you never lose progress
+- **On-demand save** — trigger a checkpoint save mid-training from the UI without stopping
+- **On-demand samples** — generate samples at any step without waiting for the next scheduled interval
+- **Stop during quantization** — `JobStoppedException` propagates through quantization loops so Stop/Pause works even during slow model quantization startup
+- **Quantization cache per model** — cache filenames include the model's basename so different checkpoints (e.g. different LTX-2.3 versions) never share a stale cache file
+- **Graceful stop** — new Stop modal with graceful stop option that lets the current step finish cleanly before stopping
+
+### Fast Sampling LoRAs
+
+Speed-up LoRA settings are configured under `sample:` in the YAML and exposed in the UI's Sample card with a toggle, path, and strength slider.
+
+- **LightX2V** — generate WAN 2.2 sample videos in 4 steps (~40 seconds vs ~6 minutes)
+- **LTX-2.3 distill** — generate LTX-2.3 sample videos in 8 steps instead of 30
+- **Qwen Image Lightning** — generate Qwen Image samples in 4 steps at CFG 1 instead of 20+ steps
+
+### Text Encoders
+
+- **Gemma API for LTX-2.3** — train LTX-2.3 without loading the 12 GB Gemma text encoder locally; uses the free LTX Gemma API instead (returns post-connector 6144-dim embeddings; connectors are bypassed in both training and sampling)
+
+### UI — Startup Script
+
+- **Claude-assisted merge** — `run_ai_toolkit.sh` detects upstream updates and offers to merge them using Claude Code CLI, preserving all fork customizations automatically
 
 ### UI — Queue & Job Management
 
-- re-order job queue by drag and drop jobs 
+- **Drag-to-reorder** — reorder the job queue by dragging jobs
 - **Queue filter** — filter the jobs list by name with a text search box
-- **Negative Prompt field** — expose this to the job configuration UI
+- **Graceful stop modal** — Stop button opens a modal with graceful stop and force stop options
+- **Negative prompt field** — exposed in the job configuration UI (hidden automatically for models that don't use it, e.g. Ideogram 4)
+- **Automagic v3 optimizer** — added to the optimizer dropdown (backend support was added upstream but the UI entry was missing)
 
 ### UI — Loss Graph
 
-- Fixed height issue and saves settings the next time you return to it per job.
-- Shows how long spent training each model
+- Saves display settings (smoothing, log scale, trend line, clip outliers, per-series toggles) per job URL and restores them on return
+- Shows training session history with time spent per session
 
-### UI — Samples page
+### UI — Samples
 
-- added placeholders for any image/videos not sampled so grid lines up correctly
-- step count overlay on the first cell of each sample row so you can see which checkpoint each row came from
-- expands prompt height when caption is active to show entire prompt to make it easier to edit. reverts to 3 lines when lost focus
+- **Placeholder cells** — empty cells for unsampled steps so the grid alignment is always correct
+- **Step count overlay** — step number shown on the first cell of each sample row
+- **Prompt expansion** — prompt textarea expands to show the full prompt while editing, collapses to 3 lines on blur
 - **CivitAI metadata** — sample PNG and MP4 outputs embed A1111-format `parameters` metadata so CivitAI auto-detects the prompt, model, and settings on upload
 - **Sample format defaults** — video samples default to MP4, image samples default to PNG; override with `format:` in the sample config
-- **Find & replace captions** —  find-and-replace across all captions in a dataset, with a replace-all button
+- **MRU LoRA path input** — LoRA path fields remember recently used paths in a dropdown (stored in localStorage, max 8 entries)
+
+### UI — Dataset / Captions
+
+- **Find & replace captions** — find-and-replace across all captions in a dataset with a replace-all button
 - **Caption filtering** — filter dataset images by caption content
 
 ____________________________________
