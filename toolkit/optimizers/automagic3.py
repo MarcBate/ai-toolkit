@@ -565,12 +565,16 @@ class Automagic3(torch.optim.Optimizer):
             for p in group["params"]:
                 st = self.state.get(p)
                 if st is not None and isinstance(st.get("lr"), torch.Tensor):
-                    st["lr"] = st["lr"].to(torch.float32)
+                    lr_t = st["lr"].to(torch.float32)
+                    # Collapse old per-row lr tensors (dim > 0) to scalar
+                    st["lr"] = lr_t.mean().detach() if lr_t.dim() > 0 else lr_t
                 # prev_sign / dir_ema are transient; rebuild them after load
                 # rather than persisting a sign tensor and an fp32 EMA.
                 if st is not None and "prev_sign" in st:
                     st["prev_sign"] = None
                 if st is not None and isinstance(st.get("dir_ema"), torch.Tensor):
-                    st["dir_ema"] = torch.zeros_like(st["dir_ema"], dtype=torch.float32)
+                    dir_ema_t = st["dir_ema"]
+                    # Collapse old per-row dir_ema tensors (dim > 0) to scalar zero
+                    st["dir_ema"] = torch.zeros((), dtype=torch.float32, device=dir_ema_t.device) if dir_ema_t.dim() > 0 else torch.zeros_like(dir_ema_t, dtype=torch.float32)
         # Rebuild the global average lr from the restored per-layer lrs.
         self._refresh_avg_lr()
