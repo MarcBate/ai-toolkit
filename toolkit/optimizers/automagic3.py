@@ -412,23 +412,24 @@ class Automagic3(torch.optim.Optimizer):
         # activation regions, low-precision underflow) are kept distinct from
         # negatives rather than bucketed with them by a bare ``> 0``.
         cur_sign = update.sign().to(torch.int8)
-        # Graceful fallback for checkpoints saved with older v3 variants:
+        # Graceful fallback for state from older v3 variants that bypassed
+        # load_state_dict (e.g. state dicts injected directly):
         # - prev_sign didn't exist in the original v3; None is handled below.
-        # - lr and dir_ema were per-row tensors in an intermediate v3; collapse
-        #   to scalar (mean) so the new per-tensor logic works correctly.
-        # Graceful fallback for checkpoints saved with older v3 variants:
-        # - prev_sign / dir_ema may be absent entirely (original v3).
-        # - lr and dir_ema may be per-row tensors (intermediate v3); collapse
-        #   to scalar (mean) so the new per-tensor logic works correctly.
+        # - lr / dir_ema were per-row tensors in older v3s. Those lrs came from
+        #   a different controller (agreement-gated sparse updates, railed at
+        #   max_lr) and are meaningless here -- averaging them hands rows that
+        #   were frozen at min_lr a ~1e6x lr jump and wrecks the model within a
+        #   few steps. Restart the lr at the group lr and let the controller
+        #   re-ramp instead.
         prev_sign = state.get("prev_sign", None)
         lr_t = state["lr"]
         if lr_t.dim() > 0:
-            state["lr"] = lr_t.mean().detach()
+            state["lr"] = torch.tensor(
+                float(group["lr"]), dtype=torch.float32, device=p.device
+            )
             lr_t = state["lr"]
-        if "dir_ema" not in state:
+        if "dir_ema" not in state or state["dir_ema"].dim() > 0:
             state["dir_ema"] = torch.zeros((), dtype=torch.float32, device=p.device)
-        elif state["dir_ema"].dim() > 0:
-            state["dir_ema"] = state["dir_ema"].mean().detach()
 
         if prev_sign is not None:
             # Per-element vote via the sign product. With signs in {-1, 0, +1},
@@ -564,17 +565,31 @@ class Automagic3(torch.optim.Optimizer):
                 group[k] = v
             for p in group["params"]:
                 st = self.state.get(p)
-                if st is not None and isinstance(st.get("lr"), torch.Tensor):
+                if st is None:
+                    continue
+                if isinstance(st.get("lr"), torch.Tensor):
                     lr_t = st["lr"].to(torch.float32)
-                    # Collapse old per-row lr tensors (dim > 0) to scalar
-                    st["lr"] = lr_t.mean().detach() if lr_t.dim() > 0 else lr_t
+                    if lr_t.dim() > 0:
+                        # Per-row lr from an older v3. Those lrs were learned by
+                        # a different controller (agreement-gated sparse updates,
+                        # railed against max_lr) and do not transfer to the dense
+                        # per-tensor controller: collapsing them to a mean hands
+                        # rows that were frozen at min_lr a ~1e6x lr jump and
+                        # destroys the model within a few steps of resuming.
+                        # Restart from the configured lr; the controller re-ramps
+                        # in ~100 steps. The factored second moment IS kept -- it
+                        # has the same meaning in both controllers.
+                        st["lr"] = torch.tensor(
+                            float(group["lr"]), dtype=torch.float32, device=p.device
+                        )
+                    else:
+                        st["lr"] = lr_t
                 # prev_sign / dir_ema are transient; rebuild them after load
                 # rather than persisting a sign tensor and an fp32 EMA.
-                if st is not None and "prev_sign" in st:
+                if "prev_sign" in st:
                     st["prev_sign"] = None
-                if st is not None and isinstance(st.get("dir_ema"), torch.Tensor):
-                    dir_ema_t = st["dir_ema"]
-                    # Collapse old per-row dir_ema tensors (dim > 0) to scalar zero
-                    st["dir_ema"] = torch.zeros((), dtype=torch.float32, device=dir_ema_t.device) if dir_ema_t.dim() > 0 else torch.zeros_like(dir_ema_t, dtype=torch.float32)
+                st["dir_ema"] = torch.zeros((), dtype=torch.float32, device=p.device)
+                # Original-v3 polarity history; unused, just wastes memory.
+                st.pop("pol_hist", None)
         # Rebuild the global average lr from the restored per-layer lrs.
         self._refresh_avg_lr()
