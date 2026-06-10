@@ -416,14 +416,19 @@ class Automagic3(torch.optim.Optimizer):
         # - prev_sign didn't exist in the original v3; None is handled below.
         # - lr and dir_ema were per-row tensors in an intermediate v3; collapse
         #   to scalar (mean) so the new per-tensor logic works correctly.
+        # Graceful fallback for checkpoints saved with older v3 variants:
+        # - prev_sign / dir_ema may be absent entirely (original v3).
+        # - lr and dir_ema may be per-row tensors (intermediate v3); collapse
+        #   to scalar (mean) so the new per-tensor logic works correctly.
         prev_sign = state.get("prev_sign", None)
         lr_t = state["lr"]
         if lr_t.dim() > 0:
             state["lr"] = lr_t.mean().detach()
             lr_t = state["lr"]
-        dir_ema_existing = state.get("dir_ema")
-        if dir_ema_existing is not None and dir_ema_existing.dim() > 0:
-            state["dir_ema"] = dir_ema_existing.mean().detach()
+        if "dir_ema" not in state:
+            state["dir_ema"] = torch.zeros((), dtype=torch.float32, device=p.device)
+        elif state["dir_ema"].dim() > 0:
+            state["dir_ema"] = state["dir_ema"].mean().detach()
 
         if prev_sign is not None:
             # Per-element vote via the sign product. With signs in {-1, 0, +1},
