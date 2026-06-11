@@ -22,19 +22,39 @@ export async function POST(request: Request) {
     imageFiles.sort((a, b) => a.localeCompare(b));
 
     // Format response
+    const captionExtensions = ['txt', 'json', 'caption'];
     const result = imageFiles.map(imgPath => {
-      const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.txt';
-      let caption = '';
-      if (fs.existsSync(captionPath)) {
-        try {
-          caption = fs.readFileSync(captionPath, 'utf-8');
-        } catch (e) {
-          console.error(`Error reading caption file: ${captionPath}`, e);
+      const base = imgPath.replace(/\.[^/.]+$/, '');
+      const captionExists: Record<string, boolean> = {};
+      const captions: Record<string, string> = {};
+      for (const ext of captionExtensions) {
+        const p = base + '.' + ext;
+        const exists = fs.existsSync(p);
+        captionExists[ext] = exists;
+        if (exists) {
+          try {
+            const raw = fs.readFileSync(p, 'utf-8');
+            if (ext === 'json') {
+              try {
+                const parsed = JSON.parse(raw);
+                captions[ext] = typeof parsed.caption === 'string' ? parsed.caption : raw;
+              } catch {
+                captions[ext] = raw;
+              }
+            } else {
+              captions[ext] = raw;
+            }
+          } catch (e) {
+            console.error(`Error reading caption file: ${p}`, e);
+            captions[ext] = '';
+          }
         }
       }
       return {
         img_path: imgPath,
-        caption: caption
+        caption: captions['txt'] ?? '',
+        captions,
+        captionExists,
       };
     });
 

@@ -21,7 +21,16 @@ export async function POST(request: Request) {
     const captionExt = ((ext || 'txt') as string).replace(/^\.+/, '').trim() || 'txt';
     const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
     // save caption to file
-    fs.writeFileSync(captionPath, caption);
+    if (captionExt === 'json') {
+      let existing: Record<string, unknown> = {};
+      if (fs.existsSync(captionPath)) {
+        try { existing = JSON.parse(fs.readFileSync(captionPath, 'utf-8')); } catch { /* start fresh */ }
+      }
+      existing.caption = caption;
+      fs.writeFileSync(captionPath, JSON.stringify(existing, null, 2));
+    } else {
+      fs.writeFileSync(captionPath, caption);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

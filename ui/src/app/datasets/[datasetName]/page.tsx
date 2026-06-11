@@ -23,7 +23,7 @@ import { CreatableSelectInput } from '@/components/formInputs';
 
 export default function DatasetPage({ params }: { params: Promise<{ datasetName: string }> }) {
   const { datasetName } = use(params);
-  const [imgList, setImgList] = useState<{ img_path: string; caption: string }[]>([]);
+  const [imgList, setImgList] = useState<{ img_path: string; caption: string; captions?: Record<string, string>; captionExists?: Record<string, boolean> }[]>([]);
   const [isAutoCaptioning, setIsAutoCaptioning] = useState(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [filter, setFilter] = useState('');
@@ -89,10 +89,14 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
   const { captionCount, totalCount } = useMemo(() => {
     return {
-      captionCount: imgList.filter(img => img.caption && img.caption.trim().length > 0).length,
+      captionCount: imgList.filter(img => {
+        if (img.captionExists) return img.captionExists[captionExt] ?? false;
+        // fallback for legacy data without captionExists (txt assumed)
+        return captionExt === 'txt' && !!(img.caption && img.caption.trim().length > 0);
+      }).length,
       totalCount: imgList.length,
     };
-  }, [imgList]);
+  }, [imgList, captionExt]);
 
   const filteredImgList = useMemo(() => {
     if (!filter) return imgList;
@@ -180,6 +184,9 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     return new RegExp(pattern, (isMatchCase ? '' : 'i') + (global ? 'g' : ''));
   };
 
+  const getActiveCaption = (img: typeof imgList[number]) =>
+    img.captions?.[captionExt] ?? (captionExt === 'txt' ? img.caption : '') ?? '';
+
   const handleFind = (startIndex: number = 0, direction: 'next' | 'prev' | 'start' = 'start') => {
     if (!findText) return;
 
@@ -200,7 +207,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
         ? (searchIdx - i + imgList.length) % imgList.length
         : (searchIdx + i) % imgList.length;
 
-      const caption = imgList[idx].caption || '';
+      const caption = getActiveCaption(imgList[idx]);
       const match = caption.match(regex);
       if (match) {
         let charIndex = match.index || 0;
@@ -235,7 +242,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     const regex = getSearchRegex(findText, wholeWord, matchCase, true);
     if (!regex) return;
 
-    const oldCaption = currentImg.caption || '';
+    const oldCaption = getActiveCaption(currentImg);
     let newCaption = oldCaption;
 
     if (wholeWord) {
@@ -248,10 +255,14 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
     if (newCaption !== oldCaption) {
       apiClient
-        .post('/api/img/caption', { imgPath: currentImg.img_path, caption: newCaption })
+        .post('/api/img/caption', { imgPath: currentImg.img_path, caption: newCaption, ext: captionExt })
         .then(() => {
           setImgList(prev =>
-            prev.map((item, idx) => (idx === findNextIndex ? { ...item, caption: newCaption } : item)),
+            prev.map((item, idx) =>
+              idx === findNextIndex
+                ? { ...item, captions: { ...item.captions, [captionExt]: newCaption }, caption: captionExt === 'txt' ? newCaption : item.caption }
+                : item,
+            ),
           );
         })
         .catch(err => console.error('Error replacing caption:', err));
@@ -270,7 +281,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
     const updates: { img_path: string; caption: string }[] = [];
     const newList = imgList.map(img => {
-      const oldCaption = img.caption || '';
+      const oldCaption = getActiveCaption(img);
       let newCaption = oldCaption;
 
       if (wholeWord) {
@@ -283,7 +294,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
       if (newCaption !== oldCaption) {
         updates.push({ img_path: img.img_path, caption: newCaption });
-        return { ...img, caption: newCaption };
+        return {
+          ...img,
+          captions: { ...img.captions, [captionExt]: newCaption },
+          caption: captionExt === 'txt' ? newCaption : img.caption,
+        };
       }
       return img;
     });
@@ -294,7 +309,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
 
     Promise.all(
       updates.map(update =>
-        apiClient.post('/api/img/caption', { imgPath: update.img_path, caption: update.caption }),
+        apiClient.post('/api/img/caption', { imgPath: update.img_path, caption: update.caption, ext: captionExt }),
       ),
     ).catch(err => {
       console.error('Error during replace all:', err);
