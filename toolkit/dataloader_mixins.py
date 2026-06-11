@@ -352,15 +352,19 @@ class CaptionProcessingDTOMixin:
                     prompt = prompt.replace('\n', ' ')
                     prompt = prompt.replace('\r', ' ')
 
-                    prompt_json = json.loads(prompt)
-                    if 'caption' in prompt_json:
-                        prompt = prompt_json['caption']
-                    if 'caption_short' in prompt_json:
-                        short_caption = prompt_json['caption_short']
-                        if self.dataset_config.use_short_captions:
-                            prompt = short_caption
-                    if 'extra_values' in prompt_json:
-                        self.extra_values = prompt_json['extra_values']
+                    try:
+                        prompt_json = json.loads(prompt)
+                        if 'caption' in prompt_json:
+                            prompt = prompt_json['caption']
+                        if 'caption_short' in prompt_json:
+                            short_caption = prompt_json['caption_short']
+                            if self.dataset_config.use_short_captions:
+                                prompt = short_caption
+                        if 'extra_values' in prompt_json:
+                            self.extra_values = prompt_json['extra_values']
+                    except json.JSONDecodeError as e:
+                        print(f"WARNING: Failed to parse JSON caption at {prompt_path}: {e}. Using raw text.")
+                        prompt = prompt.strip()
 
                 prompt = clean_caption(prompt)
                 if short_caption is not None:
