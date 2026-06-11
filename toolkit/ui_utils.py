@@ -10,6 +10,14 @@ class JobStoppedException(BaseException):
     pass
 
 
+class SampleAbortedException(BaseException):
+    """Raised mid-sample to abort image generation and resume training.
+    Inherits from BaseException so it bypasses DiffusionTrainer's broad
+    'except Exception' guard and propagates to UITrainer.sample() which
+    catches it and continues the training loop normally."""
+    pass
+
+
 def update_job_status_to_ui(job_id: str, status: str, info: str = None):
     ui_url = os.getenv("AITK_UI_URL", "http://localhost:8675")
     if not job_id:

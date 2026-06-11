@@ -34,6 +34,7 @@ class Qwen3VLCaptioner(BaseCaptioner):
             self.caption_config.model_name_or_path,
             dtype=self.torch_dtype,
             device_map="cpu",
+            ignore_mismatched_sizes=self.caption_config.ignore_mismatched_sizes,
         )
         if not self.caption_config.low_vram:
             self.model.to(self.device_torch)

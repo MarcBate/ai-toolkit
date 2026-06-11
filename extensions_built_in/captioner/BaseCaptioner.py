@@ -43,6 +43,7 @@ class CaptionConfig:
         self.caption_prompt = kwargs.get(
             "caption_prompt", "Describe this image in detail."
         )
+        self.ignore_mismatched_sizes = kwargs.get("ignore_mismatched_sizes", True)
 
 
 class BaseCaptioner(BaseExtensionProcess):

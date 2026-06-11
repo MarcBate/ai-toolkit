@@ -4,14 +4,14 @@ import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
 import { JobConfig } from '@/types';
-import { LuImageOff, LuLoader, LuBan, LuCamera } from 'react-icons/lu';
+import { LuImageOff, LuLoader, LuBan, LuCamera, LuArrowLeft } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
-import { getAvaliableJobActions, sampleJob } from '@/utils/jobs';
+import { getAvaliableJobActions, sampleJob, stopSampleJob } from '@/utils/jobs';
 
 interface SampleImagesMenuProps {
   job: Job;
@@ -22,7 +22,7 @@ interface SampleImagesMenuProps {
 
 export const SampleImagesMenu = ({ job, onRefresh, hasSamples, isAnyJobRunning }: SampleImagesMenuProps) => {
   const [isZipping, setIsZipping] = useState(false);
-  const { canSample } = getAvaliableJobActions(job, isAnyJobRunning, hasSamples);
+  const { canSample, isActivelySampling } = getAvaliableJobActions(job, isAnyJobRunning, hasSamples);
 
   const downloadZip = async () => {
     if (isZipping) return;
@@ -53,7 +53,7 @@ export const SampleImagesMenu = ({ job, onRefresh, hasSamples, isAnyJobRunning }
   };
   return (
     <div className="flex items-center">
-      {canSample && (
+      {canSample && !isActivelySampling && (
         <Button
           onClick={async () => {
             if (!canSample) return;
@@ -64,6 +64,19 @@ export const SampleImagesMenu = ({ job, onRefresh, hasSamples, isAnyJobRunning }
         >
           <LuCamera className="inline-block sm:mr-2" />
           <span className="hidden sm:inline">Generate Samples Now</span>
+        </Button>
+      )}
+      {isActivelySampling && (
+        <Button
+          onClick={async () => {
+            await stopSampleJob(job.id);
+            if (onRefresh) onRefresh();
+          }}
+          className={classNames(`px-2 sm:px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 mr-1 sm:mr-2 flex items-center text-yellow-500 dark:text-yellow-400`)}
+          title="Cancels current sample generations for this snapshot and resumes training"
+        >
+          <LuArrowLeft className="inline-block sm:mr-2" />
+          <span className="hidden sm:inline">Return to Training</span>
         </Button>
       )}
       <Button

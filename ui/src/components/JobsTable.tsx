@@ -89,7 +89,8 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       } catch {
         // malformed config — search on name only
       }
-      const searchableText = `${job.name} ${modelName}`.toLowerCase();
+      const jobRef = job.job_ref || '';
+      const searchableText = `${job.name} ${modelName} ${jobRef}`.toLowerCase();
 
       // Check if term is quoted
       if (term.startsWith('"') && term.endsWith('"')) {

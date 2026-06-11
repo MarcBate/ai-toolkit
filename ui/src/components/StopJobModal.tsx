@@ -5,7 +5,7 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/re
 import { OctagonX } from 'lucide-react';
 import React from 'react';
 import { Job } from '@prisma/client';
-import { gracefulStopJob, saveAndPauseJob } from '@/utils/jobs';
+import { gracefulStopJob, saveAndPauseJob, saveAndRequeueJob } from '@/utils/jobs';
 import classNames from 'classnames';
 
 export interface StopJobState {
@@ -39,12 +39,15 @@ export default function StopJobModal() {
     }
   }, [isOpen, state, setState]);
 
-  const handleStop = async (saveFirst: boolean) => {
+  const handleStop = async (mode: 'graceful' | 'saveJob' | 'saveQueue') => {
     if (!state?.job || isStopping) return;
 
     setIsStopping(true);
     try {
-      if (saveFirst) {
+      if (mode === 'saveQueue') {
+        // Route handles stopping the queue + save + return_to_queue atomically
+        await saveAndRequeueJob(state.job.id);
+      } else if (mode === 'saveJob') {
         await saveAndPauseJob(state.job.id);
       } else {
         await gracefulStopJob(state.job.id);
@@ -64,6 +67,8 @@ export default function StopJobModal() {
   const onCancel = () => {
     setIsOpen(false);
   };
+
+  const btnBase = 'inline-flex w-full justify-center rounded-md px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto cursor-pointer';
 
   return (
     <Dialog open={isOpen} onClose={onCancel} className="relative z-50">
@@ -95,26 +100,28 @@ export default function StopJobModal() {
                 </div>
               </div>
             </div>
-            <div className="bg-gray-700 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+            <div className="bg-gray-700 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6 gap-y-2 flex-wrap">
               <button
                 type="button"
-                onClick={() => handleStop(true)}
+                onClick={() => handleStop('saveQueue')}
                 disabled={isStopping}
-                className={classNames(
-                  'inline-flex w-full justify-center rounded-md bg-blue-700 hover:bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto cursor-pointer',
-                  { 'opacity-50 cursor-not-allowed': isStopping },
-                )}
+                className={classNames(btnBase, 'bg-blue-700 hover:bg-blue-600', { 'opacity-50 cursor-not-allowed': isStopping })}
               >
-                {isStopping ? 'Processing...' : 'Save and Stop'}
+                {isStopping ? 'Processing...' : 'Save and Stop Queue'}
               </button>
               <button
                 type="button"
-                onClick={() => handleStop(false)}
+                onClick={() => handleStop('saveJob')}
                 disabled={isStopping}
-                className={classNames(
-                  'inline-flex w-full justify-center rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto cursor-pointer',
-                  { 'opacity-50 cursor-not-allowed': isStopping },
-                )}
+                className={classNames(btnBase, 'bg-blue-600 hover:bg-blue-500', { 'opacity-50 cursor-not-allowed': isStopping })}
+              >
+                {isStopping ? 'Processing...' : 'Save and Stop Job'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleStop('graceful')}
+                disabled={isStopping}
+                className={classNames(btnBase, 'bg-gray-600 hover:bg-gray-500', { 'opacity-50 cursor-not-allowed': isStopping })}
               >
                 {isStopping ? 'Processing...' : 'Stop'}
               </button>

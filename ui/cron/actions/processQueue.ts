@@ -30,6 +30,28 @@ export default async function processQueue() {
           },
         });
       }
+
+      // Re-queue any stopped jobs that were flagged for requeue (e.g. Save and Stop Queue)
+      const stoppedRequeueJobs: Job[] = await prisma.job.findMany({
+        where: {
+          status: 'stopped',
+          return_to_queue: true,
+          gpu_ids: queue.gpu_ids,
+        },
+      });
+
+      for (const job of stoppedRequeueJobs) {
+        console.log(`Re-queuing job ${job.id} on GPU(s) ${job.gpu_ids}`);
+        await prisma.job.update({
+          where: { id: job.id },
+          data: {
+            status: 'queued',
+            return_to_queue: false,
+            stop: false,
+            info: 'Job queued',
+          },
+        });
+      }
     }
     if (queue.is_running) {
       // first see if one is already running, status of running or stopping

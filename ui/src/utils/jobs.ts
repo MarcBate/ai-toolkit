@@ -34,6 +34,22 @@ export const stopJob = (jobID: string) => {
   });
 };
 
+export const saveAndRequeueJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/save_and_requeue`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job save-and-requeue requested:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error requesting save-and-requeue:', error);
+        reject(error);
+      });
+  });
+};
+
 export const gracefulStopJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
@@ -77,6 +93,22 @@ export const saveAndPauseJob = (jobID: string) => {
       })
       .catch(error => {
         console.error('Error requesting job save-and-pause:', error);
+        reject(error);
+      });
+  });
+};
+
+export const stopSampleJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/stop_sample`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Sample abort requested:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error requesting sample abort:', error);
         reject(error);
       });
   });
@@ -218,7 +250,10 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   if (!['train', 'caption'].includes(job.job_type)) {
     canEdit = false;
   }
-  return { canDelete, canEdit, canEditSample, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping };
+  // True when Python is actively generating images (info string set by UITrainer.sample())
+  const isActivelySampling = job.status === 'running' && (job.info?.includes('Generating images') ?? false);
+
+  return { canDelete, canEdit, canEditSample, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping, isActivelySampling };
 };
 
 export const getNumberOfSamples = (job: Job) => {

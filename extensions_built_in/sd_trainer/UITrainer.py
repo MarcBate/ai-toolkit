@@ -6,7 +6,7 @@ import asyncio
 import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from toolkit.config_modules import SampleConfig
-from toolkit.ui_utils import JobStoppedException
+from toolkit.ui_utils import JobStoppedException, SampleAbortedException
 from typing import Literal, Optional
 import threading
 import time
@@ -163,6 +163,18 @@ class UITrainer(SDTrainer):
     def reset_sample(self):
         self.update_db_key("sample", False)
 
+    def should_stop_sample(self):
+        def _check():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT stop_sample FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                return False if row is None else row[0] == 1
+        return _check()
+
+    def reset_stop_sample(self):
+        self.update_db_key("stop_sample", False)
+
     def reload_sample_config(self):
         """Re-read sample config from the DB in case prompts were edited while running."""
         try:
@@ -185,6 +197,7 @@ class UITrainer(SDTrainer):
         if self.should_sample():
             self.reload_sample_config()
             self.reset_sample()
+            self.reset_stop_sample()  # clear any stale abort request from a previous sample
             self.save(self.step_num)
             self.sample(self.step_num)
 
@@ -284,12 +297,13 @@ class UITrainer(SDTrainer):
         if getattr(self, "progress_bar", None) is not None:
             self.progress_bar.close()
             self.progress_bar = None
-        if self.accelerator.is_main_process and not self.is_stopping:
+        is_intentional = self.is_stopping or isinstance(e, (KeyboardInterrupt, JobStoppedException))
+        if self.accelerator.is_main_process and not is_intentional:
             self.update_status("error", str(e))
             # On actual error, roll back displayed step to last known good save
             self.update_db_key("step", self.last_save_step)
         else:
-            # On intentional stop/pause, preserve the current step count
+            # On intentional stop/pause (including SIGINT), preserve the current step count
             self.update_db_key("step", self.step_num)
         asyncio.run(self.wait_for_all_async())
         self.thread_pool.shutdown(wait=True)
@@ -359,6 +373,8 @@ class UITrainer(SDTrainer):
     def sample_step_hook(self, img_num, total_imgs):
         super().sample_step_hook(img_num, total_imgs)
         self.maybe_stop()
+        if self.should_stop_sample():
+            raise SampleAbortedException("Sample generation aborted by user")
         self.update_status(
             "running", f"Generating images - {img_num + 1}/{total_imgs}")
 
@@ -369,6 +385,9 @@ class UITrainer(SDTrainer):
         self.logger.record_sample_start()
         try:
             super().sample(step, is_first)
+        except SampleAbortedException:
+            # User requested early exit from sampling — reset flag and resume training
+            self.reset_stop_sample()
         finally:
             self.logger.record_sample_end()
         self.maybe_stop()
