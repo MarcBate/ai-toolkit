@@ -9,6 +9,91 @@ import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settin
 const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
+// Shared: extract prompt and seed from a raw A1111 parameters string
+// ---------------------------------------------------------------------------
+function parseParameters(parameters: string): { prompt: string | null; seed: number | null } {
+  const lines = parameters.split('\n');
+  const prompt = lines[0]?.trim() || null;
+  let seed: number | null = null;
+  // Seed appears in the last line as "..., Seed: <N>, ..."
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/\bSeed:\s*(\d+)/);
+    if (m) {
+      seed = parseInt(m[1], 10);
+      break;
+    }
+  }
+  return { prompt, seed };
+}
+
+// ---------------------------------------------------------------------------
+// JPEG: read EXIF UserComment (tag 0x9286) written with UNICODE\x00 + UTF-16-LE
+// ---------------------------------------------------------------------------
+function readJpegParameters(buf: Buffer): string | null {
+  // JPEG starts with FFD8
+  if (buf.length < 2 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+
+  let offset = 2;
+  while (offset + 4 <= buf.length) {
+    if (buf[offset] !== 0xff) break;
+    const marker = buf[offset + 1];
+    // SOS (0xda) and EOI (0xd9) end the header
+    if (marker === 0xda || marker === 0xd9) break;
+    const segLen = buf.readUInt16BE(offset + 2);
+    if (segLen < 2 || offset + 2 + segLen > buf.length) break;
+
+    // APP1 (0xe1) may contain Exif
+    if (marker === 0xe1 && segLen > 6) {
+      const seg = buf.slice(offset + 4, offset + 2 + segLen);
+      if (seg.slice(0, 6).toString('ascii').startsWith('Exif')) {
+        // Exif header: "Exif\x00\x00" then TIFF data
+        const tiff = seg.slice(6);
+        const littleEndian = tiff[0] === 0x49; // 'II'
+        const readU16 = (o: number) => littleEndian ? tiff.readUInt16LE(o) : tiff.readUInt16BE(o);
+        const readU32 = (o: number) => littleEndian ? tiff.readUInt32LE(o) : tiff.readUInt32BE(o);
+
+        // Walk IFD0 to find ExifIFD offset (tag 0x8769)
+        const ifd0Offset = readU32(4);
+        const ifd0Count = readU16(ifd0Offset);
+        let exifIfdOffset: number | null = null;
+        for (let i = 0; i < ifd0Count; i++) {
+          const entryOffset = ifd0Offset + 2 + i * 12;
+          if (entryOffset + 12 > tiff.length) break;
+          const tag = readU16(entryOffset);
+          if (tag === 0x8769) {
+            exifIfdOffset = readU32(entryOffset + 8);
+            break;
+          }
+        }
+        if (exifIfdOffset === null) { offset += 2 + segLen; continue; }
+
+        // Walk ExifIFD for UserComment (tag 0x9286)
+        if (exifIfdOffset + 2 > tiff.length) { offset += 2 + segLen; continue; }
+        const exifCount = readU16(exifIfdOffset);
+        for (let i = 0; i < exifCount; i++) {
+          const entryOffset = exifIfdOffset + 2 + i * 12;
+          if (entryOffset + 12 > tiff.length) break;
+          const tag = readU16(entryOffset);
+          if (tag === 0x9286) {
+            const count = readU32(entryOffset + 4);
+            const valOffset = readU32(entryOffset + 8);
+            if (valOffset + count > tiff.length) break;
+            const raw = tiff.slice(valOffset, valOffset + count);
+            // Prefix: "UNICODE\x00" (8 bytes) then UTF-16-LE body
+            if (raw.length > 8 && raw.slice(0, 7).toString('ascii') === 'UNICODE') {
+              return raw.slice(8).toString('utf16le').replace(/\0+$/, '');
+            }
+            break;
+          }
+        }
+      }
+    }
+    offset += 2 + segLen;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // PNG: read the 'parameters' tEXt chunk (A1111 / CivitAI format)
 // ---------------------------------------------------------------------------
 function readPngParameters(buf: Buffer): string | null {
@@ -143,6 +228,18 @@ export async function POST(request: NextRequest) {
       await fd.close();
     }
     parameters = readPngParameters(buf);
+  } else if (ext === '.jpg' || ext === '.jpeg') {
+    // JPEG: read EXIF UserComment (tag 0x9286) written by save_image()
+    const MAX_BYTES = 256 * 1024; // EXIF is always in the first few KB
+    const readSize = Math.min(stat.size, MAX_BYTES);
+    const buf = Buffer.alloc(readSize);
+    const fd = await fs.promises.open(resolved, 'r');
+    try {
+      await fd.read(buf, 0, readSize, 0);
+    } finally {
+      await fd.close();
+    }
+    parameters = readJpegParameters(buf);
   } else if (ext === '.mp4' || ext === '.m4v' || ext === '.webm') {
     // MP4: try ffprobe first (reads ffmpeg FFMETADATA1 tags), then binary fallback
     parameters = await readMp4ViaFfprobe(resolved);
@@ -162,14 +259,13 @@ export async function POST(request: NextRequest) {
   }
 
   if (!parameters) {
-    return new NextResponse(JSON.stringify({ prompt: null }), {
+    return new NextResponse(JSON.stringify({ prompt: null, seed: null }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  // The A1111 parameters string: first line is the positive prompt
-  const prompt = parameters.split('\n')[0].trim();
-  return new NextResponse(JSON.stringify({ prompt }), {
+  const { prompt, seed } = parseParameters(parameters);
+  return new NextResponse(JSON.stringify({ prompt, seed }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

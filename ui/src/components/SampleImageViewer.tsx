@@ -163,18 +163,23 @@ export default function SampleImageViewer({
   }, [sampleConfig, imgInfo.promptIdx]);
 
   const [metadataPrompt, setMetadataPrompt] = useState<string | null>(null);
+  const [metadataSeed, setMetadataSeed] = useState<number | null>(null);
 
   useEffect(() => {
     if (!imgPath) {
       setMetadataPrompt(null);
+      setMetadataSeed(null);
       return;
     }
     setMetadataPrompt(null);
+    setMetadataSeed(null);
     let cancelled = false;
     apiClient
       .post('/api/img/metadata', { imgPath })
       .then(res => {
-        if (!cancelled && res.data?.prompt) setMetadataPrompt(res.data.prompt);
+        if (cancelled) return;
+        if (res.data?.prompt) setMetadataPrompt(res.data.prompt);
+        if (res.data?.seed != null) setMetadataSeed(res.data.seed);
       })
       .catch(() => {});
     return () => {
@@ -209,13 +214,14 @@ export default function SampleImageViewer({
   }, [sampleItem, imgPath]);
 
   const seed = useMemo(() => {
+    if (metadataSeed != null) return metadataSeed;
     if (!sampleItem) return '?';
     if (sampleItem.seed !== undefined) return sampleItem.seed;
     if (sampleConfig?.walk_seed) {
       return (sampleConfig.seed || 0) + imgInfo.promptIdx;
     }
     return sampleConfig?.seed ?? '?';
-  }, [sampleItem, sampleConfig, imgInfo.promptIdx]);
+  }, [metadataSeed, sampleItem, sampleConfig, imgInfo.promptIdx]);
 
   const displayedImgPath = useMemo(() => {
     if (showingControlIdx !== null && controlImages[showingControlIdx]) {
