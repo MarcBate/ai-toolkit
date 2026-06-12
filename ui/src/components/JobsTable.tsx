@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import useJobsList from '@/hooks/useJobsList';
 import Link from 'next/link';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
-import { GpuInfo, JobConfig } from '@/types';
+import { GpuInfo } from '@/types';
 import JobActionBar from './JobActionBar';
 import { Job, Queue } from '@prisma/client';
 import useQueueList from '@/hooks/useQueueList';
@@ -10,8 +10,9 @@ import classNames from 'classnames';
 import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
-import { ChevronUp, ChevronDown, ChevronsUp, GripVertical } from 'lucide-react';
-import { reorderJob, reorderJobToIndex } from '@/utils/jobs';
+import { ChevronUp, ChevronDown, ChevronsUp, GripVertical, Trash2 } from 'lucide-react';
+import { openConfirm } from '@/components/ConfirmModal';
+import { deleteJob, getTotalSteps, reorderJob, reorderJobToIndex, stopJob } from '@/utils/jobs';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -24,6 +25,8 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   const { jobs, setJobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
 
   const isAnyJobRunning = jobs.some(j => j.status === 'running');
 
@@ -34,6 +37,63 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
 
   const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
   const [dragOverJobId, setDragOverJobId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const isDeleting = deleteProgress !== null;
+  const allSelected = jobs.length > 0 && jobs.every(job => selectedIds.has(job.id));
+
+  const toggleRow = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(jobs.map(job => job.id)));
+  };
+
+  const onMassDelete = () => {
+    const jobsToDelete = jobs.filter(job => selectedIds.has(job.id));
+    if (jobsToDelete.length === 0) return;
+    const runningCount = jobsToDelete.filter(job => job.status === 'running').length;
+    let message = `Are you sure you want to delete ${jobsToDelete.length} job${
+      jobsToDelete.length === 1 ? '' : 's'
+    }? This will also permanently remove them from your disk.`;
+    if (runningCount > 0) {
+      message += ` WARNING: ${runningCount} of them ${
+        runningCount === 1 ? 'is' : 'are'
+      } currently running and will be stopped first.`;
+    }
+    openConfirm({
+      title: 'Delete Jobs',
+      message: message,
+      type: 'warning',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        setDeleteProgress({ done: 0, total: jobsToDelete.length });
+        for (let i = 0; i < jobsToDelete.length; i++) {
+          const job = jobsToDelete[i];
+          try {
+            if (job.status === 'running') {
+              try { await stopJob(job.id); } catch (e) { console.error('Error stopping job before deleting:', e); }
+            }
+            await deleteJob(job.id);
+            setSelectedIds(prev => { const next = new Set(prev); next.delete(job.id); return next; });
+          } catch (e) {
+            console.error('Error deleting job:', job.name, e);
+          }
+          setDeleteProgress({ done: i + 1, total: jobsToDelete.length });
+          refreshJobs();
+        }
+        setDeleteProgress(null);
+        refresh();
+      },
+    });
+  };
 
   const handleDragStart = (e: React.DragEvent, jobId: string) => {
     e.dataTransfer.effectAllowed = 'move';
@@ -74,33 +134,23 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   const filteredJobs = useMemo(() => {
     if (!filter) return jobs;
 
-    const escapeRegExp = (string: string) => {
-      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    };
+    const escapeRegExp = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const matchesTerm = (job: Job, term: string) => {
       term = term.trim();
       if (!term) return true;
-
       let modelName = '';
       try {
         const jobConfig: JobConfig = JSON.parse(job.job_config);
         modelName = jobConfig?.config?.process?.[0]?.model?.name_or_path || '';
-      } catch {
-        // malformed config — search on name only
-      }
+      } catch { /* malformed config */ }
       const jobRef = job.job_ref || '';
       const searchableText = `${job.name} ${modelName} ${jobRef}`.toLowerCase();
-
-      // Check if term is quoted
       if (term.startsWith('"') && term.endsWith('"')) {
         const exactTerm = term.slice(1, -1);
         if (!exactTerm) return true;
-        const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escapeRegExp(exactTerm)}([^a-zA-Z0-9_]|$)`, 'i');
-        return regex.test(searchableText);
+        return new RegExp(`(^|[^a-zA-Z0-9_])${escapeRegExp(exactTerm)}([^a-zA-Z0-9_]|$)`, 'i').test(searchableText);
       }
-
-      // Default partial match
       return searchableText.includes(term.toLowerCase());
     };
 
@@ -109,14 +159,9 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       const parts: string[] = [];
       let lastIndex = 0;
       let match;
-
       while ((match = regex.exec(input)) !== null) {
         const part = input.slice(lastIndex, match.index).trim();
-        const quoteCount = (part.match(/"/g) || []).length;
-        if (quoteCount % 2 === 0) {
-          parts.push(part);
-          lastIndex = regex.lastIndex;
-        }
+        if ((part.match(/"/g) || []).length % 2 === 0) { parts.push(part); lastIndex = regex.lastIndex; }
       }
       parts.push(input.slice(lastIndex).trim());
       return parts.filter(p => p !== '');
@@ -124,62 +169,41 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
 
     const orParts = splitByOperator(filter, 'or');
     if (orParts.length > 1) {
-      return jobs.filter(job => {
-        return orParts.some(part => {
-          const andParts = splitByOperator(part, 'and');
-          if (andParts.length > 1) {
-            return andParts.every(subPart => matchesTerm(job, subPart));
-          }
-          return matchesTerm(job, part);
-        });
-      });
+      return jobs.filter(job => orParts.some(part => {
+        const andParts = splitByOperator(part, 'and');
+        return andParts.length > 1 ? andParts.every(sub => matchesTerm(job, sub)) : matchesTerm(job, part);
+      }));
     }
-
     const andParts = splitByOperator(filter, 'and');
-    if (andParts.length > 1) {
-      return jobs.filter(job => {
-        return andParts.every(part => matchesTerm(job, part));
-      });
-    }
-
+    if (andParts.length > 1) return jobs.filter(job => andParts.every(part => matchesTerm(job, part)));
     return jobs.filter(job => matchesTerm(job, filter));
   }, [jobs, filter]);
 
   const handleReorder = async (jobID: string, direction: 'up' | 'down') => {
-    // Optimistic update: swap with neighbour immediately
     setJobs(prev => {
       const job = prev.find(j => j.id === jobID);
       if (!job) return prev;
-      const queueJobs = prev
-        .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
+      const queueJobs = prev.filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
         .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
       const idx = queueJobs.findIndex(j => j.id === jobID);
       const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
       if (swapIdx < 0 || swapIdx >= queueJobs.length) return prev;
       const neighbour = queueJobs[swapIdx];
-      const swappedPos = neighbour.queue_position;
-      const jobPos = job.queue_position;
       return prev.map(j => {
-        if (j.id === jobID) return { ...j, queue_position: swappedPos };
-        if (j.id === neighbour.id) return { ...j, queue_position: jobPos };
+        if (j.id === jobID) return { ...j, queue_position: neighbour.queue_position };
+        if (j.id === neighbour.id) return { ...j, queue_position: job.queue_position };
         return j;
       });
     });
-    try {
-      await reorderJob(jobID, direction);
-    } catch (e) {
-      console.error('Failed to reorder job:', e);
-    }
+    try { await reorderJob(jobID, direction); } catch (e) { console.error('Failed to reorder job:', e); }
     refresh();
   };
 
   const handleMoveToTop = async (jobID: string) => {
-    // Optimistic update: reorder local state immediately
     setJobs(prev => {
       const job = prev.find(j => j.id === jobID);
       if (!job) return prev;
-      const queueJobs = prev
-        .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
+      const queueJobs = prev.filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
         .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
       if (queueJobs[0]?.id === jobID) return prev;
       const reordered = [job, ...queueJobs.filter(j => j.id !== jobID)];
@@ -187,15 +211,33 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       const updated = new Map(reordered.map((j, i) => [j.id, { ...j, queue_position: basePos + i }]));
       return prev.map(j => updated.get(j.id) ?? j);
     });
-    try {
-      await reorderJobToIndex(jobID, 0);
-    } catch (e) {
-      console.error('Failed to move job to top:', e);
-    }
+    try { await reorderJobToIndex(jobID, 0); } catch (e) { console.error('Failed to move job to top:', e); }
     refresh();
   };
 
   const columns: TableColumn[] = [
+    {
+      title: (
+        <input
+          type="checkbox"
+          checked={allSelected}
+          onChange={toggleAll}
+          disabled={isDeleting}
+          className="cursor-pointer accent-blue-500"
+        />
+      ),
+      key: 'select',
+      className: 'w-8',
+      render: row => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row.id)}
+          onChange={() => toggleRow(row.id)}
+          disabled={isDeleting}
+          className="cursor-pointer accent-blue-500"
+        />
+      ),
+    },
     {
       title: 'Name',
       key: 'name',
@@ -256,15 +298,9 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       title: 'Steps',
       key: 'steps',
       render: row => {
-        if (row.job_type !== 'train') {
+        const totalSteps = getTotalSteps(row);
+        if (!totalSteps) {
           return <></>;
-        }
-        let totalSteps = 0;
-        try {
-          const jobConfig: JobConfig = JSON.parse(row.job_config);
-          totalSteps = jobConfig?.config?.process?.[0]?.train?.steps ?? 0;
-        } catch {
-          // malformed config
         }
 
         return (
@@ -366,6 +402,37 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
 
   return (
     <div>
+      {(selectedIds.size > 0 || isDeleting) && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-gray-800 rounded-lg border border-gray-700 shadow-lg">
+          {isDeleting ? (
+            <>
+              <CgSpinner className="inline animate-spin text-red-400" />
+              <span className="text-sm text-gray-300">
+                Deleting {deleteProgress.done} / {deleteProgress.total}...
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-sm text-gray-300 flex-1">
+                {selectedIds.size} job{selectedIds.size === 1 ? '' : 's'} selected
+              </span>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded"
+              >
+                Clear
+              </button>
+              <button
+                onClick={onMassDelete}
+                className="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Selected
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {Object.keys(jobsDict)
         .sort()
         .filter(key => key !== 'Idle')

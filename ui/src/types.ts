@@ -177,6 +177,12 @@ export interface ModelConfig {
   use_gemma_api?: boolean;
   cache_quantized_model?: boolean;
   extras_name_or_path?: string;
+  compile?: boolean;
+  block_compile?: boolean;
+  compile_mode?: 'default' | 'max-autotune' | 'fastest';
+  compile_fullgraph?: boolean;
+  compile_dynamic?: boolean;
+  cache_size_limit?: number;
 }
 
 export interface SampleItem {
@@ -280,6 +286,7 @@ export interface CaptionProcessConfig {
     extensions: string[];
     path_to_caption: string;
     recaption: boolean;
+    compile?: boolean;
     caption_prompt?: string;
     max_res?: number;
     max_new_tokens?: number;

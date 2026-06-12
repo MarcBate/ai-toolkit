@@ -792,12 +792,12 @@ class LTX2Model(BaseModel):
     def _get_upsampler_model(self):
         if getattr(self, '_upsampler_model', None) is not None:
             return self._upsampler_model
-        from diffusers.pipelines.ltx.modeling_latent_upsampler import LTXLatentUpsamplerModel
+        from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
         from safetensors.torch import load_file as _load_sf
         path = self.model_config.spatial_upscaler_path
         self.print_and_status_update(f"Loading spatial upsampler: {os.path.basename(path)}")
         state_dict = _load_sf(path, device="cpu")
-        model = LTXLatentUpsamplerModel(
+        model = LTX2LatentUpsamplerModel(
             in_channels=128,
             mid_channels=1024,
             num_blocks_per_stage=4,
@@ -887,7 +887,16 @@ class LTX2Model(BaseModel):
         # ── Upscale: 2× spatial in latent space ──────────────────────────────
         self.print_and_status_update("Upscaling latents 2×")
         try:
-            upsampler = self._get_upsampler_model().to(self.device_torch)
+            from diffusers.pipelines.ltx2 import LTX2LatentUpsamplePipeline
+            upsampler_model = self._get_upsampler_model().to(self.device_torch)
+            upsample_pipe = LTX2LatentUpsamplePipeline(vae=pipeline.vae, latent_upsampler=upsampler_model)
+            with torch.no_grad():
+                upscaled = upsample_pipe(
+                    latents=video_latents.to(self.device_torch, dtype=upsampler_model.dtype),
+                    output_type="latent",
+                    return_dict=False,
+                )[0]
+            upsampler_model.to("cpu")
         except Exception as _up_err:
             # Upsampler failed — tear down distill LoRA so training isn't left with it on CPU
             if getattr(self, '_distill_lora_ready', False):
@@ -896,15 +905,24 @@ class LTX2Model(BaseModel):
                 except Exception:
                     pass
             raise
-        with torch.no_grad():
-            upscaled = upsampler(video_latents.to(self.device_torch, dtype=upsampler.dtype))
-        upsampler.to("cpu")
         torch.cuda.empty_cache()
 
         # ── Phase 2: full-resolution refinement ──────────────────────────────
-        # Drop "image" from extra — latents= and image= are mutually exclusive in the pipeline.
-        # Frame 0 of upscaled latents already carries the ctrl content from phase 1.
+        # For i2v: pass the ctrl image at full resolution so the pipeline re-encodes
+        # it and inserts it at frame 0 with strength 1.0.  All other image-like
+        # kwargs from phase 1 are dropped.
         p2_extra = {k: v for k, v in extra.items() if k != "image"}
+        if gen_config.ctrl_img is not None:
+            ctrl_full = Image.open(gen_config.ctrl_img).convert("RGB").resize((full_w, full_h), Image.LANCZOS)
+            p2_extra["image"] = ctrl_full
+
+        # Phase 2 uses a non-dynamic-shifting scheduler (matches distill LoRA training).
+        from diffusers import FlowMatchEulerDiscreteScheduler
+        orig_scheduler = pipeline.scheduler
+        pipeline.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+            pipeline.scheduler.config,
+            use_dynamic_shifting=False,
+        )
 
         if getattr(self, '_distill_lora_ready', False):
             pipeline.set_adapters(["distill_lora"], adapter_weights=[0.6])
@@ -923,6 +941,7 @@ class LTX2Model(BaseModel):
                 audio_latents=audio_latents,
                 noise_scale=0.85,
                 sigmas=[0.85, 0.725, 0.4219, 0.0],
+                guidance_scale=1.0,
                 num_frames=gen_config.num_frames,
                 generator=generator,
                 return_dict=False,
@@ -931,6 +950,7 @@ class LTX2Model(BaseModel):
                 **p2_extra,
             )
         finally:
+            pipeline.scheduler = orig_scheduler
             if getattr(self, '_distill_lora_ready', False):
                 try:
                     torch.cuda.empty_cache()
