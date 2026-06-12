@@ -83,9 +83,9 @@ check "Generate samples button (canSample)" \
 check "Edit sample prompts while running (canEditSample)" \
   "ui/src/components/JobActionBar.tsx" \
   "canEditSample"
-check "saveAndPauseJob imported" \
+check "Save snapshot modal wired in JobActionBar" \
   "ui/src/components/JobActionBar.tsx" \
-  "saveAndPauseJob"
+  "openSaveSnapshotModal"
 check "sampleJob imported" \
   "ui/src/components/JobActionBar.tsx" \
   "sampleJob"
@@ -193,10 +193,10 @@ check "JobStoppedException caught in run.py" \
 
 echo
 echo "── Python: LightX2V ─────────────────────────"
-check "_remove_lightx2v_loras" \
+check "_teardown_lightx2v_loras (LightX2V LoRA lifecycle management)" \
   "extensions_built_in/diffusion_models/wan22/wan22_14b_model.py" \
-  "_remove_lightx2v_loras"
-check "_ensure_adapter_absent" \
+  "_teardown_lightx2v_loras"
+check "_ensure_adapter_absent (safe LightX2V adapter cleanup)" \
   "extensions_built_in/diffusion_models/wan22/wan22_14b_model.py" \
   "_ensure_adapter_absent"
 
@@ -205,9 +205,9 @@ echo "── Python: LTX-2.3 distilled LoRA ──────────"
 check "distill_lora_path support in ltx2.py" \
   "extensions_built_in/diffusion_models/ltx2/ltx2.py" \
   "distill_lora"
-check "Filter patchify_proj from distill LoRA (prevents weight=None on quantized proj_in)" \
+check "filter_lora_state_dict_for_quantized_model used in ltx2.py (prevents weight corruption on quantized layers)" \
   "extensions_built_in/diffusion_models/ltx2/ltx2.py" \
-  "patchify_proj.*skip\|skip.*patchify_proj\|_skip_prefixes"
+  "filter_lora_state_dict_for_quantized_model"
 
 echo
 echo "── Python: Gemma API ────────────────────────"
@@ -232,6 +232,15 @@ echo "── UI: Loss Graph ─────────────────�
 check "Settings persistence (localStorage per job)" \
   "ui/src/components/JobLossGraph.tsx" \
   "localStorage\|STORAGE_PREFIX"
+
+echo
+echo "── Python: Sample image format ──────────────"
+check "Default sample image format is jpg (not png)" \
+  "toolkit/config_modules.py" \
+  "default_ext.*jpg\|jpg.*default_ext"
+check "JPEG CivitAI metadata embedding (UserComment EXIF)" \
+  "toolkit/config_modules.py" \
+  "UNICODE.*utf-16\|0x9286"
 
 echo
 echo "────────────────────────────────────────────"

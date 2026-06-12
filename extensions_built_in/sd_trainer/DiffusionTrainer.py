@@ -457,6 +457,7 @@ class DiffusionTrainer(SDTrainer):
                 self.update_status("running", f"Sample failed (step {step}), continuing training")
                 import torch as _torch
                 _torch.cuda.empty_cache()
+                self.sd._after_sample_failure()
         finally:
             if self.is_ui_trainer:
                 self.logger.record_sample_end()

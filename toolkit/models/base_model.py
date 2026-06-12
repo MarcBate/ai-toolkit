@@ -378,6 +378,10 @@ class BaseModel:
     def _after_generate_images_loop(self, pipeline):
         pass
 
+    def _after_sample_failure(self):
+        """Called after any sample generation exception before training resumes. Override to clean up GPU state."""
+        pass
+
     def _status_update(self, status: str):
         for hook in self._status_update_hooks:
             hook(status)

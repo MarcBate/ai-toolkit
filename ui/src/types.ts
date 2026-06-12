@@ -216,6 +216,7 @@ export interface SampleConfig {
   sample_lora_path_2?: string | null;
   sample_lora_strength?: number;
   sample_lora_strength_2?: number;
+  format?: 'jpg' | 'png' | 'webp';
 }
 
 export interface LoggingConfig {

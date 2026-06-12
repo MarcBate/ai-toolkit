@@ -97,7 +97,7 @@ class SampleConfig:
         self.extra_values = kwargs.get('extra_values', [])
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
-        default_ext = 'mp4' if self.num_frames > 1 else 'png'
+        default_ext = 'mp4' if self.num_frames > 1 else 'jpg'
         self.ext: ImgExt = kwargs.get('format', default_ext)
         if self.num_frames > 1 and self.ext not in ['webp', 'mp4']:
             print("Changing sample extention to animated webp")
@@ -709,6 +709,7 @@ class ModelConfig:
         self.qtype = kwargs.get("qtype", "qfloat8")
         self.qtype_te = kwargs.get("qtype_te", "qfloat8")
         self.low_vram = kwargs.get("low_vram", False)
+        self.spatial_upscaler_path = kwargs.get("spatial_upscaler_path", None)
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:
             raise ValueError("attn_masking is only supported with flux models currently")
@@ -1430,11 +1431,20 @@ class GenerateImageConfig:
                 add_album_artwork(audio_path)
         else:
             output_path = self.get_image_path(count, max_count)
+            params = self._build_civitai_parameters()
             if self.output_ext == 'png':
                 from PIL import PngImagePlugin
                 pnginfo = PngImagePlugin.PngInfo()
-                pnginfo.add_text("parameters", self._build_civitai_parameters())
+                pnginfo.add_text("parameters", params)
                 image.save(output_path, "PNG", pnginfo=pnginfo)
+            elif self.output_ext in ('jpg', 'jpeg'):
+                # Embed parameters in EXIF UserComment (tag 0x9286).
+                # Prefix "UNICODE\x00" + UTF-16-LE body matches the format written
+                # by piexif.helper.UserComment.dump(..., encoding="unicode"), which
+                # is what A1111 forks use and CivitAI knows how to read.
+                exif = image.getexif()
+                exif[0x9286] = b'UNICODE\x00' + params.encode('utf-16-le')
+                image.save(output_path, "JPEG", exif=exif.tobytes(), quality=95)
             else:
                 image.save(output_path)
             # do prompt file

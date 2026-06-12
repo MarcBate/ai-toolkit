@@ -150,7 +150,7 @@ function dulledColor(rgba: string): string {
 }
 
 export default function JobLossGraph({ job }: Props) {
-  const { series, lossKeys, status, refreshLoss } = useJobLossLog(job.id, 2000);
+  const { series, lossKeys, status, refreshLoss, fullReset } = useJobLossLog(job.id, 2000);
 
   // Controls
   const [useLogScale, setUseLogScale] = useState(false);
@@ -172,6 +172,9 @@ export default function JobLossGraph({ job }: Props) {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
 
   const [isZoomed, setIsZoomed] = useState(false);
+
+  const [trimStep, setTrimStep] = useState('');
+  const [trimming, setTrimming] = useState(false);
 
   // Gate persistence writes until we've loaded any stored settings, so the
   // initial defaults don't clobber what was saved before the load effect runs.
@@ -497,6 +500,29 @@ export default function JobLossGraph({ job }: Props) {
     return () => ro.disconnect();
   }, [hasData]);
 
+  const handleTrim = useCallback(async () => {
+    const step = Number(trimStep);
+    if (!Number.isFinite(step) || step < 0) return;
+    if (!window.confirm(`Delete all loss log entries after step ${step}?\n\nThis cannot be undone.`)) return;
+    setTrimming(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/loss`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trimAfterStep: step }),
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg);
+      }
+      fullReset();
+    } catch (err) {
+      window.alert(`Trim failed: ${err}`);
+    } finally {
+      setTrimming(false);
+    }
+  }, [trimStep, job.id, fullReset]);
+
   const handleResetZoom = useCallback(() => {
     const u = uplotRef.current;
     if (!u) return;
@@ -506,6 +532,7 @@ export default function JobLossGraph({ job }: Props) {
   }, []);
 
   const totalPoints = built.data[0]?.length ?? 0;
+  const maxStep = (built.data[0] as number[])?.[totalPoints - 1] ?? 0;
 
   return (
     <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col h-full">
@@ -629,6 +656,33 @@ export default function JobLossGraph({ job }: Props) {
               className="w-full accent-blue-500"
             />
             <div className="mt-2 text-[11px] text-gray-500">UI downsample for huge runs.</div>
+          </div>
+
+          <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 md:col-span-2">
+            <label className="block text-xs text-gray-400 mb-2">
+              Trim log after step
+              {maxStep > 0 && <span className="ml-1 text-gray-500">(current max: {maxStep.toLocaleString()})</span>}
+            </label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                placeholder={maxStep > 0 ? String(maxStep) : 'step number'}
+                value={trimStep}
+                onChange={e => setTrimStep(e.target.value)}
+                className="w-40 px-2 py-1 rounded-md text-xs bg-gray-900 border border-gray-700 text-gray-200 focus:outline-none focus:border-red-500"
+              />
+              <button
+                type="button"
+                disabled={trimming || trimStep === '' || Number(trimStep) < 0}
+                onClick={handleTrim}
+                className="px-3 py-1 rounded-md text-xs bg-red-900/60 hover:bg-red-800/80 text-red-200 border border-red-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {trimming ? 'Trimming…' : 'Trim'}
+              </button>
+              <span className="text-[11px] text-gray-500">Permanently deletes log entries after the given step.</span>
+            </div>
           </div>
         </div>
       </div>

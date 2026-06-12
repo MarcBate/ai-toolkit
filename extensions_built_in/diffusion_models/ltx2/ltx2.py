@@ -747,20 +747,33 @@ class LTX2Model(BaseModel):
 
         self._distill_lora_ready = True
 
-    def _teardown_distill_lora(self, pipeline: "LTX2Pipeline"):
-        """Remove the distill LoRA adapter completely after all sampling is done."""
-        if hasattr(pipeline.transformer, 'peft_config') and 'distill_lora' in pipeline.transformer.peft_config:
+    def _teardown_distill_lora(self, pipeline: "LTX2Pipeline" = None):
+        """Remove the distill LoRA adapter completely after all sampling is done.
+
+        pipeline is optional; if omitted, operates directly on self.model so this
+        can be called from _after_sample_failure without a pipeline reference.
+        """
+        transformer = pipeline.transformer if pipeline is not None else self.model
+        if hasattr(transformer, 'peft_config') and 'distill_lora' in transformer.peft_config:
             try:
-                del pipeline.transformer.peft_config['distill_lora']
+                del transformer.peft_config['distill_lora']
             except Exception:
                 pass
-        for module in pipeline.transformer.modules():
+        for module in transformer.modules():
             if hasattr(module, 'delete_adapter'):
                 try:
                     module.delete_adapter('distill_lora')
                 except Exception:
                     pass
         self._distill_lora_ready = False
+
+    def _after_sample_failure(self):
+        """Ensure the distill LoRA is never left attached to the training transformer after a sample crash."""
+        if getattr(self, '_distill_lora_ready', False):
+            try:
+                self._teardown_distill_lora()  # pipeline=None → operates on self.model
+            except Exception:
+                pass
 
     def _validate_sample_config(self, image_configs):
         if not self._has_distill_lora():
@@ -771,6 +784,166 @@ class LTX2Model(BaseModel):
             raise FileNotFoundError(
                 f"Sample LoRA not found — aborting sample to avoid useless inference: {path}"
             )
+
+    def _has_upscaler(self):
+        path = getattr(self.model_config, 'spatial_upscaler_path', None)
+        return bool(path and os.path.exists(path))
+
+    def _get_upsampler_model(self):
+        if getattr(self, '_upsampler_model', None) is not None:
+            return self._upsampler_model
+        from diffusers.pipelines.ltx.modeling_latent_upsampler import LTXLatentUpsamplerModel
+        from safetensors.torch import load_file as _load_sf
+        path = self.model_config.spatial_upscaler_path
+        self.print_and_status_update(f"Loading spatial upsampler: {os.path.basename(path)}")
+        state_dict = _load_sf(path, device="cpu")
+        model = LTXLatentUpsamplerModel(
+            in_channels=128,
+            mid_channels=1024,
+            num_blocks_per_stage=4,
+            dims=3,
+            spatial_upsample=True,
+            temporal_upsample=False,
+        )
+        model.load_state_dict(state_dict)
+        model = model.to(dtype=self.torch_dtype)
+        self._upsampler_model = model
+        return model
+
+    def _generate_two_pass(self, pipeline, gen_config, conditional_embeds, unconditional_embeds, generator, extra):
+        """Two-pass generation: half-res → spatial upscale → full-res refinement."""
+        full_h, full_w = gen_config.height, gen_config.width
+        bd = self.get_bucket_divisibility()
+        half_h = (full_h // 2 // bd) * bd
+        half_w = (full_w // 2 // bd) * bd
+
+        def _stop_cb(pipe, i, t, kw):
+            self.maybe_stop()
+            return kw
+
+        # Build Gemma passthrough if needed (captured once, reused both passes)
+        _video_hidden_dim = None
+        if self.model_config.gemma_api_key is not None:
+            _video_hidden_dim = pipeline.connectors.config.video_hidden_dim
+
+            class _GemmaPass(torch.nn.Module):
+                def forward(self_, text_embeds, attn_mask, **kwargs):
+                    return text_embeds[..., :_video_hidden_dim], text_embeds[..., _video_hidden_dim:], attn_mask
+
+        def _gemma_enter():
+            if _video_hidden_dim is None:
+                return None
+            orig = pipeline.connectors
+            pipeline.connectors = _GemmaPass()
+            return orig
+
+        def _gemma_exit(orig):
+            if orig is not None:
+                pipeline.connectors = orig
+
+        # ── Phase 1: half-resolution ──────────────────────────────────────────
+        p1_extra = {k: v for k, v in extra.items() if k != "image"}
+        if gen_config.ctrl_img is not None:
+            ctrl_half = Image.open(gen_config.ctrl_img).convert("RGB").resize((half_w, half_h), Image.LANCZOS)
+            p1_extra["image"] = ctrl_half
+
+        if getattr(self, '_distill_lora_ready', False):
+            pipeline.set_adapters(["distill_lora"], adapter_weights=[0.25])
+            self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
+
+        orig_conn = _gemma_enter()
+        try:
+            p1_out = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch),
+                height=half_h,
+                width=half_w,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="latent",
+                callback_on_step_end=_stop_cb,
+                **p1_extra,
+            )
+        finally:
+            if getattr(self, '_distill_lora_ready', False):
+                try:
+                    torch.cuda.empty_cache()
+                    self._lora_move(pipeline.transformer, "distill_lora", "cpu")
+                except Exception as _e:
+                    print(f"\nWarning: two-pass phase 1 LoRA cleanup failed: {_e}")
+                    try:
+                        self._teardown_distill_lora(pipeline)
+                    except Exception:
+                        pass
+            _gemma_exit(orig_conn)
+
+        video_latents, audio_latents = p1_out  # both raw/denormalized
+
+        # ── Upscale: 2× spatial in latent space ──────────────────────────────
+        self.print_and_status_update("Upscaling latents 2×")
+        try:
+            upsampler = self._get_upsampler_model().to(self.device_torch)
+        except Exception as _up_err:
+            # Upsampler failed — tear down distill LoRA so training isn't left with it on CPU
+            if getattr(self, '_distill_lora_ready', False):
+                try:
+                    self._teardown_distill_lora(pipeline)
+                except Exception:
+                    pass
+            raise
+        with torch.no_grad():
+            upscaled = upsampler(video_latents.to(self.device_torch, dtype=upsampler.dtype))
+        upsampler.to("cpu")
+        torch.cuda.empty_cache()
+
+        # ── Phase 2: full-resolution refinement ──────────────────────────────
+        # Drop "image" from extra — latents= and image= are mutually exclusive in the pipeline.
+        # Frame 0 of upscaled latents already carries the ctrl content from phase 1.
+        p2_extra = {k: v for k, v in extra.items() if k != "image"}
+
+        if getattr(self, '_distill_lora_ready', False):
+            pipeline.set_adapters(["distill_lora"], adapter_weights=[0.6])
+            self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
+
+        orig_conn = _gemma_enter()
+        try:
+            video, audio = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch),
+                height=full_h,
+                width=full_w,
+                latents=upscaled.to(dtype=self.torch_dtype),
+                audio_latents=audio_latents,
+                noise_scale=0.85,
+                sigmas=[0.85, 0.725, 0.4219, 0.0],
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="np",
+                callback_on_step_end=_stop_cb,
+                **p2_extra,
+            )
+        finally:
+            if getattr(self, '_distill_lora_ready', False):
+                try:
+                    torch.cuda.empty_cache()
+                    self._lora_move(pipeline.transformer, "distill_lora", "cpu")
+                except Exception as _e:
+                    print(f"\nWarning: two-pass phase 2 LoRA cleanup failed: {_e}")
+                    try:
+                        self._teardown_distill_lora(pipeline)
+                    except Exception:
+                        pass
+            _gemma_exit(orig_conn)
+
+        return video, audio
 
     def _before_generate_images_loop(self, pipeline, image_configs):
         if self._has_distill_lora():
@@ -894,55 +1067,69 @@ class LTX2Model(BaseModel):
             self.maybe_stop()
             return callback_kwargs
 
-        if getattr(self, '_distill_lora_ready', False):
-            self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
-
-        # When using Gemma API the pipeline receives post-connector embeddings [batch, seq, 4096+2048].
-        # Temporarily replace pipeline.connectors with a passthrough that splits them.
-        _orig_connectors = None
-        if self.model_config.gemma_api_key is not None:
-            _video_hidden_dim = pipeline.connectors.config.video_hidden_dim
-
-            class _GemmaAPIConnectorPassthrough(torch.nn.Module):
-                def forward(self, text_embeds, attn_mask, **kwargs):
-                    video = text_embeds[..., :_video_hidden_dim]
-                    audio = text_embeds[..., _video_hidden_dim:]
-                    return video, audio, attn_mask
-
-            _orig_connectors = pipeline.connectors
-            pipeline.connectors = _GemmaAPIConnectorPassthrough()
-
-        try:
-            video, audio = pipeline(
-                prompt_embeds=conditional_embeds.text_embeds.to(
-                    self.device_torch, dtype=self.torch_dtype
-                ),
-                prompt_attention_mask=conditional_embeds.attention_mask.to(
-                    self.device_torch
-                ),
-                negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                    self.device_torch, dtype=self.torch_dtype
-                ),
-                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
-                    self.device_torch
-                ),
-                height=gen_config.height,
-                width=gen_config.width,
-                num_inference_steps=gen_config.num_inference_steps,
-                guidance_scale=gen_config.guidance_scale,
-                latents=gen_config.latents,
-                num_frames=gen_config.num_frames,
-                generator=generator,
-                return_dict=False,
-                output_type="np" if is_video else "pil",
-                callback_on_step_end=_stop_callback,
-                **extra,
+        use_two_pass = self._has_upscaler() and is_video and self.ltx_version == "2.3"
+        if use_two_pass:
+            video, audio = self._generate_two_pass(
+                pipeline, gen_config, conditional_embeds, unconditional_embeds, generator, extra
             )
-        finally:
+        else:
             if getattr(self, '_distill_lora_ready', False):
-                self._lora_move(pipeline.transformer, "distill_lora", "cpu")
-            if _orig_connectors is not None:
-                pipeline.connectors = _orig_connectors
+                self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
+
+            # When using Gemma API the pipeline receives post-connector embeddings [batch, seq, 4096+2048].
+            # Temporarily replace pipeline.connectors with a passthrough that splits them.
+            _orig_connectors = None
+            if self.model_config.gemma_api_key is not None:
+                _video_hidden_dim = pipeline.connectors.config.video_hidden_dim
+
+                class _GemmaAPIConnectorPassthrough(torch.nn.Module):
+                    def forward(self, text_embeds, attn_mask, **kwargs):
+                        video = text_embeds[..., :_video_hidden_dim]
+                        audio = text_embeds[..., _video_hidden_dim:]
+                        return video, audio, attn_mask
+
+                _orig_connectors = pipeline.connectors
+                pipeline.connectors = _GemmaAPIConnectorPassthrough()
+
+            try:
+                video, audio = pipeline(
+                    prompt_embeds=conditional_embeds.text_embeds.to(
+                        self.device_torch, dtype=self.torch_dtype
+                    ),
+                    prompt_attention_mask=conditional_embeds.attention_mask.to(
+                        self.device_torch
+                    ),
+                    negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                        self.device_torch, dtype=self.torch_dtype
+                    ),
+                    negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
+                        self.device_torch
+                    ),
+                    height=gen_config.height,
+                    width=gen_config.width,
+                    num_inference_steps=gen_config.num_inference_steps,
+                    guidance_scale=gen_config.guidance_scale,
+                    latents=gen_config.latents,
+                    num_frames=gen_config.num_frames,
+                    generator=generator,
+                    return_dict=False,
+                    output_type="np" if is_video else "pil",
+                    callback_on_step_end=_stop_callback,
+                    **extra,
+                )
+            finally:
+                if getattr(self, '_distill_lora_ready', False):
+                    try:
+                        torch.cuda.empty_cache()
+                        self._lora_move(pipeline.transformer, "distill_lora", "cpu")
+                    except Exception as _cleanup_err:
+                        print(f"\nWarning: Failed to park distill LoRA on CPU (OOM); tearing it down entirely: {_cleanup_err}")
+                        try:
+                            self._teardown_distill_lora(pipeline)
+                        except Exception:
+                            pass
+                if _orig_connectors is not None:
+                    pipeline.connectors = _orig_connectors
 
         if self.low_vram:
             # Restore no tiling
