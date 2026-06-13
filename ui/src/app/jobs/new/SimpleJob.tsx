@@ -549,6 +549,30 @@ export default function SimpleJob({
                   }
                 }}
               />
+              {jobConfig.config.process[0].model.compile && (
+                <>
+                  <Checkbox
+                    label="Block Compile (compile each transformer block separately — more compatible)"
+                    checked={jobConfig.config.process[0].model.block_compile ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.block_compile')}
+                  />
+                  <SelectInput
+                    label="Compile Mode"
+                    value={jobConfig.config.process[0].model.compile_mode || 'default'}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.compile_mode')}
+                    options={[
+                      { value: 'default', label: 'Default' },
+                      { value: 'max-autotune', label: 'Max Autotune (slower first step, faster training)' },
+                      { value: 'fastest', label: 'Fastest' },
+                    ]}
+                  />
+                  <Checkbox
+                    label="Full Graph (stricter compile — may fail with quantized/offloaded models)"
+                    checked={jobConfig.config.process[0].model.compile_fullgraph ?? false}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.compile_fullgraph')}
+                  />
+                </>
+              )}
             </Card>
           )}
           {modelArch?.additionalSections?.includes('model.multistage') && (
