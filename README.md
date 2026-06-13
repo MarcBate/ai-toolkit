@@ -2,6 +2,65 @@
 
 AI Toolkit is an easy to use all in one training suite for diffusion models. I try to support all the latest models on consumer grade hardware. Image and video models. It can be run as a GUI or CLI. It is designed to be easy to use but still have every feature imaginable. Free and open source.
 
+---
+
+## Fork Additions (MarcBate)
+
+This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-toolkit) with the following additions on top of upstream.
+
+### Training / Backend
+
+- **Save before pause** — checkpoint is always saved before stopping; `saveAndPauseJob()` sets `save` + `stop` atomically
+- **Save and Stop Queue** — saves checkpoint, stops job, and re-queues it for later resumption
+- **On-demand save/sample** — trigger a save or sample generation mid-training from the UI without stopping
+- **Stop during quantization** — `JobStoppedException(BaseException)` propagates through quantization loops via `maybe_stop()` hooks so Stop/Pause works even during slow model loading
+- **Abort active sampling** — "Return to Training" button aborts in-progress sample generation and resumes training immediately (`SampleAbortedException` + `stop_sample` DB flag)
+- **Automagic v3 backward compat** — resumes from checkpoints saved by any prior v3 variant (per-row lr tensors, missing `dir_ema`/`prev_sign` keys all handled)
+- **LightX2V for WAN 2.2** — 4-step distilled samples (~40s vs ~6 min); PEFT adapter reuse fix
+- **LTX-2.3 distilled LoRA** — 8-step samples instead of 30
+- **Gemma API for LTX-2.3** — use free Gemma API instead of loading 12B text encoder locally
+- **Qwen Image sampling LoRA** — apply a lightning LoRA only during sample generation, not training
+- **Corrupt/truncated JSON captions** — graceful fallback with warning instead of crashing the job
+- **Optimizer archiving** — option to archive optimizer state on each save
+
+### UI — Queue & Job Management
+
+- **Drag-to-reorder queue** — drag jobs to reorder training queue; move-to-top button
+- **Queue filter** — filter jobs list by name, model path, or job ref with AND/OR/quoted search
+- **Save and Stop Queue** button in stop modal — saves checkpoint and re-queues the job
+- **Return to Training** button — aborts current sample batch and resumes training
+
+### UI — Model Config
+
+- **Compile options** — Compile Model checkbox exposes Block Compile, Compile Mode (default/max-autotune/fastest), and Full Graph toggle
+- **Cache quantized model** — skip re-quantization on subsequent runs
+- **Negative Prompt field** — exposed in job config UI
+- **Automagic v3 in optimizer dropdown** — was missing from upstream UI
+
+### UI — Loss Graph
+
+- **Settings persistence** — display settings (smooth/raw/log/clip) saved per job across sessions
+
+### UI — Samples
+
+- **Placeholder grid cells** — placeholders for unsampled slots keep grid aligned
+- **Prompt from file metadata** — reads prompt from PNG/MP4 metadata; falls back to job config
+- **On-demand sampling when idle** — generate samples for a completed job
+
+### UI — Datasets / Captions
+
+- **Find & replace honors caption ext** — find/replace works correctly for JSON captions and respects the selected caption extension type
+- **Find & replace in JSON** — updates the `caption` field inside the JSON structure, preserving other fields
+- **Find & replace captions** — bulk find-and-replace with AND/OR/quoted search
+- **Caption filtering** — filter dataset images by caption content
+
+### Infrastructure
+
+- **Claude-assisted merge** — `run_ai_toolkit.sh` offers Claude-assisted upstream merge at startup
+- **CivitAI metadata in PNG/MP4** — A1111-format `parameters` in PNG tEXt chunk; ffmpeg FFMETADATA1 for MP4
+
+---
+
 
 
 ## Supported Models
