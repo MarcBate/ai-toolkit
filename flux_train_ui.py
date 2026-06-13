@@ -107,7 +107,7 @@ def run_captioning(images, concept_sentence, *captions):
 
     captions = list(captions)
     for i, image_path in enumerate(images):
-        print(captions[i])x
+        print(captions[i])
         if isinstance(image_path, str):  # If image is a file path
             image = Image.open(image_path).convert("RGB")
 
