@@ -25,8 +25,6 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   const { jobs, setJobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
 
   const isAnyJobRunning = jobs.some(j => j.status === 'running');
 
