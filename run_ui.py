@@ -72,6 +72,27 @@ def _restore_lora_hooks(trainer):
     return restored
 
 
+def _is_te_usable(hot_sd) -> bool:
+    """Return True if the model's text encoder is still live for inference.
+
+    After dataset caching, SDTrainer calls unload_text_encoder() which replaces
+    all encoder modules with FakeTextEncoder stubs. The hot model carries those
+    stubs into the next job, causing 'fake text encoder' crashes in
+    hook_before_train_loop. Gemma API mode is the exception: text_encoder == []
+    and encoding goes through the API, so handoff is safe there.
+    """
+    from toolkit.unloader import FakeTextEncoder
+    using_api = getattr(getattr(hot_sd, 'model_config', None), 'gemma_api_key', None) is not None
+    te = getattr(hot_sd, 'text_encoder', None)
+    if isinstance(te, list):
+        if len(te) == 0:
+            return using_api  # empty list is only valid when the API encodes
+        return not any(isinstance(enc, FakeTextEncoder) for enc in te)
+    if te is None:
+        return False
+    return not isinstance(te, FakeTextEncoder)
+
+
 def _effective_qtype(model_cfg: dict) -> str:
     """Apply the same qtype override logic as ModelConfig.__init__ to a raw config dict."""
     qtype = model_cfg.get('qtype', 'qfloat8')
@@ -287,6 +308,9 @@ def main():
                     pass
                 if not is_return_to_queue:
                     hot_sd = getattr(trainer, 'sd', None)
+                    if hot_sd is not None and not _is_te_usable(hot_sd):
+                        print_acc(" - Model cache: text encoder was unloaded into stub; cannot hand off model after stop")
+                        hot_sd = None
                     if hot_sd is not None:
                         restored = _restore_lora_hooks(trainer)
                         if restored:
@@ -331,6 +355,10 @@ def main():
             break
 
         # Try to pick up next queued job with same model (persistent caching)
+        if hot_sd is not None and not _is_te_usable(hot_sd):
+            print_acc(" - Model cache: text encoder was unloaded into stub; cannot hand off model to next job")
+            hot_sd = None
+
         if hot_sd is not None and is_ui and accelerator.is_main_process:
             next_row = _query_next_matching_job(db_path, hot_sd, gpu_ids)
             if next_row is not None:
