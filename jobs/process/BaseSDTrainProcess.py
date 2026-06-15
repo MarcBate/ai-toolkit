@@ -1704,7 +1704,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.model_config = model_config_to_load
             self.hook_after_sd_init_before_load()
             validate_control_paths(self.dataset_configs)
-            print_acc(" - Model cache hit: reusing loaded model (skipping load+quantize)")
+            # If the previous job unloaded the text encoder into a stub, reload it now.
+            # The quantized transformer stays in RAM; only the TE needs to come back.
+            from toolkit.unloader import FakeTextEncoder
+            te = getattr(self.sd, 'text_encoder', None)
+            te_is_stub = (
+                isinstance(te, list) and te and any(isinstance(enc, FakeTextEncoder) for enc in te)
+            ) or (te is not None and not isinstance(te, list) and isinstance(te, FakeTextEncoder))
+            if te_is_stub:
+                print_acc(" - Model cache hit: reusing transformer, reloading text encoder...")
+                self.sd.reload_text_encoder()
+            else:
+                print_acc(" - Model cache hit: reusing loaded model (skipping load+quantize)")
         else:
             self.sd = ModelClass(
                 # todo handle single gpu and multi gpu here

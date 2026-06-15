@@ -270,6 +270,144 @@ class LTX2Model(BaseModel):
     def get_bucket_divisibility(self):
         return 32
 
+    def reload_text_encoder(self):
+        """Reload Gemma text encoder from disk after it was unloaded into a FakeTextEncoder stub.
+
+        Called by the persistent-process model cache (run_ui.py) when the hot model
+        is reused for a new job but the text encoder was already unloaded by the
+        previous job's embedding-caching step. Only runs in non-API mode; Gemma API
+        mode leaves text_encoder=[] and this is a no-op.
+        """
+        if self.model_config.gemma_api_key is not None:
+            return  # API handles encoding; nothing to reload
+
+        dtype = self.torch_dtype
+        model_path = self.model_config.name_or_path
+
+        self.print_and_status_update("Reloading text encoder")
+
+        if (
+            self.model_config.te_name_or_path is not None
+            and self.model_config.te_name_or_path.endswith(".safetensors")
+        ):
+            tokenizer = GemmaTokenizerFast.from_pretrained(base_te_path)
+            with init_empty_weights():
+                text_encoder = Gemma3ForConditionalGeneration(
+                    Gemma3Config(
+                        **{
+                            "boi_token_index": 255999,
+                            "bos_token_id": 2,
+                            "eoi_token_index": 256000,
+                            "eos_token_id": 106,
+                            "image_token_index": 262144,
+                            "initializer_range": 0.02,
+                            "mm_tokens_per_image": 256,
+                            "model_type": "gemma3",
+                            "pad_token_id": 0,
+                            "text_config": {
+                                "attention_bias": False,
+                                "attention_dropout": 0.0,
+                                "attn_logit_softcapping": None,
+                                "cache_implementation": "hybrid",
+                                "final_logit_softcapping": None,
+                                "head_dim": 256,
+                                "hidden_activation": "gelu_pytorch_tanh",
+                                "hidden_size": 3840,
+                                "initializer_range": 0.02,
+                                "intermediate_size": 15360,
+                                "max_position_embeddings": 131072,
+                                "model_type": "gemma3_text",
+                                "num_attention_heads": 16,
+                                "num_hidden_layers": 48,
+                                "num_key_value_heads": 8,
+                                "query_pre_attn_scalar": 256,
+                                "rms_norm_eps": 1e-06,
+                                "rope_local_base_freq": 10000,
+                                "rope_scaling": {"factor": 8.0, "rope_type": "linear"},
+                                "rope_theta": 1000000,
+                                "sliding_window": 1024,
+                                "sliding_window_pattern": 6,
+                                "torch_dtype": "bfloat16",
+                                "use_cache": True,
+                                "vocab_size": 262208,
+                            },
+                            "torch_dtype": "bfloat16",
+                            "transformers_version": "4.51.3",
+                            "unsloth_fixed": True,
+                            "vision_config": {
+                                "attention_dropout": 0.0,
+                                "hidden_act": "gelu_pytorch_tanh",
+                                "hidden_size": 1152,
+                                "image_size": 896,
+                                "intermediate_size": 4304,
+                                "layer_norm_eps": 1e-06,
+                                "model_type": "siglip_vision_model",
+                                "num_attention_heads": 16,
+                                "num_channels": 3,
+                                "num_hidden_layers": 27,
+                                "patch_size": 14,
+                                "torch_dtype": "bfloat16",
+                                "vision_use_head": False,
+                            },
+                        }
+                    )
+                )
+            te_state_dict = load_file(self.model_config.te_name_or_path)
+            te_state_dict = convert_comfy_gemma3_to_transformers(te_state_dict)
+            for key in te_state_dict:
+                te_state_dict[key] = te_state_dict[key].to(dtype)
+            text_encoder.load_state_dict(te_state_dict, assign=True, strict=True)
+            del te_state_dict
+            flush()
+        elif self.model_config.te_name_or_path is not None:
+            tokenizer = GemmaTokenizerFast.from_pretrained(self.model_config.te_name_or_path)
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                self.model_config.te_name_or_path, dtype=dtype
+            )
+        elif self.ltx_te_path is not None:
+            tokenizer = GemmaTokenizerFast.from_pretrained(self.ltx_te_path)
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                self.ltx_te_path, dtype=dtype
+            )
+        else:
+            tokenizer = GemmaTokenizerFast.from_pretrained(
+                model_path, subfolder="tokenizer"
+            )
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                model_path, subfolder="text_encoder", dtype=dtype
+            )
+
+        text_encoder.model.vision_tower = None
+        flush()
+
+        if self.model_config.quantize_te:
+            self.print_and_status_update("Quantizing Text Encoder")
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+            freeze(text_encoder)
+            flush()
+
+        if (
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_text_encoder_percent > 0
+        ):
+            MemoryManager.attach(
+                text_encoder,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
+                ignore_modules=[
+                    text_encoder.model.language_model.base_model.embed_tokens
+                ],
+            )
+
+        text_encoder.to(self.device_torch, dtype=dtype)
+        text_encoder.requires_grad_(False)
+        text_encoder.eval()
+        flush()
+
+        self.pipeline.text_encoder = text_encoder
+        self.text_encoder = [text_encoder]
+        self.print_and_status_update("Text encoder reloaded")
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading LTX2 model")

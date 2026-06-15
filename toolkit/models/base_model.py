@@ -288,6 +288,15 @@ class BaseModel:
             divisibility = divisibility * 2
         return divisibility
 
+    def reload_text_encoder(self):
+        """Reload text encoder from disk when it was unloaded by a previous training job.
+
+        Override in model subclasses that support reloading the TE independently
+        of the transformer (e.g. LTX2Model with local Gemma). Default is a no-op
+        for models that either don't unload their TE or use an API for encoding.
+        """
+        pass
+
     # these must be implemented in child classes
     def load_model(self):
         # override this in child classes
