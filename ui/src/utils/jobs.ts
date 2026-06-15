@@ -234,11 +234,6 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   // Cannot save if already busy or stopping
   const canSave = job.status === 'running' && !isBusy && !isStopping;
 
-  // allows sample if running OR if stopped and no other jobs are running AND has samples
-  // Cannot sample if already busy or stopping
-  const canSample = (job.status === 'running' && !isBusy && !isStopping) ||
-                    (!['running', 'queued'].includes(job.status) && !isAnyJobRunning && hasSamples && !job.sample);
-
   // edit sample prompts at any time except when actively generating samples
   const canEditSample = !isSampling;
 
