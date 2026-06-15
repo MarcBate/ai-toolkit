@@ -1699,7 +1699,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         _hot = getattr(BaseSDTrainProcess, '_hot_model', None)
         BaseSDTrainProcess._hot_model = None
-        if _hot is not None and type(_hot) is ModelClass:
+        _hot_arch = getattr(_hot, 'arch', None) or getattr(type(_hot), 'arch', None)
+        _new_arch = getattr(model_config_to_load, 'arch', None)
+        if _hot is not None and type(_hot) is ModelClass and _hot_arch == _new_arch:
             self.sd = _hot
             self.sd.model_config = model_config_to_load
             self.hook_after_sd_init_before_load()

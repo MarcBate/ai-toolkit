@@ -86,7 +86,8 @@ def _effective_qtype(model_cfg: dict) -> str:
 
 def _query_next_matching_job(db_path: str, hot_sd, gpu_ids: str):
     """Return the next queued job row that can reuse hot_sd, or None."""
-    hot_arch = getattr(type(hot_sd), 'arch', None)
+    # Use instance arch first (StableDiffusion stores it on self); fall back to class attr
+    hot_arch = getattr(hot_sd, 'arch', None) or getattr(type(hot_sd), 'arch', None)
     if hot_arch is None:
         return None
 
