@@ -253,6 +253,14 @@ export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = fals
   // True when Python is actively generating images (info string set by UITrainer.sample())
   const isActivelySampling = job.status === 'running' && (job.info?.includes('Generating images') ?? false);
 
+  // Only allow triggering samples when in the actual training loop — not during model loading,
+  // quantization, dataset encoding, or other startup phases.
+  const isInTrainingLoop = !job.info || job.info === '' || job.info.startsWith('Training');
+
+  const canSampleRunning = job.status === 'running' && !isBusy && !isStopping && isInTrainingLoop;
+  const canSampleStopped = !['running', 'queued'].includes(job.status) && !isAnyJobRunning && hasSamples && !job.sample;
+  const canSample = canSampleRunning || canSampleStopped;
+
   return { canDelete, canEdit, canEditSample, canStop, canStart, canRemoveFromQueue, canSave, canSample, isBusy, isStopping, isActivelySampling };
 };
 

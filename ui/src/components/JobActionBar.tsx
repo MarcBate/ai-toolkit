@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Camera, ArrowLeft } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { openSaveSnapshotModal } from '@/components/SaveSnapshotModal';
@@ -13,6 +13,7 @@ import {
   markJobAsStopped,
   saveJob,
   sampleJob,
+  stopSampleJob,
 } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
@@ -24,6 +25,7 @@ interface JobActionBarProps {
   onRefresh?: () => void;
   afterDelete?: () => void;
   hideView?: boolean;
+  hideSample?: boolean;
   className?: string;
   autoStartQueue?: boolean;
   isAnyJobRunning?: boolean;
@@ -36,6 +38,7 @@ export default function JobActionBar({
   afterDelete,
   className,
   hideView,
+  hideSample = false,
   autoStartQueue = false,
   isAnyJobRunning = false,
   hasSamples = false,
@@ -108,14 +111,24 @@ export default function JobActionBar({
           <Save className={iconSizeClass} />
         </Button>
       )}
-      {canSample && (
+      {canSample && !hideSample && (
         <Button
           onClick={() => handleAction(() => sampleJob(job.id))}
           disabled={disabled}
           className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed`}
           title="Generate Samples Now"
         >
-          <Image className={iconSizeClass} />
+          <Camera className={iconSizeClass} />
+        </Button>
+      )}
+      {job.sample && job.status === 'running' && (
+        <Button
+          onClick={() => handleAction(() => stopSampleJob(job.id))}
+          disabled={isProcessing}
+          className={`ml-1 sm:ml-2 opacity-100 disabled:opacity-30 disabled:cursor-not-allowed text-yellow-400`}
+          title="Stop sampling and return to training"
+        >
+          <ArrowLeft className={iconSizeClass} />
         </Button>
       )}
       {canStop && (

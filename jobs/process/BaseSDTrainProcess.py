@@ -1697,20 +1697,28 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 model_config_to_load.refiner_name_or_path = previous_refiner_save
                 self.load_training_state_from_metadata(previous_refiner_save)
 
-        self.sd = ModelClass(
-            # todo handle single gpu and multi gpu here
-            # device=self.device,
-            device=self.accelerator.device,
-            model_config=model_config_to_load,
-            dtype=self.train_config.dtype,
-            custom_pipeline=self.custom_pipeline,
-            noise_scheduler=sampler,
-        )
-        
-        self.hook_after_sd_init_before_load()
-        validate_control_paths(self.dataset_configs)
-        # run base sd process run
-        self.sd.load_model()
+        _hot = getattr(BaseSDTrainProcess, '_hot_model', None)
+        BaseSDTrainProcess._hot_model = None
+        if _hot is not None and type(_hot) is ModelClass:
+            self.sd = _hot
+            self.sd.model_config = model_config_to_load
+            self.hook_after_sd_init_before_load()
+            validate_control_paths(self.dataset_configs)
+            print_acc(" - Model cache hit: reusing loaded model (skipping load+quantize)")
+        else:
+            self.sd = ModelClass(
+                # todo handle single gpu and multi gpu here
+                # device=self.device,
+                device=self.accelerator.device,
+                model_config=model_config_to_load,
+                dtype=self.train_config.dtype,
+                custom_pipeline=self.custom_pipeline,
+                noise_scheduler=sampler,
+            )
+            self.hook_after_sd_init_before_load()
+            validate_control_paths(self.dataset_configs)
+            # run base sd process run
+            self.sd.load_model()
 
         self.sd.add_after_sample_image_hook(self.sample_step_hook)
 

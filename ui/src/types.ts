@@ -183,6 +183,7 @@ export interface ModelConfig {
   compile_fullgraph?: boolean;
   compile_dynamic?: boolean;
   cache_size_limit?: number;
+  spatial_upscaler_path?: string;
 }
 
 export interface SampleItem {

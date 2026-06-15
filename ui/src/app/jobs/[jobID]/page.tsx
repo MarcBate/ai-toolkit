@@ -124,6 +124,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             job={job}
             onRefresh={refreshJob}
             hideView
+            hideSample={pageKey === 'samples'}
             afterDelete={() => {
               redirect('/jobs');
             }}

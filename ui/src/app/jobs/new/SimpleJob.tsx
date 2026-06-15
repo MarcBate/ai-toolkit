@@ -446,6 +446,20 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
               />
             )}
+            {modelArch?.additionalSections?.includes('model.spatial_upscaler_path') && (
+              <TextInput
+                label="Spatial Upscaler Path"
+                value={jobConfig.config.process[0].model.spatial_upscaler_path ?? ''}
+                docKey="config.process[0].model.spatial_upscaler_path"
+                onChange={(value: string | undefined) => {
+                  if (value?.trim() === '') {
+                    value = undefined;
+                  }
+                  setJobConfig(value, 'config.process[0].model.spatial_upscaler_path');
+                }}
+                placeholder="Path to .safetensors upscaler model (optional)"
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && !useGemmaApi && (
               <>
                 <Checkbox
@@ -1873,14 +1887,16 @@ export default function SimpleJob({
                       value={jobConfig.config.process[0].sample.sample_lora_path ?? ''}
                       onChange={v => setJobConfig(v, 'config.process[0].sample.sample_lora_path')}
                     />
-                    <SliderInput
-                      label="Strength"
-                      value={jobConfig.config.process[0].sample.sample_lora_strength ?? 1.0}
-                      onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength')}
-                      min={0}
-                      max={2}
-                      step={0.05}
-                    />
+                    {!jobConfig.config.process[0].model.spatial_upscaler_path && (
+                      <SliderInput
+                        label="Strength"
+                        value={jobConfig.config.process[0].sample.sample_lora_strength ?? 1.0}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength')}
+                        min={0}
+                        max={2}
+                        step={0.05}
+                      />
+                    )}
                   </div>
                 )}
               </div>

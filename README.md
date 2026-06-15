@@ -15,6 +15,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **On-demand save/sample** — trigger a save or sample generation mid-training from the UI without stopping
 - **Stop during quantization** — `JobStoppedException(BaseException)` propagates through quantization loops via `maybe_stop()` hooks so Stop/Pause works even during slow model loading
 - **Abort active sampling** — "Return to Training" button aborts in-progress sample generation and resumes training immediately (`SampleAbortedException` + `stop_sample` DB flag)
+- **Persistent quantized model cache** — `run_ui.py` keeps the quantized model in system RAM between consecutive same-model queued jobs; only LoRA weights reload, skipping the multi-minute re-quantization (works for LTX-2.3, Qwen, Flux, etc.)
 - **Automagic v3 backward compat** — resumes from checkpoints saved by any prior v3 variant (per-row lr tensors, missing `dir_ema`/`prev_sign` keys all handled)
 - **LightX2V for WAN 2.2** — 4-step distilled samples (~40s vs ~6 min); PEFT adapter reuse fix
 - **LTX-2.3 distilled LoRA** — 8-step samples instead of 30
@@ -46,6 +47,9 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Placeholder grid cells** — placeholders for unsampled slots keep grid aligned
 - **Prompt from file metadata** — reads prompt from PNG/MP4 metadata; falls back to job config
 - **On-demand sampling when idle** — generate samples for a completed job
+- **Step counter on Samples tab** — "Step X of Y" progress shown left of the Generate Samples Now button, updating live
+- **Sample button blocked during startup** — Generate Samples disabled while loading model, quantizing, encoding dataset, etc.; only active once in the training loop
+- **Toolbar sample button hidden on Samples tab** — avoids duplicate camera buttons when already on the Samples page
 
 ### UI — Datasets / Captions
 

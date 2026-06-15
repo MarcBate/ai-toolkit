@@ -737,9 +737,10 @@ class LTX2Model(BaseModel):
                     f"Sampling LoRA: skipping {n_skipped} keys for quantized layers to avoid weight corruption"
                 )
 
-            self.print_and_status_update(f"Loading distill LoRA (strength={strength})")
+            load_strength = 0.25 if self._has_upscaler() else strength
+            self.print_and_status_update(f"Loading distill LoRA (strength={load_strength})")
             pipeline.load_lora_weights(lora_state_dict, adapter_name="distill_lora")
-            pipeline.set_adapters(["distill_lora"], adapter_weights=[strength])
+            pipeline.set_adapters(["distill_lora"], adapter_weights=[load_strength])
             # Park on CPU until needed per-sample
             self._lora_move(pipeline.transformer, "distill_lora", "cpu")
         finally:
@@ -792,12 +793,12 @@ class LTX2Model(BaseModel):
     def _get_upsampler_model(self):
         if getattr(self, '_upsampler_model', None) is not None:
             return self._upsampler_model
-        from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
+        from diffusers.pipelines.ltx.modeling_latent_upsampler import LTXLatentUpsamplerModel
         from safetensors.torch import load_file as _load_sf
         path = self.model_config.spatial_upscaler_path
         self.print_and_status_update(f"Loading spatial upsampler: {os.path.basename(path)}")
         state_dict = _load_sf(path, device="cpu")
-        model = LTX2LatentUpsamplerModel(
+        model = LTXLatentUpsamplerModel(
             in_channels=128,
             mid_channels=1024,
             num_blocks_per_stage=4,
@@ -850,6 +851,7 @@ class LTX2Model(BaseModel):
         if getattr(self, '_distill_lora_ready', False):
             pipeline.set_adapters(["distill_lora"], adapter_weights=[0.25])
             self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
+            self.print_and_status_update("Phase 1: distill LoRA @ 0.25")
 
         orig_conn = _gemma_enter()
         try:
@@ -887,15 +889,9 @@ class LTX2Model(BaseModel):
         # ── Upscale: 2× spatial in latent space ──────────────────────────────
         self.print_and_status_update("Upscaling latents 2×")
         try:
-            from diffusers.pipelines.ltx2 import LTX2LatentUpsamplePipeline
             upsampler_model = self._get_upsampler_model().to(self.device_torch)
-            upsample_pipe = LTX2LatentUpsamplePipeline(vae=pipeline.vae, latent_upsampler=upsampler_model)
             with torch.no_grad():
-                upscaled = upsample_pipe(
-                    latents=video_latents.to(self.device_torch, dtype=upsampler_model.dtype),
-                    output_type="latent",
-                    return_dict=False,
-                )[0]
+                upscaled = upsampler_model(video_latents.to(self.device_torch, dtype=upsampler_model.dtype))
             upsampler_model.to("cpu")
         except Exception as _up_err:
             # Upsampler failed — tear down distill LoRA so training isn't left with it on CPU
@@ -916,6 +912,10 @@ class LTX2Model(BaseModel):
             ctrl_full = Image.open(gen_config.ctrl_img).convert("RGB").resize((full_w, full_h), Image.LANCZOS)
             p2_extra["image"] = ctrl_full
 
+        # Free phase 1 latents before phase 2 to avoid holding both in VRAM simultaneously.
+        del video_latents
+        torch.cuda.empty_cache()
+
         # Phase 2 uses a non-dynamic-shifting scheduler (matches distill LoRA training).
         from diffusers import FlowMatchEulerDiscreteScheduler
         orig_scheduler = pipeline.scheduler
@@ -927,6 +927,7 @@ class LTX2Model(BaseModel):
         if getattr(self, '_distill_lora_ready', False):
             pipeline.set_adapters(["distill_lora"], adapter_weights=[0.6])
             self._lora_move(pipeline.transformer, "distill_lora", self.device_torch)
+            self.print_and_status_update("Phase 2: distill LoRA @ 0.6")
 
         orig_conn = _gemma_enter()
         try:

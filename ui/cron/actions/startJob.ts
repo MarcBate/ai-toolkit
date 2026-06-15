@@ -96,14 +96,14 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
 
     const pythonPath = resolvePythonPath();
 
-    const runFilePath = path.join(TOOLKIT_ROOT, 'run.py');
+    const runFilePath = path.join(TOOLKIT_ROOT, 'run_ui.py');
     if (!fs.existsSync(runFilePath)) {
-      console.error(`run.py not found at path: ${runFilePath}`);
+      console.error(`run_ui.py not found at path: ${runFilePath}`);
       await prisma.job.update({
         where: { id: jobID },
         data: {
           status: 'error',
-          info: `Error launching job: run.py not found`,
+          info: `Error launching job: run_ui.py not found`,
         },
       });
       return;
