@@ -303,7 +303,11 @@ class Ideogram4Pipeline:
         gw = width // (ae_scale * patch)
         latent_channels = transformer.config.in_channels
 
-        do_cfg = unconditional_embeds is not None and guidance_scale != 1.0
+        # Ideogram uses asymmetric CFG: the unconditional branch is image-only
+        # (no text tokens) with zeroed text features -- it does NOT run a negative
+        # prompt through the text encoder. So we ignore unconditional_embeds and
+        # build an empty (0-length) text sequence for the uncond pass below.
+        do_cfg = guidance_scale > 1.0
 
         if latents is None:
             shape = (1, latent_channels, gh, gw)
@@ -317,19 +321,38 @@ class Ideogram4Pipeline:
             conditional_embeds.text_embeds, device, dtype
         )
         if do_cfg:
-            uncond_feats, uncond_mask = pad_text_features(
-                unconditional_embeds.text_embeds, device, dtype
+            # Image-only unconditional: zero-length text sequence. predict_velocity
+            # then produces an image-token-only forward pass with zeroed llm
+            # features, matching the reference's asymmetric CFG.
+            batch_size = latents.shape[0]
+            text_dim = cond_feats.shape[-1]
+            uncond_feats = torch.zeros(
+                batch_size, 0, text_dim, device=device, dtype=dtype
             )
+            uncond_mask = torch.zeros(batch_size, 0, dtype=torch.long, device=device)
+
+        # The unconditional LoRA (if present) must be active *only* on the
+        # unconditional pass. We force it off before each conditional pass since the
+        # outer sampling context (``with network:``) may switch it on globally.
+        uncond_lora = getattr(model, "unconditional_lora", None)
 
         for t in timesteps:
             t01 = (t / 1000.0).to(device).expand(latents.shape[0])
+            if uncond_lora is not None:
+                uncond_lora.is_active = False
             v_cond = predict_velocity(
                 transformer, latents.to(dtype), t01, cond_feats, cond_mask
             )
             if do_cfg:
-                v_uncond = predict_velocity(
-                    transformer, latents.to(dtype), t01, uncond_feats, uncond_mask
-                )
+                if uncond_lora is not None:
+                    uncond_lora.is_active = True
+                try:
+                    v_uncond = predict_velocity(
+                        transformer, latents.to(dtype), t01, uncond_feats, uncond_mask
+                    )
+                finally:
+                    if uncond_lora is not None:
+                        uncond_lora.is_active = False
                 v = v_uncond + guidance_scale * (v_cond - v_uncond)
             else:
                 v = v_cond

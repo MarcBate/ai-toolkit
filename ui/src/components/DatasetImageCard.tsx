@@ -56,6 +56,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Persists the blob URL across visibility changes so the image stays shown while
+  // the card remains mounted. Revoked only when imageUrl changes or on unmount.
+  const blobObjectUrlRef = useRef<string | null>(null);
   // Tracks whether the card is actively being edited. Used in the IntersectionObserver
   // callback to suppress visibility-loss transitions caused by textarea expansion
   // shifting layout and briefly pushing the card outside the scroll container boundary.
@@ -103,13 +106,17 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   // Drive image loads through fetch + AbortController so scrolling past actually
   // cancels in-flight requests. Debounced 80ms so fast scroll-throughs never
   // start a request.
+  // We do NOT revoke the blob URL when isVisible goes false — Virtuoso keeps cards
+  // mounted during layout shifts (e.g. at the bottom of the list), and revoking on
+  // every brief visibility-loss causes the flickering the user sees. The blob is
+  // kept alive until imageUrl changes or the component unmounts (see effect below).
   useEffect(() => {
     if (!isItImage) return;
     if (!isVisible) return;
+    if (blobObjectUrlRef.current) return; // already loaded for this imageUrl
 
     const controller = new AbortController();
     let cancelled = false;
-    let objectUrl: string | null = null;
 
     const timer = window.setTimeout(() => {
       fetch(`/api/img/${encodeURIComponent(imageUrl)}`, { signal: controller.signal })
@@ -119,8 +126,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         })
         .then(blob => {
           if (cancelled) return;
-          objectUrl = URL.createObjectURL(blob);
-          setBlobUrl(objectUrl);
+          const url = URL.createObjectURL(blob);
+          blobObjectUrlRef.current = url;
+          setBlobUrl(url);
           setLoaded(true);
         })
         .catch(err => {
@@ -132,13 +140,21 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       cancelled = true;
       clearTimeout(timer);
       controller.abort();
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-        setBlobUrl(null);
-        setLoaded(false);
-      }
+      // Intentionally not revoking blobObjectUrlRef here — see comment above.
     };
   }, [imageUrl, isItImage, isVisible]);
+
+  // Revoke blob URL and reset image state when imageUrl changes or on unmount.
+  useEffect(() => {
+    return () => {
+      if (blobObjectUrlRef.current) {
+        URL.revokeObjectURL(blobObjectUrlRef.current);
+        blobObjectUrlRef.current = null;
+      }
+      setBlobUrl(null);
+      setLoaded(false);
+    };
+  }, [imageUrl]);
 
   const combinedRefreshKey = captionRefreshKey + pollTick;
   const { caption: fetchedCaption, isLoaded: isCaptionLoaded } = useCaptionBatch(
@@ -174,6 +190,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     return () => clearInterval(interval);
   }, [isAutoCaptioning]);
 
+  const effectivelyLoaded = isCaptionLoaded || initialCaption !== undefined;
+
   useEffect(() => {
     if (isHighlighted && highlightText && highlightCharIndex !== -1 && effectivelyLoaded) {
       if (textAreaRef.current) {
@@ -183,7 +201,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     }
     // NOTE: highlightText excluded from deps intentionally — see comment on resetEditKey effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHighlighted, highlightCharIndex]);
+  }, [isHighlighted, highlightCharIndex, effectivelyLoaded]);
 
   // Collapse non-highlighted cards on Find navigation.
   useEffect(() => {
@@ -247,7 +265,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   };
 
   const isCaptionCurrent = caption.trim() === savedCaption;
-  const effectivelyLoaded = isCaptionLoaded || initialCaption !== undefined;
 
   const effectivelyEditing = isEditing || isHighlighted;
 

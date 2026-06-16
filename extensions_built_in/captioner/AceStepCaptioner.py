@@ -99,6 +99,8 @@ def analyze_audio(audio_path):
 
 class AceStepCaptionConfig(CaptionConfig):
     def __init__(self, **kwargs):
+        if not kwargs.get("extensions"):
+            kwargs["extensions"] = ["mp3", "wav", "flac", "ogg", "m4a"]
         super().__init__(**kwargs)
         self.fixed_caption: Optional[str] = kwargs.get("fixed_caption", None)
 

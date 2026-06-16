@@ -42,9 +42,15 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   // Incremented on every successful Find navigation so non-highlighted cards collapse.
   const [findNavKey, setFindNavKey] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
+  const imgListRef = useRef<typeof imgList>([]);
+  useEffect(() => { imgListRef.current = imgList; }, [imgList]);
+  const loadedExtsRef = useRef<Set<string>>(new Set(['txt']));
   const { settings, isSettingsLoaded } = useSettings();
   const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
-  const [captionExt, setCaptionExt] = useState<string>('txt');
+  const [captionExt, setCaptionExt] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'txt';
+    return localStorage.getItem(`captionExt:${datasetName}`) ?? 'txt';
+  });
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
@@ -72,6 +78,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   };
 
   const refreshImageList = (dbName: string) => {
+    loadedExtsRef.current = new Set(['txt']);
     setStatus('loading');
     apiClient
       .post('/api/datasets/listImages', { datasetName: dbName })
@@ -187,27 +194,53 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const getActiveCaption = (img: typeof imgList[number]) =>
     img.captions?.[captionExt] ?? (captionExt === 'txt' ? img.caption : '') ?? '';
 
-  const handleFind = (startIndex: number = 0, direction: 'next' | 'prev' | 'start' = 'start') => {
+  const prefetchCaptionsForExt = useCallback(async (ext: string): Promise<void> => {
+    if (ext === 'txt') return;
+    if (loadedExtsRef.current.has(ext)) return;
+    const paths = imgListRef.current.map(img => img.img_path);
+    if (paths.length === 0) return;
+    try {
+      const res = await apiClient.post('/api/caption/getBatch', { imgPaths: paths, ext });
+      const captions: Record<string, string> = res.data?.captions ?? {};
+      loadedExtsRef.current.add(ext);
+      const newList = imgListRef.current.map(img => ({
+        ...img,
+        captions: { ...(img.captions ?? {}), [ext]: captions[img.img_path] ?? '' },
+      }));
+      imgListRef.current = newList;
+      setImgList(newList);
+    } catch (err) {
+      console.error('Error prefetching captions for find/replace:', err);
+    }
+  }, []);
+
+  const handleFind = async (startIndex: number = 0, direction: 'next' | 'prev' | 'start' = 'start') => {
     if (!findText) return;
 
+    await prefetchCaptionsForExt(captionExt);
+
+    const currentImgList = imgListRef.current;
     const regex = getSearchRegex(findText, wholeWord, matchCase);
     if (!regex) return;
 
     let searchIdx = startIndex;
     if (direction === 'next') {
-        searchIdx = (findNextIndex + 1) % imgList.length;
+        searchIdx = (findNextIndex + 1) % currentImgList.length;
     } else if (direction === 'prev') {
-        searchIdx = (findNextIndex - 1 + imgList.length) % imgList.length;
+        searchIdx = (findNextIndex - 1 + currentImgList.length) % currentImgList.length;
     }
+
+    const getActiveCaptionFromItem = (img: typeof imgList[number]) =>
+      img.captions?.[captionExt] ?? (captionExt === 'txt' ? img.caption : '') ?? '';
 
     let found = false;
 
-    for (let i = 0; i < imgList.length; i++) {
+    for (let i = 0; i < currentImgList.length; i++) {
       const idx = direction === 'prev'
-        ? (searchIdx - i + imgList.length) % imgList.length
-        : (searchIdx + i) % imgList.length;
+        ? (searchIdx - i + currentImgList.length) % currentImgList.length
+        : (searchIdx + i) % currentImgList.length;
 
-      const caption = getActiveCaption(imgList[idx]);
+      const caption = getActiveCaptionFromItem(currentImgList[idx]);
       const match = caption.match(regex);
       if (match) {
         let charIndex = match.index || 0;
@@ -222,7 +255,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
         found = true;
 
         // Scroll to the item via VirtuosoGrid (works even with virtualized rendering).
-        const filteredIdx = filteredImgList.findIndex(i => i.img_path === imgList[idx].img_path);
+        const filteredIdx = filteredImgList.findIndex(i => i.img_path === currentImgList[idx].img_path);
         if (filteredIdx !== -1 && virtuosoRef.current) {
           virtuosoRef.current.scrollToIndex({ index: filteredIdx, behavior: 'smooth', align: 'center' });
         }
@@ -273,8 +306,9 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     }
   };
 
-  const handleReplaceAll = () => {
+  const handleReplaceAll = async () => {
     if (!findText) return;
+    await prefetchCaptionsForExt(captionExt);
 
     const regex = getSearchRegex(findText, wholeWord, matchCase, true);
     if (!regex) return;
@@ -320,11 +354,21 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const openFindReplace = useCallback(() => {
     setIsFindReplaceOpen(true);
     setFindResultStatus('none');
+    prefetchCaptionsForExt(captionExt);
     setTimeout(() => {
       findInputRef.current?.focus();
       findInputRef.current?.select();
     }, 100);
-  }, []);
+  }, [prefetchCaptionsForExt, captionExt]);
+
+  useEffect(() => {
+    if (!isFindReplaceOpen) return;
+    setFindNextIndex(-1);
+    setFindMatchCharIndex(-1);
+    setFindResultStatus('none');
+    prefetchCaptionsForExt(captionExt);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionExt]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -479,7 +523,10 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
             <CreatableSelectInput
               className="w-44"
               value={captionExt}
-              onChange={value => setCaptionExt(value)}
+              onChange={value => {
+                setCaptionExt(value);
+                localStorage.setItem(`captionExt:${datasetName}`, value);
+              }}
               options={[
                 { value: 'txt', label: 'txt' },
                 { value: 'json', label: 'json' },
@@ -535,7 +582,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
                     );
                   }}
                   captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
-                  initialCaption={img.caption}
+                  initialCaption={img.captions?.[captionExt] ?? img.caption}
                   observerRoot={scrollParent}
                   captionExt={captionExt}
                 />

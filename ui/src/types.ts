@@ -177,6 +177,7 @@ export interface ModelConfig {
   use_gemma_api?: boolean;
   cache_quantized_model?: boolean;
   extras_name_or_path?: string;
+  unconditional_lora_path?: string;
   compile?: boolean;
   block_compile?: boolean;
   compile_mode?: 'default' | 'max-autotune' | 'fastest';

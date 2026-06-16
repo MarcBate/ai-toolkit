@@ -676,6 +676,9 @@ class ModelConfig:
         self.distill_lora_strength = self.sample_lora_strength
         self.sampling_lora_path = self.sample_lora_path
         self.sampling_lora_strength = self.sample_lora_strength
+        # a lora that stays inactive except during the unconditional (negative)
+        # CFG pass -- used to learn the unconditional branch without a second model
+        self.unconditional_lora_path = kwargs.get('unconditional_lora_path', None)
         self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now

@@ -71,7 +71,7 @@ export async function POST(request: Request) {
  * @returns Array of absolute paths to image files
  */
 function findImagesRecursively(dir: string): string[] {
-  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav', '.flac', '.ogg'];
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav', '.flac', '.ogg', '.m4a'];
   let results: string[] = [];
 
   // withFileTypes avoids a separate statSync per entry — a big win on large datasets
