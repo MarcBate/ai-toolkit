@@ -104,7 +104,12 @@ class DiffusionTrainer(SDTrainer):
         else:
             task = loop.create_task(coro)
             self._async_tasks.append(task)
-            loop.run_until_complete(task)
+            try:
+                loop.run_until_complete(task)
+            except Exception as e:
+                # Status/step updates are informational only — a DB hiccup (lock,
+                # transient I/O error on WSL/NTFS, etc.) must never crash the job.
+                print(f"[AITK] Warning: DB update failed (non-fatal): {e}")
 
     async def _execute_db_operation(self, operation_func):
         """Execute a database operation in a separate thread with retry on lock."""
@@ -120,20 +125,21 @@ class DiffusionTrainer(SDTrainer):
         return conn
 
     def _retry_db_operation(self, operation_func, max_retries=3, base_delay=2.0):
-        """Retry a database operation with exponential backoff on lock errors."""
+        """Retry a database operation with exponential backoff on lock/transient I/O errors."""
         last_error = None
+        retryable = ("database is locked", "disk i/o error")
         for attempt in range(max_retries + 1):
             try:
                 return operation_func()
             except sqlite3.OperationalError as e:
-                if "database is locked" in str(e):
+                if any(r in str(e).lower() for r in retryable):
                     last_error = e
                     if attempt < max_retries:
                         delay = base_delay * (2 ** attempt)  # 2s, 4s, 8s
-                        print(f"[AITK] Database locked (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s...")
+                        print(f"[AITK] Database error ({e}) (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s...")
                         time.sleep(delay)
                     else:
-                        print(f"[AITK] Database locked after {max_retries + 1} attempts, giving up.")
+                        print(f"[AITK] Database error persisted after {max_retries + 1} attempts, giving up.")
                 else:
                     raise
         raise last_error
@@ -278,7 +284,13 @@ class DiffusionTrainer(SDTrainer):
                     update_query = f"UPDATE Job SET {key} = ? WHERE id = ?"
                     cursor.execute(
                         update_query, (value_to_insert, self.job_id))
-                finally:
+                except Exception:
+                    try:
+                        cursor.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                    raise
+                else:
                     cursor.execute("COMMIT")
 
         await self._execute_db_operation(_do_update)
@@ -312,7 +324,13 @@ class DiffusionTrainer(SDTrainer):
                             "UPDATE Job SET status = ? WHERE id = ?",
                             (status, self.job_id)
                         )
-                finally:
+                except Exception:
+                    try:
+                        cursor.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                    raise
+                else:
                     cursor.execute("COMMIT")
 
         await self._execute_db_operation(_do_update)
@@ -339,14 +357,15 @@ class DiffusionTrainer(SDTrainer):
         super(DiffusionTrainer, self).on_error(e)
         if self.is_ui_trainer:
             try:
-                if self.accelerator.is_main_process and not self.is_stopping:
-                    # If it's a KeyboardInterrupt, mark as stopped instead of error
-                    if isinstance(e, KeyboardInterrupt) or "Job stopped" in str(e):
-                        self.update_status("stopped", "Job stopped by user")
-                    else:
-                        self.update_status("error", str(e))
+                is_intentional = self.is_stopping or isinstance(e, (KeyboardInterrupt, JobStoppedException)) or "Job stopped" in str(e)
+                if self.accelerator.is_main_process and not is_intentional:
+                    self.update_status("error", str(e))
                     self.update_db_key("step", self.last_save_step)
                 else:
+                    # If it's a KeyboardInterrupt, mark as stopped instead of error
+                    if not self.is_stopping and (isinstance(e, KeyboardInterrupt) or "Job stopped" in str(e)):
+                        self.update_status("stopped", "Job stopped by user")
+                    # On intentional stop/pause (including SIGINT), preserve the current step count
                     self.update_db_key("step", self.step_num)
                 asyncio.run(self.wait_for_all_async())
             except Exception as db_err:
