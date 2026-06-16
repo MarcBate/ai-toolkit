@@ -1701,26 +1701,33 @@ class BaseSDTrainProcess(BaseTrainProcess):
         BaseSDTrainProcess._hot_model = None
         _hot_arch = getattr(_hot, 'arch', None) or getattr(type(_hot), 'arch', None)
         _new_arch = getattr(model_config_to_load, 'arch', None)
+        _used_hot = False
         if _hot is not None and type(_hot) is ModelClass and _hot_arch == _new_arch:
-            self.sd = _hot
-            self.sd.model_config = model_config_to_load
-            self.hook_after_sd_init_before_load()
-            validate_control_paths(self.dataset_configs)
-            # If the previous job unloaded the text encoder (stub or empty from API mode)
-            # but the new job needs a local TE, reload it. Transformer stays in RAM.
-            from toolkit.unloader import FakeTextEncoder
-            te = getattr(self.sd, 'text_encoder', None)
-            new_uses_api = getattr(model_config_to_load, 'gemma_api_key', None) is not None
-            te_is_stub = (
-                isinstance(te, list) and te and any(isinstance(enc, FakeTextEncoder) for enc in te)
-            ) or (te is not None and not isinstance(te, list) and isinstance(te, FakeTextEncoder))
-            te_missing = isinstance(te, list) and len(te) == 0 and not new_uses_api
-            if te_is_stub or te_missing:
-                print_acc(" - Model cache hit: reusing transformer, reloading text encoder...")
-                self.sd.reload_text_encoder()
-            else:
-                print_acc(" - Model cache hit: reusing loaded model (skipping load+quantize)")
-        else:
+            try:
+                self.sd = _hot
+                self.sd.model_config = model_config_to_load
+                self.hook_after_sd_init_before_load()
+                validate_control_paths(self.dataset_configs)
+                # If the previous job unloaded the text encoder (stub or empty from API mode)
+                # but the new job needs a local TE, reload it. Transformer stays in RAM.
+                from toolkit.unloader import FakeTextEncoder
+                te = getattr(self.sd, 'text_encoder', None)
+                new_uses_api = getattr(model_config_to_load, 'gemma_api_key', None) is not None
+                te_is_stub = (
+                    isinstance(te, list) and te and any(isinstance(enc, FakeTextEncoder) for enc in te)
+                ) or (te is not None and not isinstance(te, list) and isinstance(te, FakeTextEncoder))
+                te_missing = isinstance(te, list) and len(te) == 0 and not new_uses_api
+                if te_is_stub or te_missing:
+                    print_acc(" - Model cache hit: reusing transformer, reloading text encoder...")
+                    self.sd.reload_text_encoder()
+                else:
+                    print_acc(" - Model cache hit: reusing loaded model (skipping load+quantize)")
+                _used_hot = True
+            except Exception as hot_err:
+                print_acc(f" - Model cache: hot load failed ({hot_err}); falling back to full load+quantize")
+                self.sd = None
+
+        if not _used_hot:
             self.sd = ModelClass(
                 # todo handle single gpu and multi gpu here
                 # device=self.device,
