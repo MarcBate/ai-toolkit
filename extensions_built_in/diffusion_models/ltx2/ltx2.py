@@ -859,20 +859,42 @@ class LTX2Model(BaseModel):
                     except Exception:
                         pass
 
-            # Build the set of quantized module names dynamically so we never
-            # hardcode a list that goes stale when the model has extra quantized layers
-            # (e.g. Sulphur 2 quantizes time_embed layers that vanilla LTX-2.3 does not).
-            # PEFT's load_lora_weights with assign=True will corrupt quantized QLinear
-            # weights (QBytesTensor._data KeyError) if we try to load LoRA into them.
+            # QLinear._load_from_state_dict (optimum.quanto) expects weight._data in the
+            # state dict (full-checkpoint format). During LoRA loading those keys are absent,
+            # causing KeyError. Monkey-patch it to fall back to nn.Module's default handler
+            # when the quantized sub-keys aren't present; restore immediately after loading.
+            _q_patch_cls = None
+            _orig_q_load = None
+            try:
+                from optimum.quanto import QLinear as _QLin
+                _orig_q_load = _QLin._load_from_state_dict
+                def _patched_q_load(self_mod, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+                    weight_name = prefix + "weight"
+                    if self_mod.weight_qtype is not None and weight_name not in state_dict and (weight_name + "._data") not in state_dict:
+                        return torch.nn.Module._load_from_state_dict(
+                            self_mod, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+                        )
+                    return _orig_q_load(self_mod, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
+                _QLin._load_from_state_dict = _patched_q_load
+                _q_patch_cls = _QLin
+            except ImportError:
+                pass
+
             lora_state_dict = _load_safetensors(lora_path)
-            n_before = len(lora_state_dict)
-            lora_state_dict = filter_lora_state_dict_for_quantized_model(
-                pipeline.transformer, lora_state_dict
+            # Filter only patchify_proj / audio_patchify_proj: PEFT's delete_adapter
+            # leaves weight=None on these specific quanto-wrapped layers after teardown,
+            # which crashes the next training forward pass. All other quantized layers
+            # (attention, ff_net) are handled safely by the QLinear monkey-patch above.
+            _UNSAFE_PREFIXES = (
+                "diffusion_model.patchify_proj.",
+                "diffusion_model.audio_patchify_proj.",
             )
+            n_before = len(lora_state_dict)
+            lora_state_dict = {k: v for k, v in lora_state_dict.items() if not any(k.startswith(p) for p in _UNSAFE_PREFIXES)}
             n_skipped = n_before - len(lora_state_dict)
             if n_skipped:
                 self.print_and_status_update(
-                    f"Sampling LoRA: skipping {n_skipped} keys for quantized layers to avoid weight corruption"
+                    f"Sampling LoRA: skipping {n_skipped} patchify_proj keys (PEFT teardown incompatible with quantized weights)"
                 )
 
             load_strength = 0.25 if self._has_upscaler() else strength
@@ -882,6 +904,8 @@ class LTX2Model(BaseModel):
             # Park on CPU until needed per-sample
             self._lora_move(pipeline.transformer, "distill_lora", "cpu")
         finally:
+            if _q_patch_cls is not None:
+                _q_patch_cls._load_from_state_dict = _orig_q_load
             _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
 
         self._distill_lora_ready = True
