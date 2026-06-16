@@ -1706,6 +1706,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
             try:
                 self.sd = _hot
                 self.sd.model_config = model_config_to_load
+                # Clear hooks registered by the previous job's trainer. They are bound
+                # methods on a trainer object that no longer exists (its thread_pool was
+                # already shut down), so leaving them would crash the next call into
+                # maybe_stop()/status updates with "cannot schedule new futures after shutdown".
+                self.sd._status_update_hooks = []
+                self.sd._maybe_stop_hooks = []
+                self.sd._after_sample_img_hooks = []
                 self.hook_after_sd_init_before_load()
                 validate_control_paths(self.dataset_configs)
                 # If the previous job unloaded the text encoder (stub or empty from API mode)
@@ -1724,7 +1731,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(" - Model cache hit: reusing loaded model (skipping load+quantize)")
                 _used_hot = True
             except Exception as hot_err:
+                import traceback
                 print_acc(f" - Model cache: hot load failed ({hot_err}); falling back to full load+quantize")
+                print_acc(traceback.format_exc())
                 self.sd = None
 
         if not _used_hot:
