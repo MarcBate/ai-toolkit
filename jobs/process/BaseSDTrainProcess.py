@@ -758,7 +758,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     state_dict = unwrap_model(self.optimizer).state_dict()
                 except Exception as e:
                     state_dict = self.optimizer.state_dict()
-                torch.save(state_dict, optimizer_path)
+                from toolkit.network_mixins import _save_with_io_retry
+                _save_with_io_retry(lambda: torch.save(state_dict, optimizer_path))
                 print_acc(f"Saved optimizer to {optimizer_path}")
             except Exception as e:
                 print_acc(e)
