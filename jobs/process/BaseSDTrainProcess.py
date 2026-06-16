@@ -1706,14 +1706,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.model_config = model_config_to_load
             self.hook_after_sd_init_before_load()
             validate_control_paths(self.dataset_configs)
-            # If the previous job unloaded the text encoder into a stub, reload it now.
-            # The quantized transformer stays in RAM; only the TE needs to come back.
+            # If the previous job unloaded the text encoder (stub or empty from API mode)
+            # but the new job needs a local TE, reload it. Transformer stays in RAM.
             from toolkit.unloader import FakeTextEncoder
             te = getattr(self.sd, 'text_encoder', None)
+            new_uses_api = getattr(model_config_to_load, 'gemma_api_key', None) is not None
             te_is_stub = (
                 isinstance(te, list) and te and any(isinstance(enc, FakeTextEncoder) for enc in te)
             ) or (te is not None and not isinstance(te, list) and isinstance(te, FakeTextEncoder))
-            if te_is_stub:
+            te_missing = isinstance(te, list) and len(te) == 0 and not new_uses_api
+            if te_is_stub or te_missing:
                 print_acc(" - Model cache hit: reusing transformer, reloading text encoder...")
                 self.sd.reload_text_encoder()
             else:
