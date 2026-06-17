@@ -187,7 +187,26 @@ export default function SampleImageViewer({
     };
   }, [imgPath]);
 
-  const displayedPrompt = metadataPrompt ?? sampleItem?.prompt ?? null;
+  const displayedPrompt = useMemo(() => {
+    // Prefer metadata (embedded in image file), fall back to sample config prompt.
+    // For Ideogram bbox-JSON, extract the human-readable high_level_description
+    // rather than dumping the full JSON blob into the caption area.
+    const candidates = [metadataPrompt, sampleItem?.prompt ?? null];
+    for (const raw of candidates) {
+      if (!raw) continue;
+      const trimmed = raw.trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (typeof parsed?.high_level_description === 'string') return parsed.high_level_description;
+        } catch {}
+        // Incomplete / unparseable JSON (e.g. metadata contains only the first line) — skip
+        continue;
+      }
+      return raw; // plain-text prompt, use as-is
+    }
+    return null;
+  }, [metadataPrompt, sampleItem?.prompt]);
 
   const controlImages = useMemo<string[]>(() => {
     if (!imgPath) return [];
