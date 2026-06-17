@@ -35,6 +35,8 @@ export default function SampleImageViewer({
   const [showingControlIdx, setShowingControlIdx] = useState<number | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [showBoxes, setShowBoxes] = useState<boolean>(false);
+  const [imgBlobUrl, setImgBlobUrl] = useState<string | null>(null);
+  const [imgLoadError, setImgLoadError] = useState<string | null>(null);
 
   useEffect(() => setMounted(true), []);
 
@@ -249,8 +251,47 @@ export default function SampleImageViewer({
     return imgPath;
   }, [showingControlIdx, controlImages, imgPath]);
 
-  // The sample's prompt is what generated it; if it's an Ideogram bbox-JSON we can
-  // overlay the boxes on the generated image. Only on the main image (not controls).
+  // Load the displayed image via fetch → blob URL, mirroring SampleImageCard behavior.
+  // This avoids the silent-failure mode where <img src> collapses to 0×0 on error,
+  // making the image area invisible (user sees "just the caption").
+  useEffect(() => {
+    if (!displayedImgPath || isAudio(displayedImgPath) || isVideo(displayedImgPath)) {
+      setImgBlobUrl(null);
+      setImgLoadError(null);
+      return;
+    }
+
+    setImgBlobUrl(null);
+    setImgLoadError(null);
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const controller = new AbortController();
+    fetch(`/api/img/${encodeURIComponent(displayedImgPath)}`, { signal: controller.signal })
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.blob();
+      })
+      .then(blob => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setImgBlobUrl(objectUrl);
+      })
+      .catch(err => {
+        if (cancelled || err?.name === 'AbortError') return;
+        console.error('SampleImageViewer: image load failed:', displayedImgPath, err);
+        setImgLoadError(err?.message ?? 'Failed to load');
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setImgBlobUrl(null);
+    };
+  }, [displayedImgPath]);
+
   const boundingBoxes = useMemo(
     () => (sampleItem?.prompt ? parseBoundingBoxes(sampleItem.prompt) : null),
     [sampleItem],
@@ -379,6 +420,17 @@ export default function SampleImageViewer({
                     autoPlay
                     controls={true}
                   />
+                ) : imgLoadError ? (
+                  <div className="w-full sm:max-w-[95vw] max-h-[82vh] flex items-center justify-center p-8 text-red-400 text-sm text-center">
+                    <div>
+                      <div className="font-semibold mb-1">Failed to load image</div>
+                      <div className="text-xs text-gray-500">{imgLoadError}</div>
+                    </div>
+                  </div>
+                ) : !imgBlobUrl ? (
+                  <div className="w-64 h-64 sm:max-w-[95vw] max-h-[82vh] flex items-center justify-center">
+                    <div className="animate-pulse bg-gray-700 w-48 h-48 rounded" />
+                  </div>
                 ) : (
                   <TransformWrapper
                     key={displayedImgPath}
@@ -395,7 +447,7 @@ export default function SampleImageViewer({
                     <TransformComponent>
                       <div className="relative">
                         <img
-                          src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
+                          src={imgBlobUrl}
                           alt="Sample Image"
                           draggable={false}
                           className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none !pointer-events-auto"
