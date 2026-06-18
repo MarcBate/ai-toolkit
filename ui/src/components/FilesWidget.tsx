@@ -9,8 +9,10 @@ import { apiClient } from '@/utils/api';
 
 const isLtxJob = (jobConfig: string): boolean => {
   try {
-    const nop: string = JSON.parse(jobConfig)?.config?.process?.[0]?.model?.name_or_path ?? '';
-    return /lightricks|ltx/i.test(nop);
+    const model = JSON.parse(jobConfig)?.config?.process?.[0]?.model ?? {};
+    const nop: string = model.name_or_path ?? '';
+    const arch: string = model.arch ?? '';
+    return /lightricks|ltx/i.test(nop) || /ltx/i.test(arch);
   } catch {
     return false;
   }
