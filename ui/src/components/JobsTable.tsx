@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import useJobsList from '@/hooks/useJobsList';
+import { JobConfig } from '@/types';
 import Link from 'next/link';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { GpuInfo } from '@/types';
@@ -241,9 +242,12 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
       key: 'name',
       render: row => {
         let title: React.ReactNode = row.name;
+        let href = `/jobs/${row.id}`;
+        // if (row.job_type === 'train') title = `Train: ${title}`;
         if (row.job_type === 'caption') {
           let splits = (row.job_ref || '').split(/[/\\]/);
           const datasetPath = `${splits[splits.length - 1]}`;
+          href = `/datasets/${datasetPath}`;
           title = (
             <>
               <small className="opacity-50">CAPTION: </small> {datasetPath}
@@ -282,7 +286,7 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
                 </div>
               </>
             )}
-            <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+            <Link href={href} className="font-medium whitespace-nowrap">
               {['running', 'stopping'].includes(row.status) ? (
                 <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
               ) : null}

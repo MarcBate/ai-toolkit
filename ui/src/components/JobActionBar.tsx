@@ -30,6 +30,9 @@ interface JobActionBarProps {
   autoStartQueue?: boolean;
   isAnyJobRunning?: boolean;
   hasSamples?: boolean;
+  // Where the gear menu opens; defaults to below. Use 'top end' when the bar is
+  // pinned to the bottom of the screen so the menu opens upward into view.
+  menuAnchor?: 'bottom' | 'top end';
 }
 
 export default function JobActionBar({
@@ -42,6 +45,7 @@ export default function JobActionBar({
   autoStartQueue = false,
   isAnyJobRunning = false,
   hasSamples = false,
+  menuAnchor = 'bottom',
 }: JobActionBarProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const { canStart, canStop, canDelete, canEdit, canEditSample, canRemoveFromQueue, canSave, canSample, isBusy } = getAvaliableJobActions(
@@ -208,7 +212,10 @@ export default function JobActionBar({
         <MenuButton className={'ml-1 sm:ml-2'} title="More Actions">
           <Cog className={iconSizeClass} />
         </MenuButton>
-        <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 mt-4">
+        <MenuItems
+          anchor={{ to: menuAnchor, gap: 16 }}
+          className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 z-50"
+        >
           {job.job_type === 'train' && (
             <MenuItem>
               <Link
@@ -220,7 +227,7 @@ export default function JobActionBar({
               </Link>
             </MenuItem>
           )}
-          {canStop && (
+          {job.job_type === 'train' && canStop && (
             <MenuItem>
               <div
                 className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"

@@ -19,6 +19,7 @@ import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/Capti
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import CaptionMonitor from '@/components/CaptionMonitor';
 import { CreatableSelectInput } from '@/components/formInputs';
 
 export default function DatasetPage({ params }: { params: Promise<{ datasetName: string }> }) {
@@ -53,6 +54,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   });
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const [captionBarHeight, setCaptionBarHeight] = useState(0);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
   const virtuosoRef = useRef<VirtuosoGridHandle | null>(null);
 
@@ -591,12 +593,21 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
             computeItemKey={index => filteredImgList[index]?.img_path ?? index}
           />
         )}
+        {/* Spacer so the last cards stay accessible above the floating caption bar.
+            Always keeps a baseline gap, plus the bar height when it is showing. */}
+        <div style={{ height: `${captionBarHeight + 24}px` }} className="transition-[height] duration-300" />
       </MainContent>
       <AddImagesModal />
       <FullscreenDropOverlay
         datasetName={datasetName}
         onComplete={() => refreshImageList(datasetName)}
       />
+      {isSettingsLoaded && (
+        <CaptionMonitor
+          datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
+          onHeightChange={setCaptionBarHeight}
+        />
+      )}
       <DatasetImageViewer
         imgPath={selectedImgPath}
         imageList={imgPaths}
