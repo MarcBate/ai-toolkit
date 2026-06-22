@@ -475,6 +475,7 @@ def quantize_model(
         # sub-modules, which would be extremely slow on large models like LTX2-22B.
         base_model.print_and_status_update(" - quantizing extras")
         skip_children = set(name for name in transformer_block_names if getattr(model_to_quantize, name, None) is not None)
+
         for child_name, child_module in model_to_quantize.named_children():
             if child_name not in skip_children:
                 quantize(child_module, weights=quantization_type)

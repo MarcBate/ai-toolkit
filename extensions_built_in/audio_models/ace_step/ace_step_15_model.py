@@ -196,8 +196,8 @@ class AceStep15Model(BaseAudioModel):
             prompt = json_prompt.get("caption", "")
             lyrics = json_prompt.get("lyrics", "")
             bpm = json_prompt.get("bpm", 120)
-            key = json_prompt.get("key", "C")
-            time_sig = json_prompt.get("time_sig", "4/4")
+            key = json_prompt.get("keyscale", "C")
+            time_sig = json_prompt.get("timesignature", "4/4")
             duration = json_prompt.get("duration", 10)
             duration = int(duration) if isinstance(duration, (int, float)) else 10
             language = json_prompt.get("language", "en")
@@ -259,8 +259,8 @@ class AceStep15Model(BaseAudioModel):
         prompt = json_prompt.get("caption", "")
         lyrics = json_prompt.get("lyrics", "")
         bpm = json_prompt.get("bpm", 120)
-        key = json_prompt.get("key", "C")
-        time_sig = json_prompt.get("time_sig", "4/4")
+        key = json_prompt.get("keyscale", "C")
+        time_sig = json_prompt.get("timesignature", "4/4")
         duration = json_prompt.get("duration", 0)
         language = json_prompt.get("language", "en")
 

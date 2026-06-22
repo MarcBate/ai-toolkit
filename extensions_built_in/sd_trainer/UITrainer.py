@@ -341,6 +341,15 @@ class UITrainer(SDTrainer):
 
     def hook_before_model_load(self):
         super().hook_before_model_load()
+        # Pre-load step from checkpoint before the first maybe_stop() call so
+        # on_error() has the right step even if stopped during loading/quantization.
+        if self.step_num == 0:
+            try:
+                latest = self.get_latest_save_path()
+                if latest is not None:
+                    self.load_training_state_from_metadata(latest)
+            except Exception:
+                pass
         self.maybe_stop()
         self.update_status("running", "Loading model")
 

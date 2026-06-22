@@ -300,6 +300,17 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self._run_async_operation(self._update_key("step", self.step_num))
 
+    def load_training_state_from_metadata_if_available(self):
+        """Read step/epoch from the latest checkpoint metadata without loading weights.
+        Safe to call early (e.g. before model load) so on_error() has the right step
+        if training is stopped during the loading / quantization phase."""
+        try:
+            latest = self.get_latest_save_path()
+            if latest is not None:
+                self.load_training_state_from_metadata(latest)
+        except Exception:
+            pass
+
     def update_db_key(self, key, value):
         """Non-blocking update a key in the database."""
         if self.accelerator.is_main_process and self.is_ui_trainer:
@@ -418,6 +429,11 @@ class DiffusionTrainer(SDTrainer):
             sample_configs = list({id(c): c for c in [self.sample_config, self.first_sample_config] if c is not None}.values())
             ModelClass.validate_sample_lora_paths(self.model_config, *sample_configs)
         if self.is_ui_trainer:
+            # Pre-load step from checkpoint before the first maybe_stop() call so
+            # on_error() has the right step even if we stop during model
+            # loading / quantization (checkpoint weights aren't loaded until much later).
+            if self.step_num == 0:
+                self.load_training_state_from_metadata_if_available()
             self.maybe_stop()
             self.update_status("running", "Loading model")
 
