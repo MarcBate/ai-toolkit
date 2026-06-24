@@ -1140,6 +1140,36 @@ def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
     return new_config
 
 
+def _build_jpeg_exif_usercomment(text: str) -> bytes:
+    """
+    Build a minimal EXIF APP1 blob with UserComment (tag 0x9286) correctly
+    placed inside ExifIFD (not IFD0). PIL's getexif()/tobytes() puts 0x9286
+    in IFD0 which is technically wrong and invisible to MediaInfo/Windows/CivitAI.
+
+    Structure (little-endian TIFF):
+      offset 0  : TIFF header (8 bytes)
+      offset 8  : IFD0 — 1 entry: ExifIFD pointer (tag 0x8769)
+      offset 26 : ExifIFD — 1 entry: UserComment (tag 0x9286)
+      offset 44 : UserComment data ("UNICODE\\x00" + UTF-16-LE)
+    """
+    import struct
+    pack = struct.pack
+    user_comment = b'UNICODE\x00' + text.encode('utf-16-le')
+    exif_ifd_offset   = 26
+    user_comment_offset = 44
+    tiff = (
+        b'II' + pack('<H', 42) + pack('<I', 8) +           # TIFF header, IFD0 at 8
+        pack('<H', 1) +                                     # IFD0: 1 entry
+        pack('<HHI', 0x8769, 4, 1) + pack('<I', exif_ifd_offset) +  # ExifIFD ptr
+        pack('<I', 0) +                                     # IFD0 next = none
+        pack('<H', 1) +                                     # ExifIFD: 1 entry
+        pack('<HHI', 0x9286, 7, len(user_comment)) + pack('<I', user_comment_offset) +
+        pack('<I', 0) +                                     # ExifIFD next = none
+        user_comment
+    )
+    return b'Exif\x00\x00' + tiff
+
+
 class GenerateImageConfig:
     def __init__(
             self,
@@ -1446,13 +1476,7 @@ class GenerateImageConfig:
                 pnginfo.add_text("parameters", params)
                 image.save(output_path, "PNG", pnginfo=pnginfo)
             elif self.output_ext in ('jpg', 'jpeg'):
-                # Embed parameters in EXIF UserComment (tag 0x9286).
-                # Prefix "UNICODE\x00" + UTF-16-LE body matches the format written
-                # by piexif.helper.UserComment.dump(..., encoding="unicode"), which
-                # is what A1111 forks use and CivitAI knows how to read.
-                exif = image.getexif()
-                exif[0x9286] = b'UNICODE\x00' + params.encode('utf-16-le')
-                image.save(output_path, "JPEG", exif=exif.tobytes(), quality=95)
+                image.save(output_path, "JPEG", exif=_build_jpeg_exif_usercomment(params), quality=95)
             else:
                 image.save(output_path)
             # do prompt file

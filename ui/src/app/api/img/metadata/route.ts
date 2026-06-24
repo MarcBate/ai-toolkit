@@ -52,40 +52,55 @@ function readJpegParameters(buf: Buffer): string | null {
         const readU16 = (o: number) => littleEndian ? tiff.readUInt16LE(o) : tiff.readUInt16BE(o);
         const readU32 = (o: number) => littleEndian ? tiff.readUInt32LE(o) : tiff.readUInt32BE(o);
 
-        // Walk IFD0 to find ExifIFD offset (tag 0x8769)
+        // Helper: extract UserComment bytes from an IFD at the given offset
+        const readUserComment = (ifdOffset: number): string | null => {
+          if (ifdOffset + 2 > tiff.length) return null;
+          const count = readU16(ifdOffset);
+          for (let i = 0; i < count; i++) {
+            const e = ifdOffset + 2 + i * 12;
+            if (e + 12 > tiff.length) break;
+            if (readU16(e) !== 0x9286) continue;
+            const byteCount = readU32(e + 4);
+            const valOffset = readU32(e + 8);
+            if (valOffset + byteCount > tiff.length) break;
+            const raw = tiff.slice(valOffset, valOffset + byteCount);
+            if (raw.length > 8 && raw.slice(0, 7).toString('ascii') === 'UNICODE') {
+              return raw.slice(8).toString('utf16le').replace(/\0+$/, '');
+            }
+            break;
+          }
+          return null;
+        };
+
+        // Walk IFD0: look for ExifIFD pointer (0x8769) AND fallback 0x9286 in IFD0
+        // (older files written by PIL incorrectly placed UserComment in IFD0)
         const ifd0Offset = readU32(4);
         const ifd0Count = readU16(ifd0Offset);
         let exifIfdOffset: number | null = null;
+        let ifd0UserComment: string | null = null;
         for (let i = 0; i < ifd0Count; i++) {
           const entryOffset = ifd0Offset + 2 + i * 12;
           if (entryOffset + 12 > tiff.length) break;
           const tag = readU16(entryOffset);
           if (tag === 0x8769) {
             exifIfdOffset = readU32(entryOffset + 8);
-            break;
-          }
-        }
-        if (exifIfdOffset === null) { offset += 2 + segLen; continue; }
-
-        // Walk ExifIFD for UserComment (tag 0x9286)
-        if (exifIfdOffset + 2 > tiff.length) { offset += 2 + segLen; continue; }
-        const exifCount = readU16(exifIfdOffset);
-        for (let i = 0; i < exifCount; i++) {
-          const entryOffset = exifIfdOffset + 2 + i * 12;
-          if (entryOffset + 12 > tiff.length) break;
-          const tag = readU16(entryOffset);
-          if (tag === 0x9286) {
-            const count = readU32(entryOffset + 4);
+          } else if (tag === 0x9286) {
+            // Mis-placed UserComment (PIL bug) — capture as fallback
+            const byteCount = readU32(entryOffset + 4);
             const valOffset = readU32(entryOffset + 8);
-            if (valOffset + count > tiff.length) break;
-            const raw = tiff.slice(valOffset, valOffset + count);
-            // Prefix: "UNICODE\x00" (8 bytes) then UTF-16-LE body
-            if (raw.length > 8 && raw.slice(0, 7).toString('ascii') === 'UNICODE') {
-              return raw.slice(8).toString('utf16le').replace(/\0+$/, '');
+            if (valOffset + byteCount <= tiff.length) {
+              const raw = tiff.slice(valOffset, valOffset + byteCount);
+              if (raw.length > 8 && raw.slice(0, 7).toString('ascii') === 'UNICODE') {
+                ifd0UserComment = raw.slice(8).toString('utf16le').replace(/\0+$/, '');
+              }
             }
-            break;
           }
         }
+
+        // Prefer ExifIFD (correct location), fall back to IFD0 (PIL bug)
+        const result = (exifIfdOffset !== null ? readUserComment(exifIfdOffset) : null)
+                    ?? ifd0UserComment;
+        if (result) return result;
       }
     }
     offset += 2 + segLen;
