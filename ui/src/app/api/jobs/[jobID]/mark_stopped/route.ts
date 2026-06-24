@@ -25,9 +25,11 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
         process.kill(job.pid, 'SIGINT');
       }
       console.log(`Sent kill signal to PID ${job.pid} for job ${jobID}`);
-    } catch (e) {
-      // Process may have already exited — that's fine
-      console.warn(`Could not kill PID ${job.pid} for job ${jobID}:`, e);
+    } catch (e: any) {
+      // ESRCH means the process already exited — expected, not an error
+      if (e?.code !== 'ESRCH') {
+        console.warn(`Could not kill PID ${job.pid} for job ${jobID}:`, e);
+      }
     }
   }
 
