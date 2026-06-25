@@ -315,6 +315,42 @@ class Krea2Model(BaseModel):
         # tell the model to invert assistant on inference since we want remove lora effects
         self.invert_assistant_lora = True
 
+    def reload_text_encoder(self):
+        """Reload Qwen3-VL text encoder from disk after it was unloaded into a FakeTextEncoder stub.
+
+        Called by the persistent-process model cache (run_ui.py) when the hot model
+        is reused for a new job but the text encoder was already unloaded by the
+        previous job's embedding-caching step. Tokenizer and processor are already
+        on self.tokenizer / self.processor (unloader never touches them).
+        """
+        _tokenizer, _processor, text_encoder = self._load_text_encoder()
+
+        if self.model_config.quantize_te:
+            self.print_and_status_update("Quantizing text encoder")
+            text_encoder.to(self.device_torch)
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+            freeze(text_encoder)
+            flush()
+
+        if (
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_text_encoder_percent > 0
+        ):
+            MemoryManager.attach(
+                text_encoder,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
+            )
+
+        if self.model_config.low_vram:
+            text_encoder.to("cpu")
+        else:
+            text_encoder.to(self.device_torch)
+        flush()
+
+        self.text_encoder = text_encoder
+        self.pipeline = Krea2Pipeline(self)
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Krea 2 model")
