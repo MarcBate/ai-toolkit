@@ -315,6 +315,127 @@ class Krea2Model(BaseModel):
         # tell the model to invert assistant on inference since we want remove lora effects
         self.invert_assistant_lora = True
 
+    # ------------------------------------------------------------------
+    # Sampling LoRA (applied only during preview generation, not training)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def validate_sample_lora_paths(cls, model_config, *sample_configs):
+        all_configs = [model_config] + list(sample_configs)
+        for cfg in all_configs:
+            if cfg is None:
+                continue
+            path = getattr(cfg, 'sample_lora_path', None)
+            if path and not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Sample LoRA path not found (check config before training starts): {path}"
+                )
+
+    def _has_sampling_lora(self):
+        sc = getattr(self, 'sample_config', None)
+        if sc is not None and getattr(sc, 'sample_lora_path', None):
+            return True
+        return self.model_config.sample_lora_path is not None
+
+    def _prepare_sampling_lora(self, pipeline):
+        sc = getattr(self, 'sample_config', None)
+        lora_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+        strength = (getattr(sc, 'sample_lora_strength', None) if sc else None) or self.model_config.sample_lora_strength
+
+        if not os.path.exists(lora_path):
+            self.print_and_status_update(f"Warning: sample LoRA not found: {lora_path}")
+            return
+
+        self.print_and_status_update(f"Loading sample LoRA: {os.path.basename(lora_path)}")
+        transformer = self.model
+
+        lora_state_dict = load_file(lora_path)
+        # remap diffusion_model. prefix to match our transformer namespace
+        lora_state_dict = {
+            k.replace("diffusion_model.", "transformer."): v
+            for k, v in lora_state_dict.items()
+        }
+
+        # detect rank from the first lora_A (peft) or lora_down key
+        dim_key = next(
+            (k for k in lora_state_dict if k.endswith("lora_A.weight")),
+            next((k for k in lora_state_dict if k.endswith("lora_down.weight")), None),
+        )
+        if dim_key is None:
+            self.print_and_status_update("Warning: could not detect sample LoRA rank — skipping")
+            return
+        dim = int(lora_state_dict[dim_key].shape[0])
+
+        network_config = NetworkConfig(**{
+            "type": "lora",
+            "linear": dim,
+            "linear_alpha": dim,
+            "transformer_only": True,
+        })
+
+        LoRASpecialNetwork.LORA_PREFIX_UNET = "lora_transformer"
+        network = LoRASpecialNetwork(
+            text_encoder=None,
+            unet=transformer,
+            lora_dim=network_config.linear,
+            multiplier=strength,
+            alpha=network_config.linear_alpha,
+            train_unet=True,
+            train_text_encoder=False,
+            network_config=network_config,
+            network_type=network_config.type,
+            transformer_only=network_config.transformer_only,
+            is_transformer=True,
+            target_lin_modules=self.target_lora_modules,
+        )
+        network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
+        network.force_to(self.device_torch, dtype=self.torch_dtype)
+        network._update_torch_multiplier()
+        network.load_weights(lora_state_dict)
+        network.is_active = True
+
+        self._sampling_lora_network = network
+        self._sampling_lora_ready = True
+        self.print_and_status_update(f"Sample LoRA ready (rank={dim}, strength={strength})")
+
+    def _teardown_sampling_lora(self):
+        network = getattr(self, '_sampling_lora_network', None)
+        if network is not None:
+            # Restore each patched module's original forward method
+            for lora in network.get_all_modules():
+                if hasattr(lora, 'org_forward') and hasattr(lora, 'org_module'):
+                    try:
+                        lora.org_module[0].forward = lora.org_forward
+                    except Exception:
+                        pass
+            self._sampling_lora_network = None
+        self._sampling_lora_ready = False
+
+    def _validate_sample_config(self, image_configs):
+        if not self._has_sampling_lora():
+            return
+        sc = getattr(self, 'sample_config', None)
+        path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
+        if path and not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Sample LoRA not found — aborting sample to avoid useless inference: {path}"
+            )
+
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        if self._has_sampling_lora():
+            self._prepare_sampling_lora(pipeline)
+
+    def _after_generate_images_loop(self, pipeline):
+        if getattr(self, '_sampling_lora_ready', False):
+            self._teardown_sampling_lora()
+
+    def _after_sample_failure(self):
+        if getattr(self, '_sampling_lora_ready', False):
+            try:
+                self._teardown_sampling_lora()
+            except Exception:
+                pass
+
     def reload_text_encoder(self):
         """Reload Qwen3-VL text encoder from disk after it was unloaded into a FakeTextEncoder stub.
 
