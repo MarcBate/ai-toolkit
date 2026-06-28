@@ -217,7 +217,7 @@ export const getJobConfig = (job: Job) => {
 export const getAvaliableJobActions = (job: Job, isAnyJobRunning: boolean = false, hasSamples: boolean = false) => {
   const jobConfig = getJobConfig(job);
   const isStopping = job.stop && job.status === 'running';
-  const isSaving = job.save && job.status === 'running';
+  const isSaving = job.save_now && job.status === 'running';
   const isSampling = job.sample && job.status === 'running';
 
   // Busy if it's currently saving or sampling. Stopping is its own state.

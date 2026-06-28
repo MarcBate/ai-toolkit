@@ -171,22 +171,23 @@ class DiffusionTrainer(SDTrainer):
         return self._retry_db_operation(_check_return_to_queue)
 
     def should_save(self):
+        # Reads the `save_now` flag (ostris' canonical on-demand-save schema).
+        # Save-and-pause sets `save_now` + `stop` together; see maybe_save/save.
         if not self.is_ui_trainer:
             return False
-
         def _check_save():
             with self._db_connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT save FROM Job WHERE id = ?", (self.job_id,))
-                save = cursor.fetchone()
-                return False if save is None else save[0] == 1
+                    "SELECT save_now FROM Job WHERE id = ?", (self.job_id,))
+                save_now = cursor.fetchone()
+                return False if save_now is None else save_now[0] == 1
 
-        return _check_save()
+        return self._retry_db_operation(_check_save)
 
     def reset_save(self):
         if self.accelerator.is_main_process and self.is_ui_trainer:
-            self.update_db_key("save", False)
+            self.update_db_key("save_now", 0)
 
     def should_sample(self):
         if not self.is_ui_trainer:
@@ -414,10 +415,13 @@ class DiffusionTrainer(SDTrainer):
         super(DiffusionTrainer, self).end_step_hook()
         if self.is_ui_trainer:
             self.update_step()
+            # Order matters: maybe_save() runs before maybe_stop() so that
+            # save-and-pause (save_now + stop set together) writes the checkpoint
+            # before the stop is raised. save()'s trailing maybe_stop() then stops
+            # cleanly. maybe_sample() is our on-demand sample feature.
             self.maybe_save()
             self.maybe_sample()
             self.maybe_stop()
-            self.maybe_save()
 
     def hook_before_model_load(self):
         super().hook_before_model_load()
@@ -504,11 +508,10 @@ class DiffusionTrainer(SDTrainer):
             self.update_status("running", "Training")
 
     def save(self, step=None):
-        # NOTE: do NOT call maybe_stop() here before the save begins.
-        # When save_and_pause sets both save=true and stop=true, calling maybe_stop()
-        # first would raise "Job stopped" before the model is ever written to disk.
-        # The stop check at the end (and in end_step_hook) handles the stop cleanly
-        # after the save completes.
+        # NOTE: ostris' upstream save() leads with maybe_stop(); we intentionally
+        # do NOT. Save-and-pause sets save_now + stop together, so a leading
+        # maybe_stop() would raise before the model is ever written to disk. The
+        # trailing maybe_stop() below handles the stop cleanly after the save.
         self.update_status("running", "Saving model")
         super().save(step)
         self.maybe_stop()

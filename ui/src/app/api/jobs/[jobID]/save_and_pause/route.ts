@@ -81,13 +81,12 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const stepsMade = await hasStepsThisSession(logPath);
 
   if (stepsMade) {
-    // Set both flags — the Python process checks should_save() then should_stop()
-    // at the end of each training step (in end_step_hook), so it will save first
-    // then stop cleanly.
+    // Set both flags — end_step_hook runs maybe_save() (save_now) before
+    // maybe_stop() (stop), so the Python trainer saves first then stops cleanly.
     await prisma.job.update({
       where: { id: jobID },
       data: {
-        save: true,
+        save_now: true,
         stop: true,
         info: 'Saving snapshot and pausing...',
       },

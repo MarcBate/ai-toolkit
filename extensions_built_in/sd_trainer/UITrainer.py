@@ -131,18 +131,20 @@ class UITrainer(SDTrainer):
         return _check_return_to_queue()
 
     def should_save(self):
+        # Reads `save_now` (ostris' canonical on-demand-save schema). Save-and-pause
+        # sets `save_now` + `stop` together; save() writes before the stop is raised.
         def _check_save():
             with self._db_connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT save FROM Job WHERE id = ?", (self.job_id,))
-                save = cursor.fetchone()
-                return False if save is None else save[0] == 1
+                    "SELECT save_now FROM Job WHERE id = ?", (self.job_id,))
+                save_now = cursor.fetchone()
+                return False if save_now is None else save_now[0] == 1
 
         return _check_save()
 
     def reset_save(self):
-        self.update_db_key("save", False)
+        self.update_db_key("save_now", 0)
 
     def maybe_save(self):
         if self.should_save():

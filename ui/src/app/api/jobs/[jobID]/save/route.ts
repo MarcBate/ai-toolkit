@@ -14,11 +14,11 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  // update job status to request save
+  // request an on-demand save on the next step (ostris' canonical save_now flag)
   await prisma.job.update({
     where: { id: jobID },
     data: {
-      save: true,
+      save_now: true,
     },
   });
 
