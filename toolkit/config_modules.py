@@ -716,6 +716,8 @@ class ModelConfig:
         self.qtype = kwargs.get("qtype", "qfloat8")
         self.qtype_te = kwargs.get("qtype_te", "qfloat8")
         self.low_vram = kwargs.get("low_vram", False)
+        self.turbo_model_path = kwargs.get("turbo_model_path", None)
+        self.audio_lm_path = kwargs.get("audio_lm_path", None)
         self.spatial_upscaler_path = kwargs.get("spatial_upscaler_path", None)
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:
@@ -1462,15 +1464,27 @@ class GenerateImageConfig:
         elif self.output_ext in ['wav', 'mp3', 'flac', 'ogg']:
             # save audio file
             audio_path = self.get_image_path(count, max_count)
-            torchaudio.save(
-                audio_path,
-                image[0].to('cpu'),
-                sample_rate=48000,
-                format=None,
-                backend=None
-            )
+            audio = image.to('cpu').float()
+            if audio.dim() == 1:
+                audio = audio.unsqueeze(0)  # ensure [channels, samples]
             if self.output_ext == 'mp3':
+                import av
+                import numpy as np
+                audio_np = audio.numpy().clip(-1.0, 1.0).astype(np.float32)
+                n_ch = audio_np.shape[0]
+                layout = 'stereo' if n_ch >= 2 else 'mono'
+                with av.open(audio_path, 'w') as mp3_container:
+                    mp3_stream = mp3_container.add_stream('mp3', rate=48000)
+                    mp3_stream.bit_rate = 128000
+                    mp3_frame = av.AudioFrame.from_ndarray(audio_np[:2] if n_ch >= 2 else audio_np, format='fltp', layout=layout)
+                    mp3_frame.sample_rate = 48000
+                    for packet in mp3_stream.encode(mp3_frame):
+                        mp3_container.mux(packet)
+                    for packet in mp3_stream.encode(None):
+                        mp3_container.mux(packet)
                 add_album_artwork(audio_path)
+            else:
+                torchaudio.save(audio_path, audio, sample_rate=48000, format=None, backend=None)
         else:
             output_path = self.get_image_path(count, max_count)
             params = self._build_civitai_parameters()
