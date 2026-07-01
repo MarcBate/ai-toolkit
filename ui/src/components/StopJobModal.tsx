@@ -43,6 +43,7 @@ export default function StopJobModal() {
     if (!state?.job || isStopping) return;
 
     setIsStopping(true);
+    setIsOpen(false);
     try {
       if (mode === 'saveQueue') {
         // Route handles stopping the queue + save + return_to_queue atomically
@@ -55,7 +56,6 @@ export default function StopJobModal() {
       if (state.onRefresh) {
         state.onRefresh();
       }
-      setIsOpen(false);
     } catch (e) {
       console.error('Error stopping job:', e);
       alert('Failed to stop job. Check console for details.');

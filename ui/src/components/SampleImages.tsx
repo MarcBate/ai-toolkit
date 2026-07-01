@@ -131,17 +131,22 @@ export default function SampleImages({ job }: SampleImagesProps) {
     const defaultRes = { sampleSlots: sampleImages as (string | null)[], numSamples: configNumSamples, steps: [] as number[] };
     if (sampleImages.length === 0) return defaultRes;
 
-    // 1. Parse filenames to extract step + promptIdx
+    // 1. Parse filenames to extract timestamp, step, promptIdx.
+    // Filenames have two formats:
+    //   new: {timestamp}__{step}_{promptIdx}.ext  (each file gets its own timestamp)
+    //   old: {step}_{promptIdx}.ext
     const parsedImages = sampleImages.map(path => {
       const filename = (path.includes('\\') ? path.split('\\') : path.split('/')).pop() || null;
-      if (!filename) return { path, step: -1, promptIdx: -1 };
-      const parts = filename.split('.')[0].split('_').filter(p => p !== '');
+      if (!filename) return { path, timestamp: '', step: -1, promptIdx: -1 };
+      const basename = filename.split('.')[0];
+      const parts = basename.split('_').filter(p => p !== '');
       if (parts.length >= 2) {
         const promptIdx = parseInt(parts[parts.length - 1]);
         const step = parseInt(parts[parts.length - 2]);
-        return { path, step, promptIdx };
+        const timestamp = basename.includes('__') ? parts[0] : '';
+        return { path, timestamp, step, promptIdx };
       }
-      return { path, step: -1, promptIdx: -1 };
+      return { path, timestamp: '', step: -1, promptIdx: -1 };
     });
 
     const validParsed = parsedImages.filter(
@@ -149,18 +154,39 @@ export default function SampleImages({ job }: SampleImagesProps) {
     );
     if (validParsed.length === 0) return defaultRes;
 
-    // 2. Identify all unique steps (sorted ascending)
-    const steps = Array.from(new Set(validParsed.map(img => img.step))).sort((a, b) => a - b);
     const maxIdxInFiles = Math.max(...validParsed.map(img => img.promptIdx));
     const eNumSamples = Math.max(configNumSamples, maxIdxInFiles + 1);
 
-    // 3. Build sparse slots array (null where a sample hasn't been generated yet)
+    // 2. For each step, detect multiple sampling runs by counting duplicate promptIdx values.
+    //    Each file gets its own timestamp, so we can't group by timestamp. Instead we sort
+    //    each (step, promptIdx) group by timestamp and assign to runs by ordinal:
+    //    first occurrence → run 0, second occurrence → run 1, etc.
+    const sortedSteps = Array.from(new Set(validParsed.map(img => img.step))).sort((a, b) => a - b);
+
     const slots: (string | null)[] = [];
-    steps.forEach(step => {
+    const steps: number[] = [];
+
+    sortedSteps.forEach(step => {
       const stepImages = validParsed.filter(img => img.step === step);
-      for (let i = 0; i < eNumSamples; i++) {
-        const found = stepImages.find(img => img.promptIdx === i);
-        slots.push(found ? found.path : null);
+
+      // Group by promptIdx, sort each group oldest-first by timestamp
+      const byPromptIdx = new Map<number, typeof validParsed>();
+      stepImages.forEach(img => {
+        if (!byPromptIdx.has(img.promptIdx)) byPromptIdx.set(img.promptIdx, []);
+        byPromptIdx.get(img.promptIdx)!.push(img);
+      });
+      byPromptIdx.forEach(imgs => imgs.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+
+      // Number of rows = max images at any single promptIdx (e.g. 2 samplings → 2 rows)
+      const numRuns = Math.max(...Array.from(byPromptIdx.values()).map(imgs => imgs.length));
+
+      for (let runIdx = 0; runIdx < numRuns; runIdx++) {
+        steps.push(step);
+        for (let pIdx = 0; pIdx < eNumSamples; pIdx++) {
+          const imgs = byPromptIdx.get(pIdx);
+          const found = imgs?.[runIdx];
+          slots.push(found ? found.path : null);
+        }
       }
     });
 

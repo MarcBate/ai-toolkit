@@ -398,12 +398,12 @@ export default function SampleImageViewer({
             transition
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
-            className="relative transform rounded-none sm:rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in w-full sm:w-auto sm:max-w-[95%] sm:max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col overflow-hidden touch-pan-y"
+            className="relative transform rounded-none sm:rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in w-full sm:w-auto sm:max-w-[95%] max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col overflow-hidden touch-pan-y"
           >
-            <div className="overflow-hidden flex items-center justify-center">
+            <div className="flex-1 min-h-0 overflow-hidden flex items-center justify-center">
               {displayedImgPath &&
                 (isAudio(displayedImgPath) ? (
-                  <div className="w-[500px] h-[500px] max-w-full sm:max-w-[95vw] max-h-[82vh]">
+                  <div className="w-[500px] h-[260px] max-w-full sm:max-w-[95vw] max-h-[55vh] self-stretch">
                     <AudioPlayer
                       src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                       title={displayedImgPath.replace(/^.*[\\/]/, '')}
@@ -459,7 +459,7 @@ export default function SampleImageViewer({
                 ))}
             </div>
             {/* # make full width */}
-            <div className="bg-gray-950 text-sm flex justify-between items-center px-4 py-2">
+            <div className="bg-gray-950 text-sm flex justify-between items-start px-4 py-2 flex-shrink-0 max-h-[35vh] overflow-y-auto">
               <div className="flex-1 min-w-0 mr-4">
                 {displayedPrompt && (
                   <div>

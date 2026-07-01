@@ -49,6 +49,7 @@ export default function SaveSnapshotModal() {
 
     console.log(`HandleSave: andStop=${andStop}, jobID=${state.job.id}`);
     setIsSaving(true);
+    setIsOpen(false);
     try {
       if (andStop) {
         // Save and pause: set both flags atomically without sending a kill signal.
@@ -61,14 +62,9 @@ export default function SaveSnapshotModal() {
         await saveJob(state.job.id);
         console.log('Save requested successfully');
       }
-      
-      // 3. Refresh the UI
       if (state.onRefresh) {
         state.onRefresh();
       }
-      
-      // 4. Close the modal
-      setIsOpen(false);
     } catch (e) {
       console.error('Error in handleSave:', e);
       alert('Failed to process request. Check console for details.');

@@ -104,7 +104,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
   return (
     <div className={`flex flex-col ${className}`}>
-      <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: '100%' }} onClick={onClick}>
+      <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: isItAudio ? '42%' : '100%' }} onClick={onClick}>
         <div
           className={`absolute inset-0 rounded-t-lg shadow-md bg-gray-900 ${
             isVisible && isImageType && !loaded ? 'animate-pulse' : ''
