@@ -20,7 +20,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **LightX2V for WAN 2.2** — 4-step distilled samples (~40s vs ~6 min); PEFT adapter reuse fix
 - **LTX-2.3 distilled LoRA** — 8-step samples instead of 30
 - **Gemma API for LTX-2.3** — use free Gemma API instead of loading 12B text encoder locally
-- **Qwen Image sampling LoRA** — apply a lightning LoRA only during sample generation, not training
+- **Sampling LoRA (Krea 2 & Qwen Image)** — apply a LoRA only during sample generation, not training; useful for filter-bypass or style LoRAs (see [Krea 2 Training](#krea-2-training))
 - **Corrupt/truncated JSON captions** — graceful fallback with warning instead of crashing the job
 - **Optimizer archiving** — option to archive optimizer state on each save
 - **AceStep 1.5 XL audio LM (`audio_lm_path`)** — set `audio_lm_path` in your model config to a Qwen3 ACE15 safetensors file (e.g. `qwen_4b_ace15.safetensors`) to enable proper `lm_hints` context generation at sample time. Without this the DiT uses silence context and output quality is poor. The FSQ quantizer and AudioTokenDetokenizer are extracted automatically from the AIO base model file. Supports the XL AIO format (`ostris/ace_step_1.5_ComfyUI_files`); non-XL AIO untested.
@@ -365,6 +365,42 @@ To learn more about LoKr, read more about it at [KohakuBlueleaf/LyCORIS](https:/
 ```
 
 Everything else should work the same including layer targeting.
+
+
+## Krea 2 Training
+
+Krea 2 is a high-quality image model available in two variants:
+
+- **Krea 2 Raw** (`krea2_raw`) — the base model; straightforward LoRA training with no extra config needed.
+- **Krea 2 Turbo with Adapter** (`krea2_turbo_with_adapter`) — requires a pre-trained turbo adapter. Set `turbo_model_path` in your model config to the path of the adapter safetensors file.
+
+### Sampling LoRA (filter bypass / style)
+
+Some community LoRAs are designed to be applied only during inference, not training — for example to bypass Krea's content filter or apply a look. You can inject one of these into every sample generation without it affecting your training weights.
+
+In your config's `sample` block:
+
+```yaml
+      sample:
+        sampler: euler
+        sample_every: 500
+        width: 1024
+        height: 1024
+        prompts:
+          - "your prompt here"
+        neg: ""
+        seed: 42
+        steps: 20
+        cfg_scale: 1
+        sample_lora_path: /path/to/krea2filterbypass3.safetensors
+        sample_lora_strength: 4
+```
+
+The LoRA is loaded before each sample batch and removed immediately after, so it never influences the training gradient. `sample_lora_strength` can be tuned — higher values push the bypass harder; typical range is 1–8.
+
+Example community LoRA: [Krea2FilterBypass](https://civitai.red/models/2728234/krea2filterbypass) — apply at strength 4 to reliably bypass the built-in content filter during sampling.
+
+> **UI**: the "Apply LoRA during sampling" checkbox and path/strength fields appear in the Sample card for both Krea 2 variants when creating or editing a job.
 
 
 ## Support My Work
