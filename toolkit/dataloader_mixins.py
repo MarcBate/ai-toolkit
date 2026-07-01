@@ -2000,7 +2000,16 @@ class LatentCachingMixin:
 
             # restore device state
             print_acc(" - Latent caching complete. Restoring device state...")
-            self.sd.restore_device_state()
+            try:
+                self.sd.restore_device_state()
+            except Exception as e:
+                # CUDA context can be corrupted if any encoding step hit a CUDA error
+                # (e.g. misaligned address). Raising here prevents training from starting,
+                # which is correct — caller will see the error and the job will be marked failed.
+                print_acc(f" - ERROR: Failed to restore device state after latent caching: {e}")
+                print_acc(" - This usually means the CUDA context was corrupted during encoding.")
+                print_acc(" - Restart the server to reset GPU state before retrying.")
+                raise
 
 
 class TextEmbeddingFileItemDTOMixin:
