@@ -29,6 +29,7 @@ type AdditionalSections =
   | 'sample.lightx2v_loras'
   | 'sample.distill_lora'
   | 'sample.sampling_lora'
+  | 'sample.krea2_sampling_lora'
   | 'train.audio_loss_multiplier'
   | 'datasets.num_frames'
   | 'model.multistage'
@@ -1068,6 +1069,7 @@ export const modelArchs: ModelArch[] = [
     additionalSections: [
       'model.low_vram',
       'model.layer_offloading',
+      'sample.krea2_sampling_lora',
     ],
   },
   {
@@ -1095,7 +1097,8 @@ export const modelArchs: ModelArch[] = [
     additionalSections: [
       'model.low_vram',
       'model.layer_offloading',
-      'model.assistant_lora_path'
+      'model.assistant_lora_path',
+      'sample.krea2_sampling_lora',
     ],
   },
   {

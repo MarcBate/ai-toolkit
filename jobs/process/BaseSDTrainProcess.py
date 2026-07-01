@@ -368,6 +368,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # expose sample_config to the model so it can read sampling-only LoRA paths
         self.sd.sample_config = sample_config
 
+        # expose latest trained LoRA checkpoint path so turbo inference can merge it.
+        # turbo_lora_path is the *LoRA* safetensors (e.g. job_000011000.safetensors),
+        # NOT the turbo model file (that comes from model_config.turbo_model_path).
+        if self.network is not None:
+            lora_name = self.job.name
+            if hasattr(self, 'named_lora') and self.named_lora:
+                lora_name = f"{lora_name}_LoRA"
+            self.sd.turbo_lora_path = self.get_latest_save_path(lora_name)
+
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
 

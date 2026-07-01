@@ -1955,6 +1955,43 @@ export default function SimpleJob({
                 )}
               </div>
             )}
+            {modelArch?.additionalSections?.includes('sample.krea2_sampling_lora') && (
+              <div className="mt-4 border-t border-gray-700 pt-4">
+                <Checkbox
+                  label="Apply LoRA during sampling"
+                  docKey="sample.sampling_lora"
+                  checked={
+                    jobConfig.config.process[0].sample.sample_lora_path !== null &&
+                    jobConfig.config.process[0].sample.sample_lora_path !== undefined
+                  }
+                  onChange={value => {
+                    if (value) {
+                      setJobConfig('', 'config.process[0].sample.sample_lora_path');
+                      setJobConfig(1, 'config.process[0].sample.sample_lora_strength');
+                    } else {
+                      setJobConfig(null, 'config.process[0].sample.sample_lora_path');
+                    }
+                  }}
+                />
+                {jobConfig.config.process[0].sample.sample_lora_path !== null &&
+                  jobConfig.config.process[0].sample.sample_lora_path !== undefined && (
+                  <div className="mt-2 pl-2 space-y-2">
+                    <LoraPathInput
+                      label="LoRA Path"
+                      value={jobConfig.config.process[0].sample.sample_lora_path ?? ''}
+                      onChange={v => setJobConfig(v, 'config.process[0].sample.sample_lora_path')}
+                    />
+                    <NumberInput
+                      label="Strength"
+                      value={jobConfig.config.process[0].sample.sample_lora_strength ?? 1}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength')}
+                      min={0.01}
+                      max={1000}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
         </div>
 
