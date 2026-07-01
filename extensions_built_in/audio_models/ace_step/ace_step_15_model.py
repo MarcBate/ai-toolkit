@@ -97,6 +97,12 @@ class AceStep15Model(BaseAudioModel):
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
     def load_model(self):
+        # Reset lazy-loaded models so a reused instance doesn't carry over state from a previous job
+        self.turbo_model = None
+        self.audio_lm = None
+        self.audio_quantizer = None
+        self.audio_detokenizer = None
+
         dtype = self.torch_dtype
         device = self.device_torch
 
