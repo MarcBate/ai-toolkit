@@ -57,6 +57,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const [captionBarHeight, setCaptionBarHeight] = useState(0);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
   const virtuosoRef = useRef<VirtuosoGridHandle | null>(null);
+  const isRefreshingRef = useRef(false);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('filterHistory');
@@ -80,19 +81,32 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   };
 
   const refreshImageList = (dbName: string) => {
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     loadedExtsRef.current = new Set(['txt']);
     setStatus('loading');
     apiClient
       .post('/api/datasets/listImages', { datasetName: dbName })
       .then((res: any) => {
         const data = res.data;
-        // Server already sorts; avoid the client-side sort that's expensive on large lists.
-        setImgList(data.images);
+        // Server sends a shared root (with trailing OS separator) + each file's sub-path to
+        // keep the payload small. Plain concat rebuilds the native absolute path on any OS.
+        // Server already sorts; avoid a client-side sort on large lists.
+        const root = data.root;
+        setImgList(data.images.map((item: any) => ({
+          img_path: root + item.subPath,
+          caption: item.caption ?? '',
+          captions: item.captions,
+          captionExists: item.captionExists,
+        })));
         setStatus('success');
       })
       .catch(error => {
         console.error('Error fetching images:', error);
         setStatus('error');
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
       });
   };
 
