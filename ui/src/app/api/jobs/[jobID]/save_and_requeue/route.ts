@@ -83,7 +83,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     await prisma.job.update({
       where: { id: jobID },
       data: {
-        save: true,
+        save_now: true,
         stop: true,
         return_to_queue: true,
         info: 'Saving snapshot and returning to queue...',
