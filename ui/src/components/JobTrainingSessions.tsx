@@ -98,25 +98,27 @@ export default function JobTrainingSessions({ job }: Props) {
       </button>
 
       {expanded && (
-        <div className="px-4 pt-1 pb-2 space-y-0.5">
+        <div className="px-4 pt-1 pb-2">
           {anyEstimated && (
             <p className="text-xs text-yellow-700/60 pb-1">
               ~ estimated from step timestamps — model load time not included
             </p>
           )}
-          {visibleSessions.map((session, i) => (
-            <div key={i} className="flex items-center justify-between py-1 text-xs">
-              <div className="flex items-center gap-2 text-gray-500">
-                <span className="w-5 text-right">{i + 1}.</span>
-                <span>{formatDateTime(session.start_time)}</span>
+          <div className="max-h-64 overflow-y-auto space-y-0.5">
+            {visibleSessions.map((session, i) => (
+              <div key={i} className="flex items-center justify-between py-1 text-xs">
+                <div className="flex items-center gap-2 text-gray-500">
+                  <span className="w-5 text-right">{i + 1}.</span>
+                  <span>{formatDateTime(session.start_time)}</span>
+                </div>
+                <span className={`font-mono ${session.estimated ? 'text-yellow-700/70' : 'text-gray-600'}`}>
+                  {session.duration_seconds !== null
+                    ? `${session.estimated ? '~' : ''}${formatDuration(session.duration_seconds)}`
+                    : <span className="text-gray-700">in progress</span>}
+                </span>
               </div>
-              <span className={`font-mono ${session.estimated ? 'text-yellow-700/70' : 'text-gray-600'}`}>
-                {session.duration_seconds !== null
-                  ? `${session.estimated ? '~' : ''}${formatDuration(session.duration_seconds)}`
-                  : <span className="text-gray-700">in progress</span>}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </div>
