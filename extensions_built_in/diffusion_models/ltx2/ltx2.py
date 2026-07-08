@@ -244,6 +244,9 @@ class LTX2Model(BaseModel):
         # gemma needs left side padding
         self.te_padding_side = "left"
 
+        # loss mask for i2v conditioning (1 = train, 0 = conditioned token), set per step in get_noise_prediction
+        self._i2v_loss_mask = None
+
         # invalidate older caches
         self.latent_space_version = f"{self.arch}_v2"
 
@@ -1438,6 +1441,7 @@ class LTX2Model(BaseModel):
             )
 
             video_timestep = timestep.clone()
+            self._i2v_loss_mask = None
 
             # i2v from first frame
             if batch.dataset_config.do_i2v and batch.num_frames > 1:
@@ -1482,6 +1486,10 @@ class LTX2Model(BaseModel):
                     init_latents * conditioning_mask
                     + latent_model_input * (1 - conditioning_mask)
                 )
+
+                # conditioned tokens are clean with timestep 0 and their prediction is
+                # discarded at inference, so they must not contribute to the loss
+                self._i2v_loss_mask = 1.0 - conditioning_mask
 
                 packed_conditioning_mask = self.pipeline._pack_latents(
                     conditioning_mask,
@@ -1765,6 +1773,15 @@ class LTX2Model(BaseModel):
         noise = kwargs.get("noise")
         batch = kwargs.get("batch")
         return (noise - batch.latents).detach()
+
+    def scale_loss(self, loss):
+        # zero out the loss on i2v conditioned tokens, renormalized so the loss
+        # magnitude matches unconditioned batches (masked mean)
+        if self._i2v_loss_mask is not None:
+            loss_mask = self._i2v_loss_mask.to(loss.device, dtype=loss.dtype)
+            loss = loss * loss_mask / loss_mask.mean().clamp(min=1e-8)
+            self._i2v_loss_mask = None
+        return loss
 
     def get_base_model_version(self):
         return "ltx2"
