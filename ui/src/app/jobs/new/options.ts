@@ -40,6 +40,7 @@ type AdditionalSections =
   | 'model.assistant_lora_path'
   | 'model.spatial_upscaler_path'
   | 'model.unconditional_lora_path'
+  | 'model.model_kwargs.kv_cache'
   | 'ideogram_4_prompt';
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
@@ -1117,7 +1118,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.model_kwargs': [
         {
           edit: true,
-          match_target_res: false,
+          match_target_res: true,
+          kv_cache: true,
         },
         {},
       ],
@@ -1155,7 +1157,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.model_kwargs': [
         {
           edit: true,
-          match_target_res: false,
+          match_target_res: true,
+          kv_cache: true,
         },
         {},
       ],
@@ -1170,6 +1173,7 @@ export const modelArchs: ModelArch[] = [
       'model.layer_offloading',
       'model.assistant_lora_path',
       'model.qie.match_target_res',
+      'model.model_kwargs.kv_cache',
     ],
   },
   {
@@ -1222,6 +1226,7 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+      'model.model_kwargs.kv_cache',
     ],
   },
 ].sort((a, b) => {
