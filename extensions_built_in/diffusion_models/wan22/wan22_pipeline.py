@@ -252,7 +252,9 @@ class Wan22Pipeline(WanPipeline):
                 if conditioning is not None:
                     # conditioning is first frame conditioning for 2.2 i2v
                     latent_model_input = torch.cat(
-                        [latent_model_input, conditioning], dim=1)
+                        [latent_model_input,
+                         conditioning.to(latent_model_input.device, latent_model_input.dtype)],
+                        dim=1)
 
                 noise_pred = current_model(
                     hidden_states=latent_model_input,
@@ -310,9 +312,19 @@ class Wan22Pipeline(WanPipeline):
             self.transformer.to("cpu")
             if self.transformer_2 is not None:
                 self.transformer_2.to("cpu")
-            # load vae
-            print("Loading Vae")
-            self.vae.to(vae_device)
+            # Only restore the VAE when we actually need to decode — if output_type is
+            # "latent" (e.g. LightX2V stage-1) the decode block below is skipped entirely,
+            # so we avoid a pointless CPU→GPU→CPU round-trip between stages.
+            #
+            # Restore to the execution device, NOT the `vae_device` captured at the top of
+            # this call. In LightX2V two-stage sampling stage-1 returns latents (no decode)
+            # and leaves the VAE on CPU, so when stage-2 runs `vae_device` would be captured
+            # as "cpu" and this restore would be a no-op — the decode below would then hit a
+            # CPU-VAE / CUDA-latent device mismatch. The latents live on `device`, so that is
+            # where the VAE must be.
+            if output_type != "latent":
+                print("Loading Vae")
+                self.vae.to(device)
             flush()
 
         if not output_type == "latent":

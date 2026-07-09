@@ -15,7 +15,7 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.util.quantize import quantize_model, filter_lora_state_dict_for_quantized_model
+from toolkit.util.quantize import quantize_model, has_quant_cache, filter_lora_state_dict_for_quantized_model
 from .wan22_pipeline import Wan22Pipeline
 from diffusers import WanTransformer3DModel
 
@@ -243,6 +243,58 @@ class Wan2214bModel(Wan21):
         # 8x compression  and 2x2 patch size
         return 16
 
+    def _load_wan_transformer_single_file(self, path, config_subfolder, skip_weights=False):
+        # ComfyUI style single-file checkpoint. Diffusers has no Wan2.2 entry in its
+        # single-file config inference table (it guesses a Wan2.1 config, leaving
+        # mismatched params on the meta device), so load the config from the
+        # reference repo and convert the checkpoint keys ourselves.
+        from accelerate import init_empty_weights
+        from diffusers.loaders.single_file_utils import (
+            convert_wan_transformer_to_diffusers,
+        )
+
+        default_repo = (
+            "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+            if "i2v" in self.arch
+            else "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+        )
+        config_repo = self.model_config.model_kwargs.get("config_repo", default_repo)
+        config = WanTransformer3DModel.load_config(
+            config_repo, subfolder=config_subfolder
+        )
+
+        if skip_weights:
+            # Source file is absent but a quantization cache exists. Create the
+            # architecture with random weights — quantize_model will immediately
+            # overwrite them from the cache without touching the missing file.
+            self.print_and_status_update(
+                f" - source file not found, will load from quantization cache"
+            )
+            transformer = WanTransformer3DModel.from_config(config)
+            transformer = transformer.to(self.torch_dtype)
+            return transformer
+
+        with init_empty_weights():
+            transformer = WanTransformer3DModel.from_config(config)
+
+        state_dict = convert_wan_transformer_to_diffusers(load_file(path))
+        dtype = self.torch_dtype
+        # cast in place, one tensor at a time, so we never hold a second full
+        # copy of the 28GB state dict in RAM
+        for k in list(state_dict.keys()):
+            state_dict[k] = state_dict[k].to(dtype)
+        missing, unexpected = transformer.load_state_dict(
+            state_dict, strict=False, assign=True
+        )
+        if len(missing) > 0:
+            raise ValueError(
+                f"Checkpoint {path} does not match config {config_repo}/{config_subfolder}, "
+                f"missing keys: {missing[:5]}{'...' if len(missing) > 5 else ''}"
+            )
+        if len(unexpected) > 0:
+            print(f"Ignoring unexpected keys in {path}: {unexpected[:5]}...")
+        return transformer
+
     def load_wan_transformer(self, transformer_path, subfolder=None):
         if self.model_config.split_model_over_gpus:
             raise ValueError(
@@ -262,7 +314,9 @@ class Wan2214bModel(Wan21):
                 "Loading LoRA is not supported for Wan2.2 models currently"
             )
 
-        # transformer path can be a directory that ends with /transformer or a hf path.
+        # transformer path can be a directory that ends with /transformer, a hf path,
+        # or a single .safetensors file (ComfyUI style) for the high noise stage with
+        # model_kwargs.low_noise_path pointing to the low noise stage file.
 
         transformer_path_1 = transformer_path
         subfolder_1 = subfolder
@@ -270,7 +324,18 @@ class Wan2214bModel(Wan21):
         transformer_path_2 = transformer_path
         subfolder_2 = subfolder
 
-        if subfolder_2 is None:
+        is_single_file = transformer_path.endswith(".safetensors")
+        if is_single_file:
+            transformer_path_2 = self.model_config.model_kwargs.get(
+                "low_noise_path", None
+            )
+            if transformer_path_2 is None:
+                raise ValueError(
+                    "model_kwargs.low_noise_path must be set when name_or_path is a "
+                    ".safetensors file for Wan2.2 14b (high noise file goes in name_or_path)"
+                )
+            subfolder_2 = None
+        elif subfolder_2 is None:
             # we have a local path, replace it with transformer_2 folder
             transformer_path_2 = os.path.join(
                 os.path.dirname(transformer_path_1), "transformer_2"
@@ -281,11 +346,28 @@ class Wan2214bModel(Wan21):
 
         self.print_and_status_update("Loading transformer 1")
         dtype = self.torch_dtype
-        transformer_1 = WanTransformer3DModel.from_pretrained(
-            transformer_path_1,
-            subfolder=subfolder_1,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        cache_key_extra_1 = f"high-noise|{transformer_path_1}|{subfolder_1}"
+        cache_key_extra_2 = f"low-noise|{transformer_path_2}|{subfolder_2}"
+        if is_single_file:
+            path_1_exists = os.path.exists(transformer_path_1)
+            if not path_1_exists:
+                can_use_cache = (
+                    self.model_config.quantize
+                    and has_quant_cache(self, cache_key_extra_1)
+                )
+                if not can_use_cache:
+                    raise FileNotFoundError(
+                        f"Transformer 1 file not found and no quantization cache available: {transformer_path_1}"
+                    )
+            transformer_1 = self._load_wan_transformer_single_file(
+                transformer_path_1, "transformer", skip_weights=not path_1_exists
+            )
+        else:
+            transformer_1 = WanTransformer3DModel.from_pretrained(
+                transformer_path_1,
+                subfolder=subfolder_1,
+                torch_dtype=dtype,
+            ).to(dtype=dtype)
 
         flush()
 
@@ -300,7 +382,10 @@ class Wan2214bModel(Wan21):
         if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
             # todo handle two ARAs
             self.print_and_status_update("Quantizing Transformer 1")
-            quantize_model(self, transformer_1)
+            quantize_model(
+                self, transformer_1,
+                cache_key_extra=cache_key_extra_1,
+            )
             flush()
 
         if self.model_config.low_vram:
@@ -311,11 +396,26 @@ class Wan2214bModel(Wan21):
 
         self.print_and_status_update("Loading transformer 2")
         dtype = self.torch_dtype
-        transformer_2 = WanTransformer3DModel.from_pretrained(
-            transformer_path_2,
-            subfolder=subfolder_2,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        if is_single_file:
+            path_2_exists = os.path.exists(transformer_path_2)
+            if not path_2_exists:
+                can_use_cache = (
+                    self.model_config.quantize
+                    and has_quant_cache(self, cache_key_extra_2)
+                )
+                if not can_use_cache:
+                    raise FileNotFoundError(
+                        f"Transformer 2 file not found and no quantization cache available: {transformer_path_2}"
+                    )
+            transformer_2 = self._load_wan_transformer_single_file(
+                transformer_path_2, "transformer_2", skip_weights=not path_2_exists
+            )
+        else:
+            transformer_2 = WanTransformer3DModel.from_pretrained(
+                transformer_path_2,
+                subfolder=subfolder_2,
+                torch_dtype=dtype,
+            ).to(dtype=dtype)
 
         flush()
 
@@ -330,7 +430,10 @@ class Wan2214bModel(Wan21):
         if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
             # todo handle two ARAs
             self.print_and_status_update("Quantizing Transformer 2")
-            quantize_model(self, transformer_2)
+            quantize_model(
+                self, transformer_2,
+                cache_key_extra=cache_key_extra_2,
+            )
             flush()
 
         if self.model_config.low_vram:
@@ -581,6 +684,7 @@ class Wan2214bModel(Wan21):
         """
         import peft.tuners.lora.model as _peft_lora_model
         from safetensors.torch import load_file as _load_sf
+        from optimum.quanto.nn.qmodule import QModuleMixin as _QMM
 
         # PEFT 0.18.x bug: dispatch_torchao calls TorchaoLoraLinear without the
         # required get_apply_tensor_subclass kwarg. Bypass it so PEFT falls back
@@ -588,6 +692,34 @@ class Wan2214bModel(Wan21):
         # quantized weights.
         _orig_dispatch_torchao = _peft_lora_model.dispatch_torchao
         _peft_lora_model.dispatch_torchao = lambda *args, **kwargs: None
+
+        # quanto interaction bug: PEFT's set_peft_model_state_dict calls
+        # load_state_dict(assign=True), whose recursion visits EVERY submodule of
+        # the transformer — including the quantized QLinear base_layer modules the
+        # training LoRA already wraps. For each, quanto's _load_from_state_dict sees
+        # weight_qtype set but no "weight" key in its (LoRA-only) slice, so it tries
+        # to rebuild a QTensor from absent _data/_scale keys and raises KeyError.
+        # Guard it: when neither the plain weight nor the flattened QTensor data is
+        # present there is nothing to load for this module, so skip quanto's
+        # reconstruction and leave the existing quantized weight untouched.
+        #
+        # NOTE: this MUST early-return at the QModuleMixin level. The tempting
+        # shortcut of returning None from the inner QBytesTensor loader is wrong —
+        # quanto then executes `self.weight = nn.Parameter(None)`, which is an empty
+        # [0] tensor, silently destroying every quantized weight it visits.
+        _orig_qmm_load = _QMM._load_from_state_dict
+
+        def _safe_qmm_load(self, state_dict, prefix, local_metadata, strict,
+                           missing_keys, unexpected_keys, error_msgs):
+            weight_name = prefix + "weight"
+            if (self.weight_qtype is not None
+                    and weight_name not in state_dict
+                    and (weight_name + "._data") not in state_dict):
+                return
+            return _orig_qmm_load(self, state_dict, prefix, local_metadata, strict,
+                                  missing_keys, unexpected_keys, error_msgs)
+
+        _QMM._load_from_state_dict = _safe_qmm_load
 
         def _ensure_adapter_absent(model, adapter_name):
             if hasattr(model, 'peft_config') and adapter_name in model.peft_config:
@@ -637,6 +769,7 @@ class Wan2214bModel(Wan21):
                         pipeline.transformer = orig_transformer
         finally:
             _peft_lora_model.dispatch_torchao = _orig_dispatch_torchao
+            _QMM._load_from_state_dict = _orig_qmm_load
 
         self._lx2v_loras_ready = True
 
@@ -796,6 +929,16 @@ class Wan2214bModel(Wan21):
                 )[0]
             finally:
                 self._lx2v_move_lora(pipeline.transformer, "lightx2v_high", "cpu")
+
+            # i2v: the pipeline strips the 20 first-frame conditioning channels and
+            # returns bare 16-channel latents, so re-attach the conditioning for stage 2
+            if gen_config.latents is not None and gen_config.latents.shape[1] == 36:
+                conditioning = gen_config.latents[:, 16:].to(
+                    intermediate_latents.device, intermediate_latents.dtype
+                )
+                intermediate_latents = torch.cat(
+                    [intermediate_latents, conditioning], dim=1
+                )
 
             # Stage 2: low-noise model (transformer_2) with low LoRA.
             # Swap pipeline.transformer so the denoising loop uses transformer_2
