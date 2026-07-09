@@ -1133,6 +1133,7 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+      'model.model_kwargs.kv_cache',
     ],
   },
   {
@@ -1226,7 +1227,6 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
-      'model.model_kwargs.kv_cache',
     ],
   },
 ].sort((a, b) => {
