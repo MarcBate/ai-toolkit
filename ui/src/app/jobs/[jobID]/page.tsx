@@ -128,7 +128,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             afterDelete={() => {
               redirect('/jobs');
             }}
-            autoStartQueue={true}
+            autoStartQueue={false}
             isAnyJobRunning={isAnyJobRunning}
             hasSamples={hasSamples}
           />
