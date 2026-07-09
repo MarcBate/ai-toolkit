@@ -56,7 +56,8 @@ Module = Union['LoConSpecialModule', 'LoRAModule', 'DoRAModule']
 LINEAR_MODULES = [
     'Linear',
     'LoRACompatibleLinear',
-    'QLinear'
+    'QLinear',
+    'OstrisLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
