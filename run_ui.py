@@ -15,13 +15,39 @@ if "SEED" in os.environ:
 sys.path.insert(0, os.getcwd())
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
-print("AI Toolkit: loading libraries...", flush=True)
+import time as _time
+os.environ['AITK_PROCESS_START'] = str(_time.time())
+del _time
+
+
+def _early_log(msg: str):
+    """Write a line directly to the --log file before setup_log_to_file takes over.
+
+    setup_log_to_file opens in append mode so these lines are preserved.
+    """
+    try:
+        argv = sys.argv
+        for i, arg in enumerate(argv[:-1]):
+            if arg in ('--log', '-l'):
+                log_path = argv[i + 1]
+                os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+                with open(log_path, 'a') as _f:
+                    _f.write(msg + '\n')
+                break
+    except Exception:
+        pass
+    print(msg, flush=True)
+
+
+_early_log("AI Toolkit: loading libraries (torch / diffusers)...")
 
 import gc
 import json
 import sqlite3
 import argparse
 import torch
+
+_early_log("AI Toolkit: libraries loaded, initializing CUDA / accelerator...")
 
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     torch.autograd.set_detect_anomaly(True)
@@ -39,8 +65,8 @@ from toolkit.accelerator import get_accelerator
 from toolkit.print import print_acc, setup_log_to_file
 from toolkit.ui_utils import update_job_status_to_ui, JobStoppedException
 
-print("AI Toolkit: initializing accelerator...", flush=True)
 accelerator = get_accelerator()
+_early_log("AI Toolkit: accelerator ready, reading job config...")
 
 
 def _get_db_path(config_file: str) -> str:

@@ -2220,6 +2220,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         ### HOOk ###
         self.before_dataset_load()
+        # some models (e.g. wan22_14b_i2v) need the raw image tensor every step
+        # even when latents are cached to disk
+        if getattr(self.sd, 'requires_pixels_with_cached_latents', False):
+            for ds_list in (self.datasets, self.datasets_reg):
+                if ds_list is not None:
+                    for ds in ds_list:
+                        ds.load_image_when_caching_latents = True
         # load datasets if passed in the root process
         if self.datasets is not None and not self.sample_only:
             self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd)
@@ -2493,6 +2500,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # TRAIN LOOP
         ###################################################################
 
+        _proc_start = os.environ.get('AITK_PROCESS_START')
+        if _proc_start:
+            import time as _t
+            _elapsed = _t.time() - float(_proc_start)
+            print_acc(f"Time to first step: {_elapsed:.0f}s ({_elapsed / 60:.1f}min)")
 
         start_step_num = self.step_num
         did_first_flush = False

@@ -302,10 +302,36 @@ mkdir -p "$(dirname "${LOG_FILE}")"
 
 cd "${UI_DIR}"
 
+# Only rebuild if source files changed since the last build.
+# Checks src/, public/, package.json, next.config.*, and tsconfig files.
+NEXT_BUILD="${UI_DIR}/.next/BUILD_ID"
+UI_NEEDS_BUILD=0
+
+if [[ ! -f "${NEXT_BUILD}" ]]; then
+  echo "---- No existing build found, will build."
+  UI_NEEDS_BUILD=1
+elif find "${UI_DIR}/src" "${UI_DIR}/public" \
+         "${UI_DIR}/package.json" "${UI_DIR}/tsconfig.json" \
+         "${UI_DIR}/tsconfig.worker.json" \
+         -newer "${NEXT_BUILD}" -print -quit 2>/dev/null | grep -q .; then
+  echo "---- UI source files changed since last build, will rebuild."
+  UI_NEEDS_BUILD=1
+elif [[ -n "$(find "${UI_DIR}" -maxdepth 1 -name "next.config.*" -newer "${NEXT_BUILD}" 2>/dev/null)" ]]; then
+  echo "---- next.config changed since last build, will rebuild."
+  UI_NEEDS_BUILD=1
+else
+  echo "---- UI build is up to date, skipping rebuild."
+fi
+
 (
-  npm run build_and_start 2>&1 | tee -a "${LOG_FILE}"
-) &
+  if [[ "${UI_NEEDS_BUILD}" == "1" ]]; then
+    npm install && npm run update_db && npm run build && npm run start
+  else
+    npm run update_db && npm run start
+  fi
+) 2>&1 | tee -a "${LOG_FILE}" &
 UI_PID=$!
+
 
 echo "UI PID: ${UI_PID}"
 echo "Waiting for ${UI_URL} ..."
