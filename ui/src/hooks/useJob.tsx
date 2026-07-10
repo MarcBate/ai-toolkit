@@ -1,14 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
+
+// how soon the next poll fires after a manual refresh (e.g. after clicking Stop),
+// so status changes show up quickly instead of waiting out the full reloadInterval
+const FAST_FOLLOWUP_INTERVAL = 1000;
 
 export default function useJob(jobID: string, reloadInterval: null | number = null) {
   const [job, setJob] = useState<Job | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refreshJob = () => {
+  const fetchJob = () => {
     setStatus('loading');
     apiClient
       .get(`/api/jobs?id=${jobID}`)
@@ -24,19 +29,28 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
       });
   };
 
+  const scheduleNext = (delay: number) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!reloadInterval) return;
+    timerRef.current = setTimeout(() => {
+      fetchJob();
+      scheduleNext(reloadInterval);
+    }, delay);
+  };
+
   useEffect(() => {
-    refreshJob();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshJob();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
-    }
+    fetchJob();
+    scheduleNext(reloadInterval || 0);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, [jobID]);
+
+  // manual refresh (e.g. after stopping a job) also fast-tracks the next poll
+  const refreshJob = () => {
+    fetchJob();
+    scheduleNext(FAST_FOLLOWUP_INTERVAL);
+  };
 
   return { job, setJob, status, refreshJob };
 }

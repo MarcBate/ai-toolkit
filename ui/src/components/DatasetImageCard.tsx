@@ -156,9 +156,14 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     };
   }, [imageUrl]);
 
+  // Not gated by isVisible: when a card scrolls outside Virtuoso's overscan window it
+  // unmounts, and gating on visibility fed `null` here, which useCaptionBatch treats as
+  // "clear the caption" (caption='', isLoaded=false). Scrolling back caused a moment
+  // (or, on cache miss, indefinitely) where the caption showed blank. Fetching is cheap
+  // here (module-level batched + cached in useCaptionBatch), so just always fetch.
   const combinedRefreshKey = captionRefreshKey + pollTick;
   const { caption: fetchedCaption, isLoaded: isCaptionLoaded } = useCaptionBatch(
-    isVisible ? imageUrl : null,
+    imageUrl,
     combinedRefreshKey,
     captionExt,
   );
@@ -318,9 +323,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             <button
               className="bg-gray-800 rounded-full p-2"
               onClick={() => {
+                const mediaLabel = isItAVideo ? 'video' : isItAudio ? 'song' : 'image';
                 openConfirm({
-                  title: `Delete ${isItAVideo ? 'video' : 'image'}`,
-                  message: `Are you sure you want to delete this ${isItAVideo ? 'video' : 'image'}? This action cannot be undone.`,
+                  title: `Delete ${mediaLabel}`,
+                  message: `Are you sure you want to delete this ${mediaLabel}? This action cannot be undone.`,
                   type: 'warning',
                   confirmText: 'Delete',
                   onConfirm: () => {
@@ -346,7 +352,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'border-blue-500 border-2': !isCaptionCurrent,
           'border-transparent border-2': isCaptionCurrent,
           'h-[75px] overflow-hidden': !effectivelyEditing,
-          'min-h-[75px] z-10': effectivelyEditing,
+          // Capped (not unbounded) growth: long captions (e.g. songs, which embed
+          // CAPTION/LYRICS/BPM tags) would otherwise grow the card taller than the
+          // grid row Virtuoso allocated, overlapping the row below. Clicking into that
+          // overlap hit the next card instead of this textarea, blurring and closing
+          // the editor. Scrolling internally keeps the card self-contained.
+          'max-h-80 overflow-y-auto z-10': effectivelyEditing,
         })}
       >
         {effectivelyLoaded ? (
@@ -365,7 +376,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               className={classNames('w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none', {
                 'opacity-50 cursor-not-allowed': isAutoCaptioning,
               })}
-              style={effectivelyEditing ? ({ fieldSizing: 'content' } as any) : {}}
+              style={effectivelyEditing ? ({ fieldSizing: 'content', minHeight: '75px' } as any) : {}}
               value={caption}
               rows={effectivelyEditing ? undefined : 3}
               readOnly={isAutoCaptioning}

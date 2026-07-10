@@ -10,7 +10,6 @@ import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
-import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 import { Modal } from '@/components/Modal';
 import { FloatingWindow } from '@/components/FloatingWindow';
 import { TextInput, Checkbox } from '@/components/formInputs';
@@ -52,6 +51,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     if (typeof window === 'undefined') return 'txt';
     return localStorage.getItem(`captionExt:${datasetName}`) ?? 'txt';
   });
+  // re-read on datasetName change too: Next.js can reuse this component instance when
+  // navigating between datasets, so the lazy initializer above won't rerun on its own
+  useEffect(() => {
+    setCaptionExt(localStorage.getItem(`captionExt:${datasetName}`) ?? 'txt');
+  }, [datasetName]);
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
   const [captionBarHeight, setCaptionBarHeight] = useState(0);
@@ -124,6 +128,9 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
   const filteredImgList = useMemo(() => {
     if (!filter) return imgList;
 
+    const getCaption = (img: typeof imgList[number]) =>
+      img.captions?.[captionExt] ?? (captionExt === 'txt' ? img.caption : '') ?? '';
+
     const escapeRegExp = (string: string) => {
       return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     };
@@ -163,7 +170,7 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     const orParts = splitByOperator(filter, 'or');
     if (orParts.length > 1) {
       return imgList.filter(img => {
-        const caption = img.caption || '';
+        const caption = getCaption(img);
         return orParts.some(part => {
           const andParts = splitByOperator(part, 'and');
           if (andParts.length > 1) {
@@ -177,13 +184,13 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     const andParts = splitByOperator(filter, 'and');
     if (andParts.length > 1) {
       return imgList.filter(img => {
-        const caption = img.caption || '';
+        const caption = getCaption(img);
         return andParts.every(part => matchesTerm(caption, part));
       });
     }
 
-    return imgList.filter(img => matchesTerm(img.caption || '', filter));
-  }, [imgList, filter]);
+    return imgList.filter(img => matchesTerm(getCaption(img), filter));
+  }, [imgList, filter, captionExt]);
   useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
 
   const imgPaths = useMemo(() => imgList.map(img => img.img_path), [imgList]);
@@ -377,14 +384,23 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     }, 100);
   }, [prefetchCaptionsForExt, captionExt]);
 
+  // keep captions for the active extension loaded so the search box (and find/replace)
+  // can match against them, not just the .txt caption. Re-runs after a list refresh too,
+  // since refreshImageList() clears the loaded-extensions cache.
+  useEffect(() => {
+    if (status === 'success') {
+      prefetchCaptionsForExt(captionExt);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionExt, status]);
+
   useEffect(() => {
     if (!isFindReplaceOpen) return;
     setFindNextIndex(-1);
     setFindMatchCharIndex(-1);
     setFindResultStatus('none');
-    prefetchCaptionsForExt(captionExt);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captionExt]);
+  }, [captionExt, isFindReplaceOpen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -612,10 +628,6 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
         <div style={{ height: `${captionBarHeight + 24}px` }} className="transition-[height] duration-300" />
       </MainContent>
       <AddImagesModal />
-      <FullscreenDropOverlay
-        datasetName={datasetName}
-        onComplete={() => refreshImageList(datasetName)}
-      />
       {isSettingsLoaded && (
         <CaptionMonitor
           datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
