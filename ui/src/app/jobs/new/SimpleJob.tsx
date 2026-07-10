@@ -1978,24 +1978,43 @@ export default function SimpleJob({
                       setJobConfig(1, 'config.process[0].sample.sample_lora_strength');
                     } else {
                       setJobConfig(null, 'config.process[0].sample.sample_lora_path');
+                      setJobConfig(null, 'config.process[0].sample.sample_lora_path_2');
                     }
                   }}
                 />
                 {jobConfig.config.process[0].sample.sample_lora_path !== null &&
                   jobConfig.config.process[0].sample.sample_lora_path !== undefined && (
-                  <div className="mt-2 pl-2 space-y-2">
-                    <LoraPathInput
-                      label="LoRA Path"
-                      value={jobConfig.config.process[0].sample.sample_lora_path ?? ''}
-                      onChange={v => setJobConfig(v, 'config.process[0].sample.sample_lora_path')}
-                    />
-                    <NumberInput
-                      label="Strength"
-                      value={jobConfig.config.process[0].sample.sample_lora_strength ?? 1}
-                      onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength')}
-                      min={0.01}
-                      max={1000}
-                    />
+                  <div className="mt-2 pl-2 space-y-3">
+                    <div className="space-y-2">
+                      <LoraPathInput
+                        label="LoRA 1 Path"
+                        value={jobConfig.config.process[0].sample.sample_lora_path ?? ''}
+                        onChange={v => setJobConfig(v, 'config.process[0].sample.sample_lora_path')}
+                      />
+                      <NumberInput
+                        label="Strength"
+                        value={jobConfig.config.process[0].sample.sample_lora_strength ?? 1}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength')}
+                        min={0.01}
+                        max={1000}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <LoraPathInput
+                        label="LoRA 2 Path (optional)"
+                        value={jobConfig.config.process[0].sample.sample_lora_path_2 ?? ''}
+                        onChange={v => setJobConfig(v || null, 'config.process[0].sample.sample_lora_path_2')}
+                      />
+                      {jobConfig.config.process[0].sample.sample_lora_path_2 && (
+                        <NumberInput
+                          label="Strength"
+                          value={jobConfig.config.process[0].sample.sample_lora_strength_2 ?? 4}
+                          onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength_2')}
+                          min={0.01}
+                          max={1000}
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

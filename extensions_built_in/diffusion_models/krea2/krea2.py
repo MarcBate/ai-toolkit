@@ -381,7 +381,11 @@ class Krea2Model(BaseModel):
         self.invert_assistant_lora = True
 
     # ------------------------------------------------------------------
-    # Sampling LoRA (applied only during preview generation, not training)
+    # Sampling LoRAs (merged before preview generation, unmerged after)
+    # Supports up to two LoRAs via sample_lora_path / sample_lora_path_2.
+    # Handles two on-disk formats:
+    #   • lora_A / lora_B (PEFT) or lora_down / lora_up: low-rank decomposition
+    #   • *.diff: direct additive weight delta
     # ------------------------------------------------------------------
 
     @classmethod
@@ -390,101 +394,137 @@ class Krea2Model(BaseModel):
         for cfg in all_configs:
             if cfg is None:
                 continue
-            path = getattr(cfg, 'sample_lora_path', None)
-            if path and not os.path.exists(path):
-                raise FileNotFoundError(
-                    f"Sample LoRA path not found (check config before training starts): {path}"
-                )
+            for attr in ('sample_lora_path', 'sample_lora_path_2'):
+                path = getattr(cfg, attr, None)
+                if path and not os.path.exists(path):
+                    raise FileNotFoundError(
+                        f"Sample LoRA path not found (check config before training starts): {path}"
+                    )
 
     def _has_sampling_lora(self):
         sc = getattr(self, 'sample_config', None)
-        if sc is not None and getattr(sc, 'sample_lora_path', None):
-            return True
-        return self.model_config.sample_lora_path is not None
+        for attr in ('sample_lora_path', 'sample_lora_path_2'):
+            if (sc is not None and getattr(sc, attr, None)) or getattr(self.model_config, attr, None):
+                return True
+        return False
+
+    def _merge_lora_file(self, path, strength):
+        """Load one LoRA/diff file and add its weighted delta to transformer params.
+
+        Returns a list of (param_name, delta_fp32, strength) tuples for reversal.
+        """
+        param_dict = dict(self.model.named_parameters())
+
+        sd = load_file(path)
+        # normalise key prefix — strip diffusion_model. or transformer. so we have bare param paths
+        def _bare(k):
+            k = k.replace("diffusion_model.", "")
+            if k.startswith("transformer."):
+                k = k[len("transformer."):]
+            return k
+
+        sd = {_bare(k): v for k, v in sd.items()}
+
+        applied = []
+
+        # --- .diff format: key path ends in .diff, target param replaces .diff with .weight ---
+        diff_keys = [k for k in sd if k.endswith(".diff")]
+        if diff_keys:
+            for dk in diff_keys:
+                param_name = dk[:-len(".diff")] + ".weight"
+                if param_name not in param_dict:
+                    self.print_and_status_update(f"  skip diff key (no param): {dk}")
+                    continue
+                param = param_dict[param_name]
+                delta = sd[dk].to(param.device, dtype=torch.float32)
+                param.data.add_(delta.to(param.dtype) * strength)
+                applied.append((param_name, delta, strength))
+            return applied
+
+        # --- lora_A/lora_B (or lora_down/lora_up) format ---
+        bases: dict = {}
+        for k in sd:
+            for marker in (".lora_A.", ".lora_B.", ".lora_down.", ".lora_up.", ".alpha"):
+                if marker in k:
+                    idx = k.index(marker)
+                    base = k[:idx]
+                    part = k[idx + 1:].split(".")[0]  # e.g. "lora_A", "lora_B", "alpha"
+                    bases.setdefault(base, {})[part] = sd[k]
+                    break
+
+        for base, parts in bases.items():
+            down = parts.get("lora_A") or parts.get("lora_down")
+            up   = parts.get("lora_B") or parts.get("lora_up")
+            if down is None or up is None:
+                continue
+
+            param_name = base + ".weight"
+            if param_name not in param_dict:
+                continue
+
+            rank = down.shape[0]
+            alpha_val = float(parts["alpha"].item()) if "alpha" in parts else float(rank)
+            scale = alpha_val / rank
+
+            if down.dim() == 2 and up.dim() == 2:
+                delta = (up.float() @ down.float()) * scale
+            else:
+                continue
+
+            param = param_dict[param_name]
+            param.data.add_(delta.to(param.device, dtype=param.dtype) * strength)
+            applied.append((param_name, delta, strength))
+
+        return applied
+
+    def _unmerge_lora(self, applied):
+        """Reverse all deltas from _merge_lora_file."""
+        param_dict = dict(self.model.named_parameters())
+        for param_name, delta, strength in applied:
+            if param_name in param_dict:
+                param = param_dict[param_name]
+                param.data.sub_(delta.to(param.device, dtype=param.dtype) * strength)
 
     def _prepare_sampling_lora(self, pipeline):
         sc = getattr(self, 'sample_config', None)
-        lora_path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
-        strength = (getattr(sc, 'sample_lora_strength', None) if sc else None) or self.model_config.sample_lora_strength
+        slots = [
+            ('sample_lora_path',   'sample_lora_strength',   1.0),
+            ('sample_lora_path_2', 'sample_lora_strength_2', 1.0),
+        ]
+        all_applied = []
+        for path_attr, strength_attr, default_s in slots:
+            path = (getattr(sc, path_attr, None) if sc else None) or getattr(self.model_config, path_attr, None)
+            if not path:
+                continue
+            if not os.path.exists(path):
+                self.print_and_status_update(f"Warning: sample LoRA not found: {path}")
+                continue
+            strength = (getattr(sc, strength_attr, None) if sc else None) or getattr(self.model_config, strength_attr, default_s) or default_s
+            self.print_and_status_update(f"Merging sample LoRA: {os.path.basename(path)} (strength={strength})")
+            applied = self._merge_lora_file(path, strength)
+            self.print_and_status_update(f"  Applied {len(applied)} tensors")
+            all_applied.extend(applied)
 
-        if not os.path.exists(lora_path):
-            self.print_and_status_update(f"Warning: sample LoRA not found: {lora_path}")
-            return
-
-        self.print_and_status_update(f"Loading sample LoRA: {os.path.basename(lora_path)}")
-        transformer = self.model
-
-        lora_state_dict = load_file(lora_path)
-        # remap diffusion_model. prefix to match our transformer namespace
-        lora_state_dict = {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in lora_state_dict.items()
-        }
-
-        # detect rank from the first lora_A (peft) or lora_down key
-        dim_key = next(
-            (k for k in lora_state_dict if k.endswith("lora_A.weight")),
-            next((k for k in lora_state_dict if k.endswith("lora_down.weight")), None),
-        )
-        if dim_key is None:
-            self.print_and_status_update("Warning: could not detect sample LoRA rank — skipping")
-            return
-        dim = int(lora_state_dict[dim_key].shape[0])
-
-        network_config = NetworkConfig(**{
-            "type": "lora",
-            "linear": dim,
-            "linear_alpha": dim,
-            "transformer_only": True,
-        })
-
-        LoRASpecialNetwork.LORA_PREFIX_UNET = "lora_transformer"
-        network = LoRASpecialNetwork(
-            text_encoder=None,
-            unet=transformer,
-            lora_dim=network_config.linear,
-            multiplier=strength,
-            alpha=network_config.linear_alpha,
-            train_unet=True,
-            train_text_encoder=False,
-            network_config=network_config,
-            network_type=network_config.type,
-            transformer_only=network_config.transformer_only,
-            is_transformer=True,
-            target_lin_modules=self.target_lora_modules,
-        )
-        network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
-        network.force_to(self.device_torch, dtype=self.torch_dtype)
-        network._update_torch_multiplier()
-        network.load_weights(lora_state_dict)
-        network.is_active = True
-
-        self._sampling_lora_network = network
+        self._sampling_lora_applied = all_applied
         self._sampling_lora_ready = True
-        self.print_and_status_update(f"Sample LoRA ready (rank={dim}, strength={strength})")
 
     def _teardown_sampling_lora(self):
-        network = getattr(self, '_sampling_lora_network', None)
-        if network is not None:
-            # Restore each patched module's original forward method
-            for lora in network.get_all_modules():
-                if hasattr(lora, 'org_forward') and hasattr(lora, 'org_module'):
-                    try:
-                        lora.org_module[0].forward = lora.org_forward
-                    except Exception:
-                        pass
-            self._sampling_lora_network = None
+        applied = getattr(self, '_sampling_lora_applied', None)
+        if applied:
+            self._unmerge_lora(applied)
+            self._sampling_lora_applied = None
         self._sampling_lora_ready = False
 
     def _validate_sample_config(self, image_configs):
         if not self._has_sampling_lora():
             return
         sc = getattr(self, 'sample_config', None)
-        path = (getattr(sc, 'sample_lora_path', None) if sc else None) or self.model_config.sample_lora_path
-        if path and not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Sample LoRA not found — aborting sample to avoid useless inference: {path}"
-            )
+        for attr in ('sample_lora_path', 'sample_lora_path_2'):
+            path = (getattr(sc, attr, None) if sc else None) or getattr(self.model_config, attr, None)
+            if path and not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Sample LoRA not found — aborting sample to avoid useless inference: {path}"
+                )
 
     def _before_generate_images_loop(self, pipeline, image_configs):
         if self._has_sampling_lora():
