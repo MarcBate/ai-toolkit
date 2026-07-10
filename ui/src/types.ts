@@ -286,7 +286,7 @@ export interface CaptionProcessConfig {
     qtype: string;
     low_vram: boolean;
     extensions: string[];
-    path_to_caption: string;
+    path_to_caption: string | string[];
     recaption: boolean;
     compile?: boolean;
     caption_prompt?: string;

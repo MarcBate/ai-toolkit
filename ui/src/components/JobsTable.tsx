@@ -245,12 +245,26 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
         let href = `/jobs/${row.id}`;
         // if (row.job_type === 'train') title = `Train: ${title}`;
         if (row.job_type === 'caption') {
-          let splits = (row.job_ref || '').split(/[/\\]/);
-          const datasetPath = `${splits[splits.length - 1]}`;
-          href = `/datasets/${datasetPath}`;
+          let paths: string[] = [];
+          try {
+            const jobConfig: JobConfig = JSON.parse(row.job_config);
+            const pathToCaption = (jobConfig as any)?.config?.process?.[0]?.caption?.path_to_caption;
+            if (Array.isArray(pathToCaption)) {
+              paths = pathToCaption;
+            } else if (typeof pathToCaption === 'string') {
+              paths = pathToCaption.split('|');
+            }
+          } catch { /* malformed config */ }
+          paths = paths.map(p => p.trim()).filter(Boolean);
+          if (paths.length === 0) paths = [row.job_ref || ''];
+          const names = paths.map(p => {
+            const splits = p.split(/[/\\]/);
+            return splits[splits.length - 1];
+          });
+          href = `/datasets/${names[0]}`;
           title = (
             <>
-              <small className="opacity-50">CAPTION: </small> {datasetPath}
+              <small className="opacity-50">CAPTION: </small> {names.join(', ')}
             </>
           );
         }
