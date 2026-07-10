@@ -14,6 +14,9 @@ from .wan22_14b_model import Wan2214bModel
 
 class Wan2214bI2VModel(Wan2214bModel):
     arch = "wan22_14b_i2v"
+    # get_noise_prediction VAE-encodes the first frame every step, so the raw
+    # image tensor must be loaded even when latents are cached to disk
+    requires_pixels_with_cached_latents = True
     
     
     def generate_single_image(
@@ -84,7 +87,48 @@ class Wan2214bI2VModel(Wan2214bModel):
             self.maybe_stop()
             return callback_kwargs
 
-        output = pipeline(
+        # keep gen_config in sync with the divisibility-adjusted dims so the
+        # LightX2V path (which reads gen_config) matches the direct path
+        gen_config.height = height
+        gen_config.width = width
+
+        if self._has_lightx2v_loras():
+            output = self._lightx2v_generate(
+                pipeline,
+                gen_config,
+                conditional_embeds,
+                unconditional_embeds,
+                generator,
+                extra,
+            )
+        else:
+            output = self._i2v_generate(
+                pipeline, gen_config, conditional_embeds, unconditional_embeds,
+                generator, extra, height, width, _stop_callback,
+            )
+
+        # shape = [1, frames, channels, height, width]
+        batch_item = output[0]  # list of pil images
+        if gen_config.num_frames > 1:
+            return batch_item  # return the frames.
+        else:
+            # get just the first image
+            img = batch_item[0]
+        return img
+
+    def _i2v_generate(
+        self,
+        pipeline,
+        gen_config,
+        conditional_embeds,
+        unconditional_embeds,
+        generator,
+        extra,
+        height,
+        width,
+        _stop_callback,
+    ):
+        return pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
             ),
@@ -104,15 +148,6 @@ class Wan2214bI2VModel(Wan2214bModel):
             **extra,
         )[0]
 
-        # shape = [1, frames, channels, height, width]
-        batch_item = output[0]  # list of pil images
-        if gen_config.num_frames > 1:
-            return batch_item  # return the frames.
-        else:
-            # get just the first image
-            img = batch_item[0]
-        return img
-    
     def get_noise_prediction(
         self,
         latent_model_input: torch.Tensor,
@@ -132,6 +167,11 @@ class Wan2214bI2VModel(Wan2214bModel):
             else:
                 raise ValueError(f"Unknown frame shape {frames.shape}")
             
+            # the vae may be parked on cpu when latents are cached to disk,
+            # but we need it every step to encode the first-frame conditioning
+            if self.vae.device != latent_model_input.device:
+                self.vae.to(latent_model_input.device)
+
             # Add conditioning using the standalone function
             conditioned_latent = add_first_frame_conditioning(
                 latent_model_input=latent_model_input,
