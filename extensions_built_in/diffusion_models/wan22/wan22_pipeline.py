@@ -90,6 +90,9 @@ class Wan22Pipeline(WanPipeline):
         text_encoder_device = self.text_encoder.device
         device = self._exec_device
 
+        if vae_device == torch.device("cpu"):
+            vae_device = self.reset_device_map
+
         # Only load the text encoder when we actually need to encode — skip it when
         # pre-computed prompt_embeds are already provided (e.g. LightX2V two-stage sampling
         # where the text encoder was unloaded after caching training embeddings).

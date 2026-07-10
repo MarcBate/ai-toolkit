@@ -134,6 +134,9 @@ class QwenImageEditPlusModel(QwenImageModel):
 
             return {"latents": latents}
 
+        if self.model_config.low_vram:
+            pipeline.vae.enable_tiling()
+
         if getattr(self, '_sampling_lora_ready', False):
             self._lora_move(pipeline.transformer, "sampling_lora", self.device_torch)
         try:
@@ -160,6 +163,9 @@ class QwenImageEditPlusModel(QwenImageModel):
         finally:
             if getattr(self, '_sampling_lora_ready', False):
                 self._lora_move(pipeline.transformer, "sampling_lora", "cpu")
+
+        if self.model_config.low_vram:
+            pipeline.vae.disable_tiling()
         return img
 
     def condition_noisy_latents(

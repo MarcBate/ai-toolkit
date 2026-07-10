@@ -296,6 +296,9 @@ class QwenImageModel(BaseModel):
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
+        if self.model_config.low_vram:
+            pipeline.vae.enable_tiling()
+
         if getattr(self, '_sampling_lora_ready', False):
             self._lora_move(pipeline.transformer, "sampling_lora", self.device_torch)
         try:
@@ -320,6 +323,9 @@ class QwenImageModel(BaseModel):
         finally:
             if getattr(self, '_sampling_lora_ready', False):
                 self._lora_move(pipeline.transformer, "sampling_lora", "cpu")
+
+        if self.model_config.low_vram:
+            pipeline.vae.disable_tiling()
         return img
 
     def get_noise_prediction(
