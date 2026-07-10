@@ -36,7 +36,7 @@ from toolkit.train_tools import precondition_model_outputs_flow_match
 from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
 from toolkit.util.losses import wavelet_loss, stepped_loss
 import torch.nn.functional as F
-from toolkit.unloader import unload_text_encoder
+from toolkit.unloader import unload_text_encoder, FakeTextEncoder
 from PIL import Image
 from torchvision.transforms import functional as TF
 from toolkit.basic import flush
@@ -113,12 +113,36 @@ class SDTrainer(BaseSDTrainProcess):
     def before_model_load(self):
         pass
     
+    def _text_encoder_is_unloaded(self) -> bool:
+        """True once the text encoder has been swapped for a FakeTextEncoder (unloaded).
+        The empty-list / Gemma API case is NOT considered unloaded — encoding still works
+        via the API there."""
+        te = getattr(self.sd, 'text_encoder', None)
+        if te is None:
+            return False
+        te_list = te if isinstance(te, list) else [te]
+        return any(isinstance(t, FakeTextEncoder) for t in te_list)
+
     def cache_sample_prompts(self):
         if self.train_config.disable_sampling:
             return
+        # After the text encoder is unloaded (replaced with FakeTextEncoder) we can no
+        # longer encode prompts, so a rebuild is impossible. Bail out and keep whatever
+        # cache we already have rather than throwing "fake text encoder" errors on every
+        # on-demand sample. Prompt edits made mid-run won't take effect until restart in
+        # this mode. (Gemma API mode is unaffected — it isn't a fake TE.)
+        if self.sd.sample_prompts_cache is not None and self._text_encoder_is_unloaded():
+            print(
+                "Note: text encoder is unloaded; keeping existing sample prompt cache. "
+                "Prompt edits will apply after restarting the job."
+            )
+            return
         if self.sample_config is not None and self.sample_config.samples is not None and len(self.sample_config.samples) > 0:
-            # cache all the samples
-            self.sd.sample_prompts_cache = []
+            # Build into a local list and only assign once fully built. If encoding
+            # throws partway (e.g. a re-cache is attempted after the text encoder was
+            # unloaded), a partial list must NOT replace the existing cache — a cache
+            # shorter than the prompt list causes IndexError during generate_images.
+            new_cache = []
             sample_folder = os.path.join(self.save_root, 'samples')
             output_path = os.path.join(sample_folder, 'test.jpg')
             for i in range(len(self.sample_config.prompts)):
@@ -200,10 +224,13 @@ class SDTrainer(BaseSDTrainProcess):
                     positive = self.sd.encode_prompt(gen_img_config.prompt).to('cpu')
                     negative = self.sd.encode_prompt(gen_img_config.negative_prompt).to('cpu')
                 
-                self.sd.sample_prompts_cache.append({
+                new_cache.append({
                     'conditional': positive,
                     'unconditional': negative
                 })
+
+            # atomically swap in the fully-built cache
+            self.sd.sample_prompts_cache = new_cache
         
 
     def before_dataset_load(self):

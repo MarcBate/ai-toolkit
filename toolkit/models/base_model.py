@@ -567,7 +567,17 @@ class BaseModel:
                             quad_count=4
                         )
 
-                    if self.sample_prompts_cache is not None:
+                    # The cache is indexed by position and must line up with image_configs.
+                    # If it's short (e.g. a re-cache failed after the text encoder was
+                    # unloaded, or prompts were edited mid-run), fall back to live encoding
+                    # rather than raising IndexError and aborting the whole sample batch.
+                    use_cache = self.sample_prompts_cache is not None and i < len(self.sample_prompts_cache)
+                    if self.sample_prompts_cache is not None and not use_cache:
+                        print(
+                            f"Warning: sample prompt cache missing entry {i} "
+                            f"(have {len(self.sample_prompts_cache)}); encoding this prompt live."
+                        )
+                    if use_cache:
                         conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
                     else:

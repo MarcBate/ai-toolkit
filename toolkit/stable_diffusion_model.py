@@ -1479,10 +1479,19 @@ class StableDiffusion:
                             quad_count=4
                         )
 
-                    if self.sample_prompts_cache is not None:
+                    # Cache is indexed by position; if it's short (e.g. re-cache failed
+                    # after the text encoder was unloaded, or prompts changed mid-run),
+                    # fall back to live encoding instead of raising IndexError.
+                    use_cache = self.sample_prompts_cache is not None and i < len(self.sample_prompts_cache)
+                    if self.sample_prompts_cache is not None and not use_cache:
+                        print(
+                            f"Warning: sample prompt cache missing entry {i} "
+                            f"(have {len(self.sample_prompts_cache)}); encoding this prompt live."
+                        )
+                    if use_cache:
                         conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
-                    else: 
+                    else:
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False

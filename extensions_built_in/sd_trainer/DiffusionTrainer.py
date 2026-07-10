@@ -250,6 +250,11 @@ class DiffusionTrainer(SDTrainer):
                     sample_conf = job_cfg.get('config', {}).get('process', [{}])[0].get('sample', {})
                     if sample_conf:
                         self.sample_config = SampleConfig(**sample_conf)
+                        # prompt embeds are precomputed and indexed by position when the
+                        # text encoder is unloaded/cached; rebuild that cache so newly
+                        # added prompts have a matching entry
+                        if self.sd.sample_prompts_cache is not None:
+                            self.cache_sample_prompts()
         except Exception as e:
             print(f"Warning: Could not reload sample config from DB: {e}")
 
