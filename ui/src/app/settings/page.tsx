@@ -155,6 +155,70 @@ export default function Settings() {
             </div>
           </div>
 
+          <div className="border-t border-gray-700 pt-6">
+            <h2 className="text-base font-semibold mb-4">AI Config Check</h2>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="CHECK_CONFIG_API_BASE_URL" className="block text-sm font-medium mb-2">
+                  API Base URL
+                  <div className="text-gray-500 text-sm ml-1">
+                    OpenAI-compatible endpoint. Use{' '}
+                    <code className="text-gray-300">https://api.anthropic.com/v1</code> for Claude,
+                    or your local Ollama address (e.g. <code className="text-gray-300">http://192.168.1.x:11434/v1</code>).
+                    Leave blank to disable the Check Config button.
+                  </div>
+                </label>
+                <input
+                  type="text"
+                  id="CHECK_CONFIG_API_BASE_URL"
+                  name="CHECK_CONFIG_API_BASE_URL"
+                  value={settings.CHECK_CONFIG_API_BASE_URL}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                  placeholder="https://api.anthropic.com/v1"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="CHECK_CONFIG_API_KEY" className="block text-sm font-medium mb-2">
+                  API Key
+                  <div className="text-gray-500 text-sm ml-1">
+                    Your Anthropic or provider API key. Leave blank for Ollama (no auth required).
+                  </div>
+                </label>
+                <input
+                  type="password"
+                  id="CHECK_CONFIG_API_KEY"
+                  name="CHECK_CONFIG_API_KEY"
+                  value={settings.CHECK_CONFIG_API_KEY}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                  placeholder="sk-ant-..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="CHECK_CONFIG_MODEL" className="block text-sm font-medium mb-2">
+                  Model
+                  <div className="text-gray-500 text-sm ml-1">
+                    Model to use for config analysis. Defaults to{' '}
+                    <code className="text-gray-300">claude-sonnet-5</code>. For visual analysis of
+                    sample images, a vision-capable model is required (e.g. Qwen2.5-VL via Ollama).
+                  </div>
+                </label>
+                <input
+                  type="text"
+                  id="CHECK_CONFIG_MODEL"
+                  name="CHECK_CONFIG_MODEL"
+                  value={settings.CHECK_CONFIG_MODEL}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                  placeholder="claude-sonnet-5"
+                />
+              </div>
+            </div>
+          </div>
+
           <button
             type="submit"
             disabled={status === 'saving'}

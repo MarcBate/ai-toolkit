@@ -9,6 +9,9 @@ export interface Settings {
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
   QUANTIZATION_CACHE_DIR: string;
+  CHECK_CONFIG_API_BASE_URL: string;
+  CHECK_CONFIG_API_KEY: string;
+  CHECK_CONFIG_MODEL: string;
   VERSION: string;
 }
 
@@ -19,6 +22,9 @@ export default function useSettings() {
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
     QUANTIZATION_CACHE_DIR: '',
+    CHECK_CONFIG_API_BASE_URL: '',
+    CHECK_CONFIG_API_KEY: '',
+    CHECK_CONFIG_MODEL: '',
     VERSION: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
@@ -34,6 +40,9 @@ export default function useSettings() {
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
           QUANTIZATION_CACHE_DIR: data.QUANTIZATION_CACHE_DIR || '',
+          CHECK_CONFIG_API_BASE_URL: data.CHECK_CONFIG_API_BASE_URL || '',
+          CHECK_CONFIG_API_KEY: data.CHECK_CONFIG_API_KEY || '',
+          CHECK_CONFIG_MODEL: data.CHECK_CONFIG_MODEL || '',
           VERSION: data.VERSION || '',
         });
         setIsLoaded(true);

@@ -27,6 +27,11 @@ export async function GET() {
       settingsObject.QUANTIZATION_CACHE_DIR = '';
     }
 
+    // Check Config AI settings
+    if (!settingsObject.CHECK_CONFIG_API_BASE_URL) settingsObject.CHECK_CONFIG_API_BASE_URL = '';
+    if (!settingsObject.CHECK_CONFIG_API_KEY) settingsObject.CHECK_CONFIG_API_KEY = '';
+    if (!settingsObject.CHECK_CONFIG_MODEL) settingsObject.CHECK_CONFIG_MODEL = 'claude-sonnet-5';
+
     // Read version from version.py in root
     let version = 'unknown';
     try {
@@ -50,35 +55,24 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR } = body;
+    const {
+      HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR,
+      CHECK_CONFIG_API_BASE_URL, CHECK_CONFIG_API_KEY, CHECK_CONFIG_MODEL,
+    } = body;
+
+    const upsert = (key: string, value: string) =>
+      prisma.settings.upsert({ where: { key }, update: { value }, create: { key, value } });
 
     // Upsert all settings
     await Promise.all([
-      prisma.settings.upsert({
-        where: { key: 'HF_TOKEN' },
-        update: { value: HF_TOKEN },
-        create: { key: 'HF_TOKEN', value: HF_TOKEN },
-      }),
-      prisma.settings.upsert({
-        where: { key: 'GEMMA_API_KEY' },
-        update: { value: GEMMA_API_KEY ?? '' },
-        create: { key: 'GEMMA_API_KEY', value: GEMMA_API_KEY ?? '' },
-      }),
-      prisma.settings.upsert({
-        where: { key: 'TRAINING_FOLDER' },
-        update: { value: TRAINING_FOLDER },
-        create: { key: 'TRAINING_FOLDER', value: TRAINING_FOLDER },
-      }),
-      prisma.settings.upsert({
-        where: { key: 'DATASETS_FOLDER' },
-        update: { value: DATASETS_FOLDER },
-        create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
-      }),
-      prisma.settings.upsert({
-        where: { key: 'QUANTIZATION_CACHE_DIR' },
-        update: { value: QUANTIZATION_CACHE_DIR ?? '' },
-        create: { key: 'QUANTIZATION_CACHE_DIR', value: QUANTIZATION_CACHE_DIR ?? '' },
-      }),
+      upsert('HF_TOKEN', HF_TOKEN ?? ''),
+      upsert('GEMMA_API_KEY', GEMMA_API_KEY ?? ''),
+      upsert('TRAINING_FOLDER', TRAINING_FOLDER ?? ''),
+      upsert('DATASETS_FOLDER', DATASETS_FOLDER ?? ''),
+      upsert('QUANTIZATION_CACHE_DIR', QUANTIZATION_CACHE_DIR ?? ''),
+      upsert('CHECK_CONFIG_API_BASE_URL', CHECK_CONFIG_API_BASE_URL ?? ''),
+      upsert('CHECK_CONFIG_API_KEY', CHECK_CONFIG_API_KEY ?? ''),
+      upsert('CHECK_CONFIG_MODEL', CHECK_CONFIG_MODEL ?? ''),
     ]);
 
     flushCache();

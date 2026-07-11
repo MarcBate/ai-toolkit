@@ -84,6 +84,36 @@ export const getHFToken = async () => {
   return token;
 };
 
+export const getCheckConfigApiBaseUrl = async () => {
+  const key = 'CHECK_CONFIG_API_BASE_URL';
+  let val = myCache.get(key) as string;
+  if (val !== undefined) return val;
+  const row = await prisma.settings.findFirst({ where: { key } });
+  val = row?.value || '';
+  myCache.set(key, val);
+  return val;
+};
+
+export const getCheckConfigApiKey = async () => {
+  const key = 'CHECK_CONFIG_API_KEY';
+  let val = myCache.get(key) as string;
+  if (val !== undefined) return val;
+  const row = await prisma.settings.findFirst({ where: { key } });
+  val = row?.value || '';
+  myCache.set(key, val);
+  return val;
+};
+
+export const getCheckConfigModel = async () => {
+  const key = 'CHECK_CONFIG_MODEL';
+  let val = myCache.get(key) as string;
+  if (val !== undefined) return val;
+  const row = await prisma.settings.findFirst({ where: { key } });
+  val = row?.value || 'claude-sonnet-5';
+  myCache.set(key, val);
+  return val;
+};
+
 export const getQuantizationCacheDir = async () => {
   const key = 'QUANTIZATION_CACHE_DIR';
   let cacheDir = myCache.get(key) as string;

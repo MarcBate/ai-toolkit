@@ -7,7 +7,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import OpenAI from 'openai';
 import sqlite3 from 'sqlite3';
-import { getTrainingFolder } from '@/server/settings';
+import { getTrainingFolder, getCheckConfigApiBaseUrl, getCheckConfigApiKey, getCheckConfigModel } from '@/server/settings';
 import { buildCheckConfigSystemPrompt } from '@/lib/checkConfigPrompt';
 import {
   getModelFamily,
@@ -81,10 +81,10 @@ function closeDb(db: sqlite3.Database) {
 }
 
 export async function POST(request: NextRequest) {
-  const baseURL = process.env.CHECK_CONFIG_API_BASE_URL;
+  const baseURL = await getCheckConfigApiBaseUrl();
   if (!baseURL) {
     return NextResponse.json(
-      { error: 'CHECK_CONFIG_API_BASE_URL environment variable is not set' },
+      { error: 'Check Config API URL is not configured. Add it in Settings.' },
       { status: 503 },
     );
   }
@@ -212,8 +212,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const apiKey = process.env.CHECK_CONFIG_API_KEY || 'no-key';
-  const model = process.env.CHECK_CONFIG_MODEL || 'claude-sonnet-4-6';
+  const apiKey = (await getCheckConfigApiKey()) || 'no-key';
+  const model = (await getCheckConfigModel()) || 'claude-sonnet-5';
 
   const client = new OpenAI({ baseURL, apiKey });
 
@@ -253,6 +253,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  const enabled = !!process.env.CHECK_CONFIG_API_BASE_URL;
-  return NextResponse.json({ enabled });
+  const baseURL = await getCheckConfigApiBaseUrl();
+  return NextResponse.json({ enabled: !!baseURL });
 }
