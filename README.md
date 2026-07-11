@@ -20,7 +20,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **LightX2V for WAN 2.2** — 4-step distilled samples (~40s vs ~6 min); PEFT adapter reuse fix
 - **LTX-2.3 distilled LoRA** — 8-step samples instead of 30
 - **Gemma API for LTX-2.3** — use free Gemma API instead of loading 12B text encoder locally
-- **Sampling LoRA (Krea 2 & Qwen Image)** — apply a LoRA only during sample generation, not training; useful for filter-bypass or style LoRAs (see [Krea 2 Training](#krea-2-training))
+- **Sampling LoRA (Krea 2 & Qwen Image)** — apply a LoRA only during sample generation, not training; useful for filter-bypass or style LoRAs (see [Krea 2 Training](#krea-2-training)); fixed crash on quantized Qwen Image models where `QModuleMixin._load_from_state_dict` would raise `KeyError` on `_data` keys belonging to unrelated modules
 - **Corrupt/truncated JSON captions** — graceful fallback with warning instead of crashing the job
 - **Optimizer archiving** — option to archive optimizer state on each save
 - **AceStep 1.5 XL audio LM (`audio_lm_path`)** — set `audio_lm_path` in your model config to a Qwen3 ACE15 safetensors file (e.g. `qwen_4b_ace15.safetensors`) to enable proper `lm_hints` context generation at sample time. Without this the DiT uses silence context and output quality is poor. The FSQ quantizer and AudioTokenDetokenizer are extracted automatically from the AIO base model file. Supports the XL AIO format (`ostris/ace_step_1.5_ComfyUI_files`); non-XL AIO untested.
@@ -31,6 +31,10 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Queue filter** — filter jobs list by name, model path, or job ref with AND/OR/quoted search
 - **Save and Stop Queue** button in stop modal — saves checkpoint and re-queues the job
 - **Return to Training** button — aborts current sample batch and resumes training
+
+### UI — Settings
+
+- **AI Config Check settings** — API URL, key, and model stored in DB and editable from the Settings page; no server file access or `.env.local` required; works with any OpenAI-compatible endpoint (Claude, Ollama, etc.)
 
 ### UI — Model Config
 
@@ -58,6 +62,42 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Find & replace in JSON** — updates the `caption` field inside the JSON structure, preserving other fields
 - **Find & replace captions** — bulk find-and-replace with AND/OR/quoted search
 - **Caption filtering** — filter dataset images by caption content
+
+### UI — Training Alerts
+
+Real-time anomaly detection that writes to the DB and surfaces in the UI without ever pausing training.
+
+- **Loss spike detection** — rolling 50-step deque; flags when current loss > 3× average and > 0.4 absolute floor; 10-step debounce prevents alert storms during sustained divergence
+- **White-noise sample detection** — compares JPEG/PNG file sizes of new samples against the step-0 baseline; flags when current batch avg exceeds baseline by 1.8× (empirically confirmed signal for mode collapse / LR divergence)
+- **OOM crash detection** — `on_error()` catches CUDA out-of-memory errors, collects VRAM stats via `nvidia-smi`, and writes an `oom` alert type with memory details
+- **Dataset stats persistence** — image count and bucket distribution written to DB after each latent-caching phase so the AI Config Check has context without a running trainer
+- **Safe checkpoint snapshot** — on any alert, the most recent checkpoint's `.safetensors` + `.pt` files are copied to `{save_root}/_safe_snapshots/{reason}_step_{N}/` with a `README.txt` before scheduled cleanup can remove them; WAN 2.2 copies both high-noise and low-noise files
+- **Amber alert chip** — job card shows ⚠ N when alerts exist; clicking expands an inline panel with timestamped entries (step, type, message); Clear button resets the list
+- **5-second toast** — job detail page fires an amber toast within one poll cycle when a new alert arrives
+- **OOM auto-trigger** — if Check Config is configured, an OOM alert automatically opens the AI reviewer with `autoRun=true` and the OOM message shown as a red context banner at the top of results
+
+### UI — AI Config Check
+
+"Check Config ✦" button on every job form (new and edit). Assembles training context and asks an LLM for structured, source-cited findings.
+
+**What it sends to the LLM:**
+- Full job config JSON
+- Dataset stats (image count, bucket distribution) from DB
+- Last 200 steps of loss curve from `loss_log.db`
+- Real-time GPU stats (VRAM used/free, utilization, temperature, power) via `nvidia-smi`
+- System RAM stats
+- Optional: recent sample images/frames and training dataset images (vision analysis)
+
+**Findings format:** `{field, current_value, suggested_value, reason, confidence, references, applyable, severity}`
+
+- **Confidence tiers** — High (vendor docs / maintainer posts), Medium (Reddit/Discord/forum), Low (LLM reasoning from analogous models); Low-confidence Apply requires an explicit "I understand this is speculative" checkbox
+- **Per-finding Apply** — patches the config field via dot-path and re-saves the job; disabled on running jobs
+- **Model-type-aware** — three distinct prompt branches: image models (white noise, mode collapse, rank/LR/optimizer), video models (temporal consistency, LightX2V dual-LoRA config, frame-based dataset thresholds), audio models (sample rate, BPM consistency, `audio_lm_path`, no image metrics)
+- **Visual analysis** — optional; sends up to 4 recent sample images (or 4 frames extracted from the latest MP4 via ffmpeg) and up to 6 training dataset images; falls back gracefully to text-only when images are unavailable or ffmpeg is missing
+- **Performance optimization** — uses live GPU/RAM stats to recommend batch size increases when VRAM headroom > 4 GB, always paired with the linear LR scaling rule (batch×2 → LR×2); flags VRAM pressure, thermal throttling, and system RAM shortage
+- **Automagic3 + Qwen Image rule** — hardcoded critical rule: if optimizer is `automagic3` on a Qwen Image job, flags as `severity=error` (confirmed incident: LR ramped 100× by step 1500 producing white-noise outputs; `automagic3` has no `max_lr` clamp)
+- **OOM context** — when triggered by an OOM alert, analysis fires immediately (`autoRun` mode) with the OOM message and VRAM stats included for targeted recommendations
+- **Configurable via Settings page** — API URL, API key, model name stored in DB (no server file access required); works with Claude (via Anthropic's OpenAI-compatible endpoint) and Ollama (local models); vision analysis requires a vision-capable model
 
 ### Infrastructure
 
