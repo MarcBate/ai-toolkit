@@ -453,8 +453,8 @@ class Krea2Model(BaseModel):
                     break
 
         for base, parts in bases.items():
-            down = parts.get("lora_A") or parts.get("lora_down")
-            up   = parts.get("lora_B") or parts.get("lora_up")
+            down = parts.get("lora_A") if parts.get("lora_A") is not None else parts.get("lora_down")
+            up   = parts.get("lora_B") if parts.get("lora_B") is not None else parts.get("lora_up")
             if down is None or up is None:
                 continue
 
