@@ -14,6 +14,7 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 import { ChevronUp, ChevronDown, ChevronsUp, GripVertical, Trash2 } from 'lucide-react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { deleteJob, getTotalSteps, reorderJob, reorderJobToIndex, stopJob } from '@/utils/jobs';
+import JobAlertsPanel, { JobAlert } from '@/components/JobAlertsPanel';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -38,6 +39,7 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   const [dragOverJobId, setDragOverJobId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+  const [openAlertsPanelId, setOpenAlertsPanelId] = useState<string | null>(null);
 
   const isDeleting = deleteProgress !== null;
   const allSelected = jobs.length > 0 && jobs.every(job => selectedIds.has(job.id));
@@ -347,7 +349,28 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
         if (row.status === 'failed') statusClass = 'text-red-400';
         if (row.status === 'running') statusClass = 'text-blue-400';
 
-        return <span className={statusClass}>{row.status}</span>;
+        let alerts: JobAlert[] = [];
+        try {
+          alerts = JSON.parse((row as any).alerts || '[]');
+        } catch { /* ignore */ }
+
+        return (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={statusClass}>{row.status}</span>
+            {alerts.length > 0 && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  setOpenAlertsPanelId(prev => prev === row.id ? null : row.id);
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-900/40 text-amber-400 border border-amber-500/40 hover:bg-amber-900/60 transition-colors"
+                title="View training alerts"
+              >
+                ⚠ {alerts.length}
+              </button>
+            )}
+          </div>
+        );
       },
     },
     {
@@ -526,6 +549,19 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
                     ),
                   };
                 }}
+                afterRow={(row) => {
+                  if (openAlertsPanelId !== row.id) return null;
+                  let alerts: JobAlert[] = [];
+                  try { alerts = JSON.parse((row as any).alerts || '[]'); } catch { /* ignore */ }
+                  return (
+                    <JobAlertsPanel
+                      jobID={row.id}
+                      alerts={alerts}
+                      onClose={() => setOpenAlertsPanelId(null)}
+                      onCleared={() => { setOpenAlertsPanelId(null); refresh(); }}
+                    />
+                  );
+                }}
               />
             </div>
           );
@@ -537,7 +573,25 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
               <h2 className="font-semibold text-gray-100">Idle</h2>
             </div>
           </div>
-          <UniversalTable columns={columns} rows={jobsDict['Idle'].jobs} isLoading={isLoading} onRefresh={refresh} />
+          <UniversalTable
+            columns={columns}
+            rows={jobsDict['Idle'].jobs}
+            isLoading={isLoading}
+            onRefresh={refresh}
+            afterRow={(row) => {
+              if (openAlertsPanelId !== row.id) return null;
+              let alerts: JobAlert[] = [];
+              try { alerts = JSON.parse((row as any).alerts || '[]'); } catch { /* ignore */ }
+              return (
+                <JobAlertsPanel
+                  jobID={row.id}
+                  alerts={alerts}
+                  onClose={() => setOpenAlertsPanelId(null)}
+                  onCleared={() => { setOpenAlertsPanelId(null); refresh(); }}
+                />
+              );
+            }}
+          />
         </div>
       )}
     </div>

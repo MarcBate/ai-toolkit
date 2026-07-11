@@ -210,6 +210,10 @@ export const reorderJob = (jobID: string, direction: 'up' | 'down') => {
   });
 };
 
+export const clearJobAlerts = (jobID: string): Promise<void> => {
+  return apiClient.get(`/api/jobs/${jobID}/clear_alerts`).then(() => undefined);
+};
+
 export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };

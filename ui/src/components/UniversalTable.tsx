@@ -1,3 +1,4 @@
+import React from 'react';
 import Loading from './Loading';
 import classNames from 'classnames';
 
@@ -19,6 +20,7 @@ interface TableProps {
   theadClassName?: string;
   onRefresh: () => void;
   rowProps?: (row: TableRow, index: number) => React.HTMLAttributes<HTMLTableRowElement>;
+  afterRow?: (row: TableRow, index: number) => React.ReactNode;
 }
 
 export default function UniversalTable({
@@ -28,6 +30,7 @@ export default function UniversalTable({
   theadClassName = 'text-gray-400',
   onRefresh = () => {},
   rowProps,
+  afterRow,
 }: TableProps) {
   return (
     <div className="w-full bg-gray-900 rounded-md shadow-md">
@@ -63,18 +66,27 @@ export default function UniversalTable({
                 const extra = rowProps ? rowProps(row, index) : {};
                 const { className: extraClass, ...restExtra } = extra;
 
+                const extra_row = afterRow ? afterRow(row, index) : null;
                 return (
-                  <tr
-                    key={index}
-                    className={classNames(rowClass, 'border-b border-gray-700 hover:bg-gray-700', extraClass)}
-                    {...restExtra}
-                  >
-                    {columns.map(column => (
-                      <td key={column.key} className={classNames('px-3 py-2', column.className)}>
-                        {column.render ? column.render(row) : row[column.key]}
-                      </td>
-                    ))}
-                  </tr>
+                  <React.Fragment key={index}>
+                    <tr
+                      className={classNames(rowClass, 'border-b border-gray-700 hover:bg-gray-700', extraClass)}
+                      {...restExtra}
+                    >
+                      {columns.map(column => (
+                        <td key={column.key} className={classNames('px-3 py-2', column.className)}>
+                          {column.render ? column.render(row) : row[column.key]}
+                        </td>
+                      ))}
+                    </tr>
+                    {extra_row && (
+                      <tr className={rowClass}>
+                        <td colSpan={columns.length} className="px-3 pb-2 pt-0">
+                          {extra_row}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
