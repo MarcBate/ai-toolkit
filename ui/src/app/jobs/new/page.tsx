@@ -20,6 +20,7 @@ import SimpleJob from './SimpleJob';
 import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
+import CheckConfigModal from '@/components/CheckConfigModal';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -39,6 +40,15 @@ export default function TrainingForm() {
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(migrateJobConfig(defaultJobConfig)));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [checkConfigOpen, setCheckConfigOpen] = useState(false);
+  const [checkConfigEnabled, setCheckConfigEnabled] = useState(false);
+
+  useEffect(() => {
+    apiClient
+      .get('/api/jobs/check-config')
+      .then(res => setCheckConfigEnabled(!!res.data.enabled))
+      .catch(() => {});
+  }, []);
 
   const handleImportConfig = () => {
     fileInputRef.current?.click();
@@ -275,6 +285,16 @@ export default function TrainingForm() {
         )}
         <div className="flex-shrink-0">
           <Button
+            className="text-purple-300 border border-purple-600 hover:bg-purple-900/40 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base mr-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={() => setCheckConfigOpen(true)}
+            disabled={!checkConfigEnabled}
+            title={checkConfigEnabled ? 'Check config with AI' : 'Set CHECK_CONFIG_API_BASE_URL to enable'}
+          >
+            Check Config ✦
+          </Button>
+        </div>
+        <div className="flex-shrink-0">
+          <Button
             className="text-white bg-green-600 hover:bg-green-700 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
             onClick={() => saveJob()}
             disabled={status === 'saving'}
@@ -297,6 +317,16 @@ export default function TrainingForm() {
         accept=".yaml,.yml,.json,.jsonc"
         style={{ display: 'none' }}
         onChange={handleFileSelected}
+      />
+
+      <CheckConfigModal
+        isOpen={checkConfigOpen}
+        onClose={() => setCheckConfigOpen(false)}
+        jobId={runId}
+        jobConfig={jobConfig}
+        onApply={(field, value) => {
+          setJobConfig(setNestedValue(jobConfig, value, field));
+        }}
       />
 
       {showAdvancedView ? (
