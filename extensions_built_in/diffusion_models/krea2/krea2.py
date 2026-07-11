@@ -408,10 +408,12 @@ class Krea2Model(BaseModel):
                 return True
         return False
 
-    def _merge_lora_file(self, path, strength):
+    def _merge_lora_file(self, path, strength, applied):
         """Load one LoRA/diff file and add its weighted delta to transformer params.
 
-        Returns a list of (param_name, delta_fp32, strength) tuples for reversal.
+        Appends a (param_name, delta_fp32, strength) tuple to `applied` for each
+        tensor as soon as it is merged, so the caller can reverse a partial merge
+        if an exception is raised partway through.
         """
         param_dict = dict(self.model.named_parameters())
 
@@ -425,8 +427,6 @@ class Krea2Model(BaseModel):
 
         sd = {_bare(k): v for k, v in sd.items()}
 
-        applied = []
-
         # --- .diff format: key path ends in .diff, target param replaces .diff with .weight ---
         diff_keys = [k for k in sd if k.endswith(".diff")]
         if diff_keys:
@@ -439,7 +439,7 @@ class Krea2Model(BaseModel):
                 delta = sd[dk].to(param.device, dtype=torch.float32)
                 param.data.add_(delta.to(param.dtype) * strength)
                 applied.append((param_name, delta, strength))
-            return applied
+            return
 
         # --- lora_A/lora_B (or lora_down/lora_up) format ---
         bases: dict = {}
@@ -475,8 +475,6 @@ class Krea2Model(BaseModel):
             param.data.add_(delta.to(param.device, dtype=param.dtype) * strength)
             applied.append((param_name, delta, strength))
 
-        return applied
-
     def _unmerge_lora(self, applied):
         """Reverse all deltas from _merge_lora_file."""
         param_dict = dict(self.model.named_parameters())
@@ -491,7 +489,13 @@ class Krea2Model(BaseModel):
             ('sample_lora_path',   'sample_lora_strength',   1.0),
             ('sample_lora_path_2', 'sample_lora_strength_2', 1.0),
         ]
+        # Register the applied list before merging anything: _merge_lora_file
+        # appends each delta as it lands, so if it raises partway through,
+        # _after_sample_failure can still unmerge the partial merge instead of
+        # leaving the base weights corrupted for the rest of the run.
         all_applied = []
+        self._sampling_lora_applied = all_applied
+        self._sampling_lora_ready = True
         for path_attr, strength_attr, default_s in slots:
             path = (getattr(sc, path_attr, None) if sc else None) or getattr(self.model_config, path_attr, None)
             if not path:
@@ -501,12 +505,9 @@ class Krea2Model(BaseModel):
                 continue
             strength = (getattr(sc, strength_attr, None) if sc else None) or getattr(self.model_config, strength_attr, default_s) or default_s
             self.print_and_status_update(f"Merging sample LoRA: {os.path.basename(path)} (strength={strength})")
-            applied = self._merge_lora_file(path, strength)
-            self.print_and_status_update(f"  Applied {len(applied)} tensors")
-            all_applied.extend(applied)
-
-        self._sampling_lora_applied = all_applied
-        self._sampling_lora_ready = True
+            count_before = len(all_applied)
+            self._merge_lora_file(path, strength, all_applied)
+            self.print_and_status_update(f"  Applied {len(all_applied) - count_before} tensors")
 
     def _teardown_sampling_lora(self):
         applied = getattr(self, '_sampling_lora_applied', None)

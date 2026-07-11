@@ -266,6 +266,40 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return generate_image_config_list
 
+    def _check_white_noise_samples(self, sample_folder: str, wall_time_start: float):
+        """Compare avg JPEG file size of newly-written samples to the step-0 baseline.
+        If the batch is >1.8× larger, it likely contains white-noise frames and fires an alert."""
+        try:
+            new_files = [
+                f for f in glob.glob(os.path.join(sample_folder, "*.jpg"))
+                + glob.glob(os.path.join(sample_folder, "*.jpeg"))
+                + glob.glob(os.path.join(sample_folder, "*.png"))
+                if os.path.getmtime(f) >= wall_time_start - 1
+            ]
+            if not new_files:
+                return
+            avg_bytes = sum(os.path.getsize(f) for f in new_files) / len(new_files)
+            if getattr(self, '_baseline_sample_avg_bytes', None) is None:
+                self._baseline_sample_avg_bytes = avg_bytes
+                return
+            ratio = avg_bytes / self._baseline_sample_avg_bytes
+            if ratio > 1.8:
+                msg = (f"Possible white-noise samples at step {self.step_num}: "
+                       f"avg size {avg_bytes/1024:.0f} KB vs baseline {self._baseline_sample_avg_bytes/1024:.0f} KB "
+                       f"({ratio:.2f}×)")
+                print(f"[AITK] ⚠ {msg}")
+                if hasattr(self, 'append_alert'):
+                    self.append_alert("white_noise_samples", msg, {
+                        "avg_bytes": round(avg_bytes),
+                        "baseline_bytes": round(self._baseline_sample_avg_bytes),
+                        "ratio": round(ratio, 2),
+                        "num_files": len(new_files),
+                    })
+                if hasattr(self, 'preserve_safe_snapshot'):
+                    self.preserve_safe_snapshot("white_noise_samples")
+        except Exception as e:
+            print(f"[AITK] Warning: white-noise check failed: {e}")
+
     def sample(self, step=None, is_first=False):
         if not self.accelerator.is_main_process and not self.sample_only:
             return
@@ -378,9 +412,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.turbo_lora_path = self.get_latest_save_path(lora_name)
 
         # send to be generated
+        _sample_wall_time_start = __import__('time').time()
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
 
-        
+        self._check_white_noise_samples(sample_folder, _sample_wall_time_start)
+
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = False
 

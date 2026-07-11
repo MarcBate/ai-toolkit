@@ -469,7 +469,28 @@ class QwenImageModel(BaseModel):
                     f"Sampling LoRA: skipping {n_skipped} keys for quantized layers to avoid weight corruption"
                 )
             self.print_and_status_update(f"Loading sampling LoRA (strength={strength})")
-            pipeline.load_lora_weights(lora_state_dict, adapter_name="sampling_lora")
+            # Quanto's QModule._load_from_state_dict unconditionally pops weight._data,
+            # raising KeyError when loading a LoRA (which has no _data keys). Patch it to
+            # skip quantized reconstruction when no keys for that module are in the state dict.
+            try:
+                from optimum.quanto.nn.qmodule import QModuleMixin
+                _orig_qload = QModuleMixin._load_from_state_dict
+                def _safe_qload(self, state_dict, prefix, local_metadata, strict,
+                                missing_keys, unexpected_keys, error_msgs):
+                    if not any(k.startswith(prefix) for k in state_dict):
+                        return
+                    return _orig_qload(self, state_dict, prefix, local_metadata, strict,
+                                       missing_keys, unexpected_keys, error_msgs)
+                QModuleMixin._load_from_state_dict = _safe_qload
+                _patched_qmodule = True
+            except Exception:
+                _patched_qmodule = False
+
+            try:
+                pipeline.load_lora_weights(lora_state_dict, adapter_name="sampling_lora")
+            finally:
+                if _patched_qmodule:
+                    QModuleMixin._load_from_state_dict = _orig_qload
             pipeline.set_adapters(["sampling_lora"], adapter_weights=[strength])
             # Park on CPU until needed per-sample
             self._lora_move(pipeline.transformer, "sampling_lora", "cpu")

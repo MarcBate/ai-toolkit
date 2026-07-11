@@ -1,6 +1,8 @@
-from collections import OrderedDict
+from collections import OrderedDict, deque
+import glob as _glob
 import json
 import os
+import shutil
 import sqlite3
 import asyncio
 import concurrent.futures
@@ -44,6 +46,13 @@ class DiffusionTrainer(SDTrainer):
             self._run_async_operation(self._update_status("running", "Starting"))
             self._stop_watcher_started = False
             # self.start_stop_watcher(interval_sec=2.0)
+
+        # Alert detection state (maintained regardless of is_ui_trainer so the
+        # rolling history works even for non-UI runs — only DB writes are gated)
+        self._loss_history: deque = deque(maxlen=50)
+        self._last_step_loss: float = 0.0
+        self._last_spike_step: int = -1
+        self._baseline_sample_avg_bytes: float | None = None
     
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
@@ -357,6 +366,102 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self._run_async_operation(self._update_status(status, info))
 
+    def append_alert(self, alert_type: str, message: str, data: dict = None):
+        """Append one alert to the Job.alerts JSON column (capped at 50 entries).
+        Synchronous with BEGIN IMMEDIATE so concurrent alert writes can't corrupt the JSON."""
+        if not self.accelerator.is_main_process or not self.is_ui_trainer:
+            return
+        import datetime
+        alert = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "step": self.step_num,
+            "type": alert_type,
+            "message": message,
+            "data": data or {},
+        }
+        try:
+            def _do_append():
+                with self._db_connect() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("BEGIN IMMEDIATE")
+                    try:
+                        row = cursor.execute(
+                            "SELECT alerts FROM Job WHERE id = ?", (self.job_id,)
+                        ).fetchone()
+                        existing = json.loads(row[0]) if row and row[0] else []
+                        existing.append(alert)
+                        if len(existing) > 50:
+                            existing = existing[-50:]
+                        cursor.execute(
+                            "UPDATE Job SET alerts = ? WHERE id = ?",
+                            (json.dumps(existing), self.job_id)
+                        )
+                    except Exception:
+                        try:
+                            cursor.execute("ROLLBACK")
+                        except Exception:
+                            pass
+                        raise
+                    else:
+                        cursor.execute("COMMIT")
+            self._retry_db_operation(_do_append)
+        except Exception as e:
+            print(f"[AITK] Warning: could not write alert to DB: {e}")
+
+    def preserve_safe_snapshot(self, reason: str):
+        """Copy the most recent checkpoint's .safetensors and .pt files to
+        {save_root}/_safe_snapshots/{reason}_step_{N}/ so they survive cleanup."""
+        if not self.accelerator.is_main_process or not self.is_ui_trainer:
+            return
+        try:
+            save_root = getattr(self, 'save_root', None)
+            if not save_root:
+                return
+            # Find the most recent step_* checkpoint directory
+            step_dirs = sorted(
+                _glob.glob(os.path.join(save_root, "step_*")),
+                key=lambda p: int(p.rsplit("_", 1)[-1]) if p.rsplit("_", 1)[-1].isdigit() else -1
+            )
+            if not step_dirs:
+                print(f"[AITK] Safe snapshot: no checkpoint found to snapshot (step {self.step_num})")
+                return
+            src_dir = step_dirs[-1]
+            snap_name = f"{reason}_step_{self.step_num}"
+            dst_dir = os.path.join(save_root, "_safe_snapshots", snap_name)
+            os.makedirs(dst_dir, exist_ok=True)
+
+            copied = []
+            for pattern in ("*.safetensors", "*.pt"):
+                for fpath in _glob.glob(os.path.join(src_dir, pattern)):
+                    dst = os.path.join(dst_dir, os.path.basename(fpath))
+                    shutil.copy2(fpath, dst)
+                    copied.append(os.path.basename(fpath))
+
+            if not copied:
+                print(f"[AITK] Safe snapshot: no .safetensors/.pt files found in {src_dir}")
+                return
+
+            import datetime
+            readme = (
+                f"Safe snapshot — training anomaly detected\n"
+                f"Reason: {reason}\n"
+                f"Detected at step: {self.step_num}\n"
+                f"Timestamp: {datetime.datetime.utcnow().isoformat()}Z\n"
+                f"Source checkpoint: {src_dir}\n"
+                f"Files preserved: {', '.join(copied)}\n\n"
+                f"To restore:\n"
+                f"  1. Copy the .safetensors file(s) back to the output directory.\n"
+                f"  2. Set 'resume_lora_model' in your config to point at the .safetensors.\n"
+                f"  3. For WAN 2.2: both high and low noise files must be present.\n"
+                f"  4. Restart training from the UI.\n"
+            )
+            with open(os.path.join(dst_dir, "README.txt"), "w") as f:
+                f.write(readme)
+
+            print(f"[AITK] Safe snapshot saved to {dst_dir} ({len(copied)} file(s): {', '.join(copied)})")
+        except Exception as e:
+            print(f"[AITK] Warning: safe snapshot failed: {e}")
+
     async def wait_for_all_async(self):
         """Wait for all tracked async operations to complete."""
         if not self._async_tasks:
@@ -370,12 +475,35 @@ class DiffusionTrainer(SDTrainer):
             # Clear the task list after completion
             self._async_tasks.clear()
 
+    def _is_oom_error(self, e: Exception) -> bool:
+        msg = str(e).lower()
+        return (
+            isinstance(e, (MemoryError,))
+            or "out of memory" in msg
+            or "cuda out of memory" in msg
+            or "cudaerroroutofmemory" in msg
+        )
+
     def on_error(self, e: Exception):
         super(DiffusionTrainer, self).on_error(e)
         if self.is_ui_trainer:
             try:
                 is_intentional = self.is_stopping or isinstance(e, (KeyboardInterrupt, JobStoppedException)) or "Job stopped" in str(e)
                 if self.accelerator.is_main_process and not is_intentional:
+                    if self._is_oom_error(e):
+                        import torch as _torch
+                        vram_info = ""
+                        try:
+                            alloc = _torch.cuda.memory_allocated() / 1024**3
+                            reserved = _torch.cuda.memory_reserved() / 1024**3
+                            total = _torch.cuda.get_device_properties(0).total_memory / 1024**3
+                            vram_info = f" (VRAM: {alloc:.1f}GB alloc / {reserved:.1f}GB reserved / {total:.1f}GB total)"
+                        except Exception:
+                            pass
+                        self.append_alert("oom", f"Out of memory at step {self.step_num}{vram_info}", {
+                            "step": self.step_num,
+                            "error": str(e)[:300],
+                        })
                     self.update_status("error", str(e))
                     self.update_db_key("step", self.last_save_step)
                 else:
@@ -416,8 +544,33 @@ class DiffusionTrainer(SDTrainer):
             asyncio.run(self.wait_for_all_async())
             self.thread_pool.shutdown(wait=True)
 
+    def _check_loss_spike(self):
+        """Update rolling loss history and fire an alert if a spike is detected."""
+        loss = getattr(self, '_last_step_loss', 0.0)
+        # Compute rolling avg from history BEFORE appending so the spike doesn't
+        # inflate its own detection threshold.
+        if len(self._loss_history) >= 10:
+            rolling_avg = sum(self._loss_history) / len(self._loss_history)
+        else:
+            rolling_avg = None
+        self._loss_history.append(loss)
+        if rolling_avg is None:
+            return
+        if (loss > rolling_avg * 3 and loss > 0.4
+                and self.step_num - self._last_spike_step > 10):
+            self._last_spike_step = self.step_num
+            msg = f"Loss spike at step {self.step_num}: {loss:.4f} (rolling avg {rolling_avg:.4f}, {loss/rolling_avg:.1f}×)"
+            print(f"[AITK] ⚠ {msg}")
+            self.append_alert("loss_spike", msg, {
+                "current_loss": loss,
+                "rolling_avg": rolling_avg,
+                "ratio": round(loss / rolling_avg, 2),
+            })
+            self.preserve_safe_snapshot("loss_spike")
+
     def end_step_hook(self):
         super(DiffusionTrainer, self).end_step_hook()
+        self._check_loss_spike()
         if self.is_ui_trainer:
             self.update_step()
             # Order matters: maybe_save() runs before maybe_stop() so that
@@ -452,6 +605,29 @@ class DiffusionTrainer(SDTrainer):
             self.maybe_stop()
             self.update_status("running", "Loading dataset")
 
+    def _persist_dataset_stats(self):
+        """Write image count + bucket distribution to Job.dataset_stats after caching."""
+        try:
+            all_datasets = []
+            if self.datasets:
+                all_datasets.extend(self.datasets)
+            if self.datasets_reg:
+                all_datasets.extend(self.datasets_reg)
+            if not all_datasets:
+                return
+            total_images = sum(len(ds.file_list) for ds in all_datasets if hasattr(ds, 'file_list'))
+            buckets: dict = {}
+            for ds in all_datasets:
+                if not hasattr(ds, 'buckets') or not isinstance(ds.buckets, dict) or not ds.buckets:
+                    continue
+                for key, bucket in ds.buckets.items():
+                    count = len(getattr(bucket, 'file_list_idx', []))
+                    buckets[key] = buckets.get(key, 0) + count
+            stats = {"total_images": total_images, "buckets": buckets}
+            self.update_db_key("dataset_stats", json.dumps(stats))
+        except Exception as e:
+            print(f"[AITK] Warning: could not persist dataset stats: {e}")
+
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
         if self.is_ui_trainer:
@@ -464,6 +640,7 @@ class DiffusionTrainer(SDTrainer):
             self.update_step()
             self.update_status("running", "Training")
             self.timer.add_after_print_hook(self.handle_timing_print_hook)
+            self._persist_dataset_stats()
 
     def status_update_hook_func(self, string):
         self.update_status("running", string)
@@ -498,8 +675,21 @@ class DiffusionTrainer(SDTrainer):
                     raise
                 print(f"\nWarning: Sample generation failed at step {step}, continuing training:\n{e}")
                 traceback.print_exc()
-                self.update_status("running", f"Sample failed (step {step}), continuing training")
                 import torch as _torch
+                if self._is_oom_error(e):
+                    vram_info = ""
+                    try:
+                        reserved = _torch.cuda.memory_reserved() / 1024**3
+                        total = _torch.cuda.get_device_properties(0).total_memory / 1024**3
+                        vram_info = f" ({reserved:.1f}GB reserved / {total:.1f}GB total VRAM)"
+                    except Exception:
+                        pass
+                    self.append_alert("oom", f"Out of memory during sample generation at step {step}{vram_info}", {
+                        "step": step,
+                        "context": "sample_generation",
+                        "error": str(e)[:300],
+                    })
+                self.update_status("running", f"Sample failed (step {step}), continuing training")
                 _torch.cuda.empty_cache()
                 self.sd._after_sample_failure()
         finally:

@@ -43,6 +43,8 @@ model Job {
   job_ref         String? // can be used for anything for special jobs, like dataset path for caption jobs
   save_now        Boolean  @default(false) // if true, the job will be saved on the next step
   stop_sample     Boolean  @default(false) // if true, abort active sample generation and resume training
+  alerts          String   @default("[]") // JSON array of alert objects {timestamp, step, type, message, data}
+  dataset_stats   String   @default("{}") // JSON object {total_images, buckets: {WxH: count}}
 
   @@index([status])
   @@index([gpu_ids])

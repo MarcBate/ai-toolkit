@@ -132,10 +132,16 @@ class SDTrainer(BaseSDTrainProcess):
         # on-demand sample. Prompt edits made mid-run won't take effect until restart in
         # this mode. (Gemma API mode is unaffected — it isn't a fake TE.)
         if self.sd.sample_prompts_cache is not None and self._text_encoder_is_unloaded():
-            print(
-                "Note: text encoder is unloaded; keeping existing sample prompt cache. "
-                "Prompt edits will apply after restarting the job."
+            current_prompts = (
+                list(self.sample_config.prompts)
+                if self.sample_config is not None and self.sample_config.samples
+                else []
             )
+            if current_prompts != getattr(self, '_cached_prompt_list', current_prompts):
+                print(
+                    "Note: text encoder is unloaded; keeping existing sample prompt cache. "
+                    "Prompt edits will apply after restarting the job."
+                )
             return
         if self.sample_config is not None and self.sample_config.samples is not None and len(self.sample_config.samples) > 0:
             # Build into a local list and only assign once fully built. If encoding
@@ -231,6 +237,7 @@ class SDTrainer(BaseSDTrainProcess):
 
             # atomically swap in the fully-built cache
             self.sd.sample_prompts_cache = new_cache
+            self._cached_prompt_list = list(self.sample_config.prompts)
         
 
     def before_dataset_load(self):
@@ -2219,6 +2226,8 @@ class SDTrainer(BaseSDTrainProcess):
         loss_dict = OrderedDict(
             {'loss': (total_loss / len(batch_list)).item()}
         )
+
+        self._last_step_loss = loss_dict['loss']
 
         self.end_of_training_loop()
 
