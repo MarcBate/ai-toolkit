@@ -15,6 +15,7 @@ import {
   collectDatasetImages,
   type MediaItem,
 } from '@/lib/checkConfigMedia';
+import { modelArchs } from '@/app/jobs/new/options';
 
 const execAsync = promisify(exec);
 
@@ -56,6 +57,19 @@ async function collectSystemStats(): Promise<Record<string, unknown>> {
 }
 
 export const runtime = 'nodejs';
+
+function buildWebSearchQuery(processType: string, jobConfig: any): string {
+  // Use the UI label (e.g. "Krea 2 Turbo") for much better search results than the raw process type.
+  const arch = modelArchs.find(a => a.name === processType);
+  const modelLabel = arch?.label ?? processType;
+
+  const process0 = jobConfig?.config?.process?.[0] ?? {};
+  const optimizer: string = process0?.train?.optimizer ?? process0?.network?.optimizer ?? '';
+  const nonStandardOptimizers = ['automagic3', 'prodigy', 'dadaptation', 'sophia', 'adan', 'came'];
+  const optimizerSuffix = nonStandardOptimizers.includes(optimizer) ? ` ${optimizer} optimizer` : '';
+
+  return `${modelLabel} LoRA fine-tuning training ai-toolkit${optimizerSuffix}`;
+}
 
 // Strip /v1 suffix to get the Ollama host base URL.
 // Returns null when the URL is a known non-Ollama provider.
@@ -273,7 +287,7 @@ export async function POST(request: NextRequest) {
   let finalTextContext = textContext;
   const ollamaHost = getOllamaHost(baseURL);
   if (enableWebSearch && ollamaHost) {
-    const searchQuery = `AI model fine-tuning ${processType || 'diffusion'} LoRA training best practices optimizer learning rate`;
+    const searchQuery = buildWebSearchQuery(processType, jobConfig);
     const webContext = await fetchOllamaWebSearch(ollamaHost, apiKey, searchQuery);
     if (webContext) {
       finalTextContext = `${webContext}\n\n---\n\nJob configuration and training context:\n${textContext}`;
