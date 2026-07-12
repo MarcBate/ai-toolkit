@@ -98,6 +98,8 @@ async function fetchOllamaWebSearch(
     if (!res.ok) {
       if (res.status === 401) {
         console.warn('[check-config] Ollama web search returned 401 — set API Key in Settings');
+      } else if (res.status === 429) {
+        console.warn('[check-config] Ollama web search rate-limited (429) — proceeding without web context');
       }
       return null;
     }
