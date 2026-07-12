@@ -34,7 +34,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 
 ### UI — Settings
 
-- **AI Config Check settings** — API URL, key, and model stored in DB and editable from the Settings page; no server file access or `.env.local` required; works with any OpenAI-compatible endpoint (Claude, Ollama, etc.)
+- **AI Config Check settings** — API URL, key, model, and web-search toggle stored in DB and editable from the Settings page; no server file access or `.env.local` required; works with any OpenAI-compatible endpoint (Claude, Ollama, etc.)
 
 ### UI — Model Config
 
@@ -97,7 +97,8 @@ Real-time anomaly detection that writes to the DB and surfaces in the UI without
 - **Performance optimization** — uses live GPU/RAM stats to recommend batch size increases when VRAM headroom > 4 GB, always paired with the linear LR scaling rule (batch×2 → LR×2); flags VRAM pressure, thermal throttling, and system RAM shortage
 - **Automagic3 + Qwen Image rule** — hardcoded critical rule: if optimizer is `automagic3` on a Qwen Image job, flags as `severity=error` (confirmed incident: LR ramped 100× by step 1500 producing white-noise outputs; `automagic3` has no `max_lr` clamp)
 - **OOM context** — when triggered by an OOM alert, analysis fires immediately (`autoRun` mode) with the OOM message and VRAM stats included for targeted recommendations
-- **Configurable via Settings page** — API URL, API key, model name stored in DB (no server file access required); works with Claude (via Anthropic's OpenAI-compatible endpoint) and Ollama (local models); vision analysis requires a vision-capable model
+- **Configurable via Settings page** — API URL, API key, model name, and web-search toggle stored in DB (no server file access required); works with Claude (via Anthropic's OpenAI-compatible endpoint) and Ollama (local models); vision analysis requires a vision-capable model
+- **Ollama web search** — when the API endpoint is an Ollama server and "Enable Ollama Web Search" is toggled on, a `POST /api/web_search` call is made against the Ollama host before the LLM call; results are prepended to the training context so the model can reference current best-practice sources; the same API key (if set) is sent as `Authorization: Bearer` for both the web search and the LLM call
 
 ### Infrastructure
 

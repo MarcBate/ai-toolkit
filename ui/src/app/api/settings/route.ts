@@ -31,6 +31,7 @@ export async function GET() {
     if (!settingsObject.CHECK_CONFIG_API_BASE_URL) settingsObject.CHECK_CONFIG_API_BASE_URL = '';
     if (!settingsObject.CHECK_CONFIG_API_KEY) settingsObject.CHECK_CONFIG_API_KEY = '';
     if (!settingsObject.CHECK_CONFIG_MODEL) settingsObject.CHECK_CONFIG_MODEL = 'claude-sonnet-5';
+    if (!settingsObject.CHECK_CONFIG_ENABLE_WEB_SEARCH) settingsObject.CHECK_CONFIG_ENABLE_WEB_SEARCH = 'false';
 
     // Read version from version.py in root
     let version = 'unknown';
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
     const {
       HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR,
       CHECK_CONFIG_API_BASE_URL, CHECK_CONFIG_API_KEY, CHECK_CONFIG_MODEL,
+      CHECK_CONFIG_ENABLE_WEB_SEARCH,
     } = body;
 
     const upsert = (key: string, value: string) =>
@@ -73,6 +75,7 @@ export async function POST(request: Request) {
       upsert('CHECK_CONFIG_API_BASE_URL', CHECK_CONFIG_API_BASE_URL ?? ''),
       upsert('CHECK_CONFIG_API_KEY', CHECK_CONFIG_API_KEY ?? ''),
       upsert('CHECK_CONFIG_MODEL', CHECK_CONFIG_MODEL ?? ''),
+      upsert('CHECK_CONFIG_ENABLE_WEB_SEARCH', CHECK_CONFIG_ENABLE_WEB_SEARCH ?? 'false'),
     ]);
 
     flushCache();

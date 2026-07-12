@@ -7,7 +7,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import OpenAI from 'openai';
 import sqlite3 from 'sqlite3';
-import { getTrainingFolder, getCheckConfigApiBaseUrl, getCheckConfigApiKey, getCheckConfigModel } from '@/server/settings';
+import { getTrainingFolder, getCheckConfigApiBaseUrl, getCheckConfigApiKey, getCheckConfigModel, getCheckConfigEnableWebSearch } from '@/server/settings';
 import { buildCheckConfigSystemPrompt } from '@/lib/checkConfigPrompt';
 import {
   getModelFamily,
@@ -56,6 +56,57 @@ async function collectSystemStats(): Promise<Record<string, unknown>> {
 }
 
 export const runtime = 'nodejs';
+
+// Strip /v1 suffix to get the Ollama host base URL.
+// Returns null when the URL is a known non-Ollama provider.
+function getOllamaHost(baseURL: string): string | null {
+  if (!baseURL) return null;
+  if (baseURL.includes('anthropic.com') || baseURL.includes('openai.com')) return null;
+  return baseURL.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+}
+
+function formatWebSearchResults(results: Array<{ title?: string; url?: string; content?: string }>): string | null {
+  if (!results.length) return null;
+  const lines = [
+    'Web search results (supporting context — prefer these over internal knowledge for current best practices):',
+  ];
+  for (const [i, r] of results.entries()) {
+    const title = r.title || 'Untitled';
+    const url = r.url || '';
+    const snippet = (r.content || '').replace(/\s+/g, ' ').slice(0, 400);
+    lines.push(
+      `${i + 1}. ${title}${url ? `\n   URL: ${url}` : ''}${snippet ? `\n   ${snippet}` : ''}`,
+    );
+  }
+  return lines.join('\n');
+}
+
+async function fetchOllamaWebSearch(
+  ollamaHost: string,
+  apiKey: string,
+  query: string,
+): Promise<string | null> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey && apiKey !== 'no-key') headers['Authorization'] = `Bearer ${apiKey}`;
+    const res = await fetch(`${ollamaHost}/api/web_search`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ query, max_results: 5 }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        console.warn('[check-config] Ollama web search returned 401 — set API Key in Settings');
+      }
+      return null;
+    }
+    const data = await res.json();
+    return formatWebSearchResults(data.results ?? []);
+  } catch {
+    return null;
+  }
+}
 
 const prisma = new PrismaClient();
 
@@ -214,6 +265,22 @@ export async function POST(request: NextRequest) {
 
   const apiKey = (await getCheckConfigApiKey()) || 'no-key';
   const model = (await getCheckConfigModel()) || 'claude-sonnet-5';
+  const enableWebSearch = await getCheckConfigEnableWebSearch();
+
+  // Prepend Ollama web search results to the context when enabled
+  let finalTextContext = textContext;
+  const ollamaHost = getOllamaHost(baseURL);
+  if (enableWebSearch && ollamaHost) {
+    const searchQuery = `AI model fine-tuning ${processType || 'diffusion'} LoRA training best practices optimizer learning rate`;
+    const webContext = await fetchOllamaWebSearch(ollamaHost, apiKey, searchQuery);
+    if (webContext) {
+      finalTextContext = `${webContext}\n\n---\n\nJob configuration and training context:\n${textContext}`;
+      // Update the first content part if building a multimodal message
+      if (userContent.length > 0 && userContent[0].type === 'text') {
+        userContent[0] = { type: 'text', text: finalTextContext };
+      }
+    }
+  }
 
   const client = new OpenAI({ baseURL, apiKey });
 
@@ -223,7 +290,7 @@ export async function POST(request: NextRequest) {
       model,
       messages: [
         { role: 'system', content: buildCheckConfigSystemPrompt(modelFamily, hasImages) },
-        { role: 'user', content: hasImages ? userContent : textContext },
+        { role: 'user', content: hasImages ? userContent : finalTextContext },
       ],
       max_tokens: 4096,
     });

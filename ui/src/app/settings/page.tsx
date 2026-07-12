@@ -28,8 +28,8 @@ export default function Settings() {
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setSettings(prev => ({ ...prev, [name]: value }));
+    const { name, value, type, checked } = e.target;
+    setSettings(prev => ({ ...prev, [name]: type === 'checkbox' ? (checked ? 'true' : 'false') : value }));
   };
 
   return (
@@ -215,6 +215,27 @@ export default function Settings() {
                   className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
                   placeholder="claude-sonnet-5"
                 />
+              </div>
+
+              <div>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="CHECK_CONFIG_ENABLE_WEB_SEARCH"
+                    checked={settings.CHECK_CONFIG_ENABLE_WEB_SEARCH === 'true'}
+                    onChange={handleChange}
+                    className="mt-1 h-4 w-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium">
+                    Enable Ollama Web Search
+                    <div className="text-gray-500 text-sm font-normal mt-1">
+                      When using an Ollama endpoint, perform a web search before the LLM call and
+                      inject the results as additional context. Requires the Ollama server to have
+                      web search enabled (Bearer token via the API Key field above if required).
+                      Has no effect when using Anthropic or other non-Ollama providers.
+                    </div>
+                  </span>
+                </label>
               </div>
             </div>
           </div>
