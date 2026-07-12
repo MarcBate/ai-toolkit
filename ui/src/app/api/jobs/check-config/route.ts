@@ -311,6 +311,10 @@ export async function POST(request: NextRequest) {
         emit({ type: 'progress', message: 'Sending to AI model…' });
         const client = new OpenAI({ baseURL, apiKey });
 
+        // Disable think/reasoning mode on Ollama models that support it (e.g. Qwen3).
+        // Non-Ollama providers (Anthropic, OpenAI) ignore unknown fields.
+        const extraParams = ollamaHost ? { think: false } : {};
+
         let raw = '';
         try {
           const response = await client.chat.completions.create({
@@ -320,7 +324,8 @@ export async function POST(request: NextRequest) {
               { role: 'user', content: hasImages ? userContent : finalTextContext },
             ],
             max_tokens: 4096,
-          });
+            ...extraParams,
+          } as any);
           raw = response.choices[0]?.message?.content || '';
         } catch (err: any) {
           emit({ type: 'error', message: `LLM API call failed: ${err?.message || String(err)}` });
