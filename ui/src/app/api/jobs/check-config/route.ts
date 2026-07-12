@@ -311,9 +311,11 @@ export async function POST(request: NextRequest) {
         emit({ type: 'progress', message: 'Sending to AI model…' });
         const client = new OpenAI({ baseURL, apiKey });
 
-        // Disable think/reasoning mode on Ollama models that support it (e.g. Qwen3).
-        // Non-Ollama providers (Anthropic, OpenAI) ignore unknown fields.
-        const extraParams = ollamaHost ? { think: false } : {};
+        // Ollama-specific overrides passed as extra body fields (ignored by other providers).
+        // - think: false  → skip chain-of-thought reasoning (Qwen3 etc.)
+        // - options.num_ctx: 8192 → override the server's global context length (default 262144
+        //   allocates ~36 GB of KV cache, leaving almost no VRAM for model weights)
+        const extraParams = ollamaHost ? { think: false, options: { num_ctx: 8192 } } : {};
 
         let raw = '';
         try {
