@@ -1,7 +1,9 @@
 # ── SETTINGS ── edit these, then just hit Run in PowerShell ISE ───────────────
 
-$folder            = "D:\Data\iCloudDrive\Comfy\260710"
+#$folder            = "D:\Data\iCloudDrive\Comfy\260712"
 #$folder            = "D:\Data\iCloudDrive\Comfy\camera_lab"
+$folder            = "D:\Data\iCloudDrive\Comfy\rejects"
+
 $overwriteMetadata = $false    # re-embed even if a parameters chunk already exists
 $includeVideos     = $true    # also process .mp4 files (ffmpeg/ffprobe required)
 $recursive         = $false    # also process files in subfolders

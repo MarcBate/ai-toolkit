@@ -52,6 +52,7 @@ class DiffusionTrainer(SDTrainer):
         self._loss_history: deque = deque(maxlen=50)
         self._last_step_loss: float = 0.0
         self._last_spike_step: int = -1
+        self._spike_streak: int = 0
         self._baseline_sample_avg_bytes: float | None = None
     
     def start_stop_watcher(self, interval_sec: float = 5.0):
@@ -545,7 +546,13 @@ class DiffusionTrainer(SDTrainer):
             self.thread_pool.shutdown(wait=True)
 
     def _check_loss_spike(self):
-        """Update rolling loss history and fire an alert if a spike is detected."""
+        """Update rolling loss history and fire an alert if a sustained spike is detected.
+
+        A single high-loss step is normal per-sample variance (small dataset, diverse
+        bucket sizes, weighted timestep sampling).  We only alert when the elevated loss
+        persists for 3+ consecutive steps, which indicates a genuine training instability
+        rather than one hard image.
+        """
         loss = getattr(self, '_last_step_loss', 0.0)
         # Compute rolling avg from history BEFORE appending so the spike doesn't
         # inflate its own detection threshold.
@@ -556,15 +563,22 @@ class DiffusionTrainer(SDTrainer):
         self._loss_history.append(loss)
         if rolling_avg is None:
             return
-        if (loss > rolling_avg * 3 and loss > 0.4
+        if loss > rolling_avg * 3 and loss > 0.4:
+            self._spike_streak += 1
+        else:
+            self._spike_streak = 0
+        if (self._spike_streak >= 3
                 and self.step_num - self._last_spike_step > 10):
             self._last_spike_step = self.step_num
-            msg = f"Loss spike at step {self.step_num}: {loss:.4f} (rolling avg {rolling_avg:.4f}, {loss/rolling_avg:.1f}×)"
-            print(f"[AITK] ⚠ {msg}")
+            msg = (f"Sustained loss spike at step {self.step_num}: {loss:.4f} "
+                   f"(rolling avg {rolling_avg:.4f}, {loss/rolling_avg:.1f}×, "
+                   f"{self._spike_streak} consecutive steps)")
+            print(f"\n[AITK] ⚠ {msg}")
             self.append_alert("loss_spike", msg, {
                 "current_loss": loss,
                 "rolling_avg": rolling_avg,
                 "ratio": round(loss / rolling_avg, 2),
+                "streak": self._spike_streak,
             })
             self.preserve_safe_snapshot("loss_spike")
 
