@@ -268,6 +268,33 @@ class DiffusionTrainer(SDTrainer):
         except Exception as e:
             print(f"Warning: Could not reload sample config from DB: {e}")
 
+    def should_sample(self):
+        if not self.is_ui_trainer:
+            return False
+        def _check_sample():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT sample FROM Job WHERE id = ?", (self.job_id,))
+                sample = cursor.fetchone()
+                return False if sample is None else sample[0] == 1
+
+        return self._retry_db_operation(_check_sample)
+
+    def should_sample_now(self):
+        """Check the lightweight sample_now flag (no config reload or save)."""
+        if not self.is_ui_trainer:
+            return False
+        def _check_sample_now():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT sample_now FROM Job WHERE id = ?", (self.job_id,))
+                sample_now = cursor.fetchone()
+                return False if sample_now is None else sample_now[0] == 1
+
+        return self._retry_db_operation(_check_sample_now)
+
     def maybe_sample(self):
         if not self.is_ui_trainer:
             return
@@ -278,6 +305,27 @@ class DiffusionTrainer(SDTrainer):
             self.save(self.step_num)
             # then sample
             self.sample(self.step_num)
+
+    def maybe_sample_now(self):
+        """Lightweight on-demand sample triggered by the 'Sample Next Step' gear menu item.
+        Unlike maybe_sample(), does not reload config or save first."""
+        if not self.is_ui_trainer:
+            return
+        if self.should_sample_now():
+            self.update_db_key("sample_now", 0)
+            if self.progress_bar is not None:
+                self.progress_bar.pause()
+            print_acc(f"\nSampling at step {self.step_num}")
+            self.optimizer.zero_grad()
+            if self.train_config.free_u:
+                self.sd.pipeline.disable_freeu()
+            self.sample(self.step_num)
+            if self.train_config.unload_text_encoder:
+                self.sd.text_encoder_to('cpu')
+            self.ensure_params_requires_grad()
+            flush()
+            if self.progress_bar is not None:
+                self.progress_bar.unpause()
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:
@@ -593,6 +641,7 @@ class DiffusionTrainer(SDTrainer):
             # cleanly. maybe_sample() is our on-demand sample feature.
             self.maybe_save()
             self.maybe_sample()
+            self.maybe_sample_now()
             self.maybe_stop()
 
     def hook_before_model_load(self):
