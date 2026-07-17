@@ -208,6 +208,7 @@ export interface SampleItem {
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
+  sample_start_step: number;
   width: number;
   height: number;
   prompts?: string[];
@@ -294,6 +295,7 @@ export interface CaptionProcessConfig {
     max_new_tokens?: number;
     fixed_caption?: string;
     caption_extension?: string;
+    thinking?: boolean;
   }
 }
 

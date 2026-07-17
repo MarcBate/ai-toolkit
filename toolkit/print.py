@@ -16,9 +16,9 @@ def print_acc(*args, **kwargs):
 
 
 class Logger:
-    def __init__(self, filename, terminal):
+    def __init__(self, terminal, log_file):
         self.terminal = terminal
-        self.log = open(filename, 'a')
+        self.log = log_file
 
     def write(self, message):
         self.terminal.write(message)
@@ -37,17 +37,17 @@ def setup_log_to_file(filename):
     if get_accelerator().is_local_main_process:
         if not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename))
-    # Close previous log file handles before replacing them (persistent process
+    # Close the previous log file handle before replacing it (persistent process
     # handing off between jobs would otherwise leak one fd per job forever).
+    # Both wrappers share a single handle, so closing stdout's covers stderr too.
     if isinstance(sys.stdout, Logger):
         try:
             sys.stdout.log.close()
         except Exception:
             pass
-    if isinstance(sys.stderr, Logger):
-        try:
-            sys.stderr.log.close()
-        except Exception:
-            pass
-    sys.stdout = Logger(filename, _REAL_STDOUT)
-    sys.stderr = Logger(filename, _REAL_STDERR)
+    # Wrap the real streams captured at import time — wrapping the
+    # already-replaced sys.stdout would chain through the previous Logger and
+    # double-write every message into every prior job's log file.
+    log_file = open(filename, 'a')
+    sys.stdout = Logger(_REAL_STDOUT, log_file)
+    sys.stderr = Logger(_REAL_STDERR, log_file)
