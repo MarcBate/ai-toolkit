@@ -7,6 +7,12 @@ import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getQuantiz
 import { resolvePythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
+const appendJobLog = (logPath: string, message: string) => {
+  fs.appendFile(logPath, message, error => {
+    if (error) console.error('Error writing to job log:', error);
+  });
+};
+
 const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
   // starts and watches the job asynchronously
   return new Promise<void>(async resolve => {
@@ -114,6 +120,7 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
+      PYTHONUNBUFFERED: '1', // write Python output immediately so log tail isn't lost on a crash
     };
 
     if (sampleOnly) {
@@ -156,13 +163,13 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
           cwd: TOOLKIT_ROOT,
           detached: true,
           windowsHide: true,
-          stdio: 'ignore', // don't tie stdio to parent
+          stdio: 'ignore', // don't tie stdio to parent; run_ui.py writes its own --log file
         });
       } else {
         // For non-Windows platforms, fully detach and ignore stdio so it survives daemon-like
         subprocess = spawn(pythonPath, args, {
           detached: true,
-          stdio: 'ignore',
+          stdio: 'ignore', // don't tie stdio to parent; run_ui.py writes its own --log file
           env: {
             ...process.env,
             ...additionalEnv,
@@ -170,6 +177,38 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
           cwd: TOOLKIT_ROOT,
         });
       }
+
+      // Handle failures where the child process could not be started.
+      subprocess.once('error', error => {
+        const message = `Error launching job process: ${error.message}`;
+        console.error(message);
+        appendJobLog(logPath, `${message}\n`);
+        void prisma.job
+          .update({
+            where: { id: jobID },
+            data: { status: 'error', info: message, pid: null },
+          })
+          .catch(updateError => {
+            console.error('Error updating job after process launch failure:', updateError);
+          });
+      });
+
+      // Record abnormal termination and repair jobs Python could not update itself.
+      subprocess.once('exit', (code, signal) => {
+        if (code === 0) return;
+
+        const result = signal ? `signal ${signal}` : `exit code ${code}`;
+        const message = `Job process terminated with ${result}.`;
+        appendJobLog(logPath, `\n${message}\n`);
+        void prisma.job
+          .updateMany({
+            where: { id: jobID, status: 'running' },
+            data: { status: 'error', info: message, pid: null },
+          })
+          .catch(updateError => {
+            console.error('Error updating job after abnormal process exit:', updateError);
+          });
+      });
 
       // Save the PID to the database and a file for future management (stop/inspect)
       const pid = subprocess.pid ?? null;
@@ -190,11 +229,12 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
         subprocess.unref();
       }
 
-      // (No stdout/stderr listeners — logging should go to --log handled by your Python)
-      // (No monitoring loop — the whole point is to let it live past this worker)
+      // The child remains independent; these listeners only record failures
+      // while the worker is alive.
     } catch (error: any) {
       // Handle any exceptions during process launch
       console.error('Error launching process:', error);
+      appendJobLog(logPath, `Error launching job process: ${error?.message || 'Unknown error'}\n`);
 
       await prisma.job.update({
         where: { id: jobID },
