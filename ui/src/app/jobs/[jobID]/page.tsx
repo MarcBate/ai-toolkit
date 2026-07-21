@@ -8,6 +8,7 @@ import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
 import useJobsList from '@/hooks/useJobsList';
 import useSampleImages from '@/hooks/useSampleImages';
+import usePollLoop from '@/hooks/usePollLoop';
 import SampleImages, { SampleImagesMenu } from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
@@ -94,18 +95,16 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   }, []);
 
   // poll for plugin.html in the job folder; show the Plugin tab if it exists
-  useEffect(() => {
-    const checkPlugin = () => {
+  usePollLoop(
+    () =>
       apiClient
         .get(`/api/jobs/${jobID}/plugin?check=1`)
         .then(res => res.data)
         .then(data => setHasPlugin(!!data.exists))
-        .catch(() => {});
-    };
-    checkPlugin();
-    const interval = setInterval(checkPlugin, 5000);
-    return () => clearInterval(interval);
-  }, [jobID]);
+        .catch(() => {}),
+    5000,
+    [jobID],
+  );
 
   const isAnyJobRunning = jobs.some(j => j.status === 'running');
   const hasSamples = sampleImages.length > 0;

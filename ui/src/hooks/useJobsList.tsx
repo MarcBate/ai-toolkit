@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 type UseJobsListProps = {
   onlyActive?: boolean;
@@ -30,7 +31,7 @@ export default function useJobsList({
     if (onlyActive) {
       params.only_active = 'true';
     }
-    apiClient
+    return apiClient
       .get('/api/jobs', { params })
       .then(res => res.data)
       .then(data => {
@@ -52,17 +53,7 @@ export default function useJobsList({
       });
   };
 
-  useEffect(() => {
-    refreshJobs();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshJobs();
-      }, reloadInterval);
-      return () => clearInterval(interval);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  usePollLoop(refreshJobs, reloadInterval);
 
   return { jobs, setJobs, status, refreshJobs };
 }

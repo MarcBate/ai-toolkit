@@ -15,7 +15,7 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
 
   const fetchJob = () => {
     setStatus('loading');
-    apiClient
+    return apiClient
       .get(`/api/jobs?id=${jobID}`)
       .then(res => res.data)
       .then(data => {
@@ -29,11 +29,13 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
       });
   };
 
+  // schedules the next poll only after the current one settles, so a slow
+  // server can't stack overlapping requests the way setInterval does
   const scheduleNext = (delay: number) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (!reloadInterval) return;
-    timerRef.current = setTimeout(() => {
-      fetchJob();
+    timerRef.current = setTimeout(async () => {
+      await fetchJob();
       scheduleNext(reloadInterval);
     }, delay);
   };
