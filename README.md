@@ -25,6 +25,9 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Optimizer archiving** — option to archive optimizer state on each save
 - **AceStep 1.5 XL audio LM (`audio_lm_path`)** — set `audio_lm_path` in your model config to a Qwen3 ACE15 safetensors file (e.g. `qwen_4b_ace15.safetensors`) to enable proper `lm_hints` context generation at sample time. Without this the DiT uses silence context and output quality is poor. The FSQ quantizer and AudioTokenDetokenizer are extracted automatically from the AIO base model file. Supports the XL AIO format (`ostris/ace_step_1.5_ComfyUI_files`); non-XL AIO untested.
 - **Combine Datasets for Bucketing** — `combine_datasets: true` in `train` config (or checkbox in UI when 2+ datasets) merges all dataset file lists (after `num_repeats` expansion) into one pool and runs bucket assignment once globally, identical to having all images in a single folder; each item retains its own per-dataset settings (caption dropout, trigger words, etc.); requires all datasets to share the same `resolution`, `buckets`, and `square_crop` settings.
+- **Video-only files auto-fixed** — dataset videos with no audio stream at all (common with some video generators) used to crash the whole job on `torchaudio.load()`; a silent stereo AAC track is now muxed in automatically the first time the file is loaded, in place, via ffmpeg
+- **`torch.compile` + CPU/GPU layer-offloading stream fix** — the offloading autograd functions (`_BouncingLinearFn`, `_BouncingConv2dFn`) manage raw CUDA streams/events directly; newer PyTorch Dynamo's stream tracing mis-codegenned `torch.ops.streams.record_event` on them under `compile: true` + `low_vram: true`, crashing with `RuntimeError: expected event to be a torch.Event object`. Their `forward`/`backward` are now marked `@torch._dynamo.disable` so Dynamo treats them as an opaque call instead of tracing into them
+- **`block_compile` + torchao guard** — block-level `torch.compile` is automatically disabled (with a warning) when the model is torchao-quantized, avoiding an infinite-recursion crash in `torchao.utils._dispatch__torch_function__` under PyTorch 2.9+'s AOT autograd path
 
 ### UI — Queue & Job Management
 
@@ -32,6 +35,8 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Queue filter** — filter jobs list by name, model path, or job ref with AND/OR/quoted search
 - **Save and Stop Queue** button in stop modal — saves checkpoint and re-queues the job
 - **Return to Training** button — aborts current sample batch and resumes training
+- **Resume From Checkpoint** — gear-menu action on any job that can be (re)started; lists saved checkpoint/optimizer pairs, rolls back to the selected step by deleting newer safetensors and optimizer archives, restores the matching optimizer state, and prunes `loss_log.db` past that step so the graph is accurate immediately; handles WAN 2.2's `_high_noise`/`_low_noise` split checkpoints
+- **Checkpoint delete cleans up optimizer archive** — deleting a `.safetensors` checkpoint from the Checkpoints panel also removes its matching `optimizer_{step}.pt` archive (previously left 4GB+ orphan files behind)
 
 ### UI — Settings
 
