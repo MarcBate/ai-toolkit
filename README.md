@@ -24,6 +24,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Corrupt/truncated JSON captions** — graceful fallback with warning instead of crashing the job
 - **Optimizer archiving** — option to archive optimizer state on each save
 - **AceStep 1.5 XL audio LM (`audio_lm_path`)** — set `audio_lm_path` in your model config to a Qwen3 ACE15 safetensors file (e.g. `qwen_4b_ace15.safetensors`) to enable proper `lm_hints` context generation at sample time. Without this the DiT uses silence context and output quality is poor. The FSQ quantizer and AudioTokenDetokenizer are extracted automatically from the AIO base model file. Supports the XL AIO format (`ostris/ace_step_1.5_ComfyUI_files`); non-XL AIO untested.
+- **Combine Datasets for Bucketing** — `combine_datasets: true` in `train` config (or checkbox in UI when 2+ datasets) merges all dataset file lists (after `num_repeats` expansion) into one pool and runs bucket assignment once globally, identical to having all images in a single folder; each item retains its own per-dataset settings (caption dropout, trigger words, etc.); requires all datasets to share the same `resolution`, `buckets`, and `square_crop` settings.
 
 ### UI — Queue & Job Management
 

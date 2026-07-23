@@ -932,6 +932,16 @@ export default function SimpleJob({
                     }}
                   />
                 </FormGroup>
+                {jobConfig.config.process[0].datasets.length > 1 && (
+                  <FormGroup label="Multi-Dataset" className="pt-2">
+                    <Checkbox
+                      label="Combine Datasets for Bucketing"
+                      checked={jobConfig.config.process[0].train.combine_datasets || false}
+                      docKey={'train.combine_datasets'}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.combine_datasets')}
+                    />
+                  </FormGroup>
+                )}
               </div>
               <div>
                 {disableSections.includes('train.diff_output_preservation') ||
