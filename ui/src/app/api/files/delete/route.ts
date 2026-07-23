@@ -48,14 +48,18 @@ export async function POST(request: NextRequest) {
 
     await fs.promises.unlink(resolvedFilePath);
 
-    // If deleting a .safetensors checkpoint, also remove the companion .pt file
-    // (same base name, used for embedding checkpoints saved in .pt format).
-    if (resolvedFilePath.endsWith('.safetensors')) {
-      const companionPt = resolvedFilePath.slice(0, -'.safetensors'.length) + '.pt';
+    // If deleting a step's .safetensors checkpoint, also remove the matching
+    // optimizer archive: optimizer_{step:09d}.pt (not same-basename — a separate
+    // naming pattern). Handles WAN 2.2's _high_noise/_low_noise suffix too.
+    const stepMatch = path
+      .basename(resolvedFilePath)
+      .match(/_(\d{9})(?:_(?:high|low)_noise)?\.safetensors$/);
+    if (stepMatch) {
+      const optimizerArchive = path.join(path.dirname(resolvedFilePath), `optimizer_${stepMatch[1]}.pt`);
       try {
-        await fs.promises.unlink(companionPt);
+        await fs.promises.unlink(optimizerArchive);
       } catch {
-        // Companion doesn't exist — that's fine, nothing to do.
+        // Archive doesn't exist — that's fine, nothing to do.
       }
     }
 
