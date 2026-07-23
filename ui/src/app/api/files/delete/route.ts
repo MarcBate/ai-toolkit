@@ -48,6 +48,17 @@ export async function POST(request: NextRequest) {
 
     await fs.promises.unlink(resolvedFilePath);
 
+    // If deleting a .safetensors checkpoint, also remove the companion .pt file
+    // (same base name, used for embedding checkpoints saved in .pt format).
+    if (resolvedFilePath.endsWith('.safetensors')) {
+      const companionPt = resolvedFilePath.slice(0, -'.safetensors'.length) + '.pt';
+      try {
+        await fs.promises.unlink(companionPt);
+      } catch {
+        // Companion doesn't exist — that's fine, nothing to do.
+      }
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting file:', error);

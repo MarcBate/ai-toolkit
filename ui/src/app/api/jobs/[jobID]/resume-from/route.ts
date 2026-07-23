@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { getTrainingFolder } from '@/server/settings';
 import sqlite3 from 'sqlite3';
 
-const prisma = new PrismaClient();
-
-const STEP_RE = /_(\d{9})\.safetensors$/;
+// Matches plain and WAN 2.2 split variants (_high_noise / _low_noise)
+const STEP_RE = /_(\d{9})(?:_(?:high|low)_noise)?\.safetensors$/;
 const OPT_ARCHIVE_RE = /^optimizer_(\d{9})\.pt$/;
 const SAMPLE_RE = /[_-](\d{9})[_-]\d+\.(jpg|jpeg|png|webp|mp4)$/;
 

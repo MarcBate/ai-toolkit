@@ -257,7 +257,7 @@ export default function JobActionBar({
               </div>
             </MenuItem>
           )}
-          {job.job_type === 'train' && canStart && (
+          {job.job_type === 'train' && (canStart || job.status === 'queued') && (
             <MenuItem>
               <div
                 className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"

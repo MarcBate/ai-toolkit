@@ -2496,6 +2496,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # ====================================================
                 # BLOCK COMPILE
                 # ====================================================
+                # torchao 0.10.0 + PyTorch 2.9 AOT autograd causes infinite recursion in
+                # _dispatch__torch_function__ when block_compile is used with torchao-quantized
+                # tensors. Disable block_compile for torchao-quantized models as a workaround.
+                if block_compile and is_unet_quantized:
+                    try:
+                        from toolkit.util.quantize import get_torchao_config
+                        if get_torchao_config(getattr(self.model_config, 'qtype', None)) is not None:
+                            print_acc(
+                                "WARNING: block_compile is incompatible with torchao quantization "
+                                "(torchao _dispatch__torch_function__ recursion under PyTorch 2.9). "
+                                "Disabling block_compile for this run. "
+                                "Upgrade torchao to fix this, or use compile=true without block_compile."
+                            )
+                            block_compile = False
+                    except ImportError:
+                        pass
+
                 if block_compile:
                     BLOCK_LIST_ATTRS = self.sd.get_transformer_block_names()
 

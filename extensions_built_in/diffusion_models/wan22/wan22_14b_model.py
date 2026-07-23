@@ -109,6 +109,33 @@ class DualWanTransformer3DModel(torch.nn.Module):
         self.transformer_1.enable_gradient_checkpointing()
         self.transformer_2.enable_gradient_checkpointing()
 
+    @torch._dynamo.disable
+    def _prepare_transformer(self, hidden_states: torch.Tensor, timestep: torch.LongTensor) -> None:
+        """Select and device-swap the active transformer.
+
+        Decorated with @torch._dynamo.disable because QBytesTensor.detach() (called
+        internally by .to()) raises under TorchDynamo tracing when the model is
+        quantized with optimum-quanto.  The .item() call at the timestep boundary
+        check already causes a graph break; keeping the entire swap logic outside
+        the compiler avoids the subsequent re-trace failure."""
+        with torch.no_grad():
+            t_name = "transformer_1" if timestep.float().mean().item() > self.boundary else "transformer_2"
+
+            if t_name != self._active_transformer_name:
+                if self.low_vram:
+                    getattr(self, self._active_transformer_name).to("cpu")
+                    getattr(self, t_name).to(self.device_torch)
+                    torch.cuda.empty_cache()
+                self._active_transformer_name = t_name
+
+        if self.transformer.device != hidden_states.device:
+            if self.low_vram:
+                other_tname = (
+                    "transformer_1" if self._active_transformer_name == "transformer_2" else "transformer_2"
+                )
+                getattr(self, other_tname).to("cpu")
+            self.transformer.to(hidden_states.device)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -119,33 +146,7 @@ class DualWanTransformer3DModel(torch.nn.Module):
         attention_kwargs: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-        # determine if doing high noise or low noise by meaning the timestep.
-        # timesteps are in the range of 0 to 1000, so we can use a threshold
-        with torch.no_grad():
-            if timestep.float().mean().item() > self.boundary:
-                t_name = "transformer_1"
-            else:
-                t_name = "transformer_2"
-
-            # check if we are changing the active transformer, if so, we need to swap the one in
-            # vram if low_vram is enabled
-            # todo swap the loras as well
-            if t_name != self._active_transformer_name:
-                if self.low_vram:
-                    getattr(self, self._active_transformer_name).to("cpu")
-                    getattr(self, t_name).to(self.device_torch)
-                    torch.cuda.empty_cache()
-                self._active_transformer_name = t_name
-
-        if self.transformer.device != hidden_states.device:
-            if self.low_vram:
-                # move other transformer to cpu
-                other_tname = (
-                    "transformer_1" if t_name == "transformer_2" else "transformer_2"
-                )
-                getattr(self, other_tname).to("cpu")
-
-            self.transformer.to(hidden_states.device)
+        self._prepare_transformer(hidden_states, timestep)
 
         return self.transformer(
             hidden_states=hidden_states,

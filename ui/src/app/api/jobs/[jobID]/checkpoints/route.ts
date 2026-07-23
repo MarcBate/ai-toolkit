@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { getTrainingFolder } from '@/server/settings';
-
-const prisma = new PrismaClient();
 
 export interface CheckpointEntry {
   step: number;
@@ -14,7 +12,9 @@ export interface CheckpointEntry {
   mtimeMs: number;
 }
 
-const STEP_RE = /_(\d{9})\.safetensors$/;
+// Matches plain (_000001000.safetensors) and WAN 2.2 split variants
+// (_000010016_high_noise.safetensors, _000010016_low_noise.safetensors)
+const STEP_RE = /_(\d{9})(?:_(?:high|low)_noise)?\.safetensors$/;
 
 export async function GET(_req: NextRequest, { params }: { params: { jobID: string } }) {
   const { jobID } = await params;
@@ -48,8 +48,13 @@ export async function GET(_req: NextRequest, { params }: { params: { jobID: stri
     try { stat = fs.statSync(filePath); } catch { continue; }
 
     const existing = stepMap.get(step);
-    const isPrimary = f === `${job.name}_${m[1]}.safetensors`;
-    if (!existing || isPrimary) {
+    // Prefer: plain > _high_noise > _low_noise (first seen wins for equal priority)
+    const isPlain = f === `${job.name}_${m[1]}.safetensors`;
+    const isHighNoise = f.endsWith('_high_noise.safetensors');
+    const existingIsPlain = existing && existing.filename === `${job.name}_${m[1]}.safetensors`;
+    const existingIsHighNoise = existing && existing.filename.endsWith('_high_noise.safetensors');
+    const shouldReplace = !existing || isPlain || (isHighNoise && !existingIsPlain && !existingIsHighNoise);
+    if (shouldReplace) {
       stepMap.set(step, {
         step,
         filename: f,

@@ -54,7 +54,7 @@ class DiffusionTrainer(SDTrainer):
         self._last_spike_step: int = -1
         self._spike_streak: int = 0
         self._baseline_sample_avg_bytes: float | None = None
-    
+
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
         Start a daemon thread that periodically checks should_stop()
@@ -537,28 +537,19 @@ class DiffusionTrainer(SDTrainer):
         super(DiffusionTrainer, self).on_error(e)
         if self.is_ui_trainer:
             try:
-                is_intentional = self.is_stopping or isinstance(e, (KeyboardInterrupt, JobStoppedException)) or "Job stopped" in str(e)
-                if self.accelerator.is_main_process and not is_intentional:
-                    if self._is_oom_error(e):
-                        import torch as _torch
-                        vram_info = ""
-                        try:
-                            alloc = _torch.cuda.memory_allocated() / 1024**3
-                            reserved = _torch.cuda.memory_reserved() / 1024**3
-                            total = _torch.cuda.get_device_properties(0).total_memory / 1024**3
-                            vram_info = f" (VRAM: {alloc:.1f}GB alloc / {reserved:.1f}GB reserved / {total:.1f}GB total)"
-                        except Exception:
-                            pass
-                        self.append_alert("oom", f"Out of memory at step {self.step_num}{vram_info}", {
-                            "step": self.step_num,
-                            "error": str(e)[:300],
-                        })
+                if self.accelerator.is_main_process and not self.is_stopping:
                     self.update_status("error", str(e))
                     self.update_db_key("step", self.last_save_step)
                 else:
                     # If it's a KeyboardInterrupt, mark as stopped instead of error
                     if not self.is_stopping and (isinstance(e, KeyboardInterrupt) or "Job stopped" in str(e)):
                         self.update_status("stopped", "Job stopped by user")
+                    if isinstance(e, KeyboardInterrupt):
+                        # silence the bar so tqdm doesn't repaint it at interpreter exit
+                        progress_bar = getattr(self, "progress_bar", None)
+                        if progress_bar is not None:
+                            progress_bar.disable = True
+                            progress_bar.close()
                     # On intentional stop/pause (including SIGINT), preserve the current step count
                     self.update_db_key("step", self.step_num)
                 asyncio.run(self.wait_for_all_async())
