@@ -116,6 +116,54 @@ def read_text_file(path: str) -> str:
             return f.read()
 
 
+def ensure_video_has_audio_track(video_path: str) -> None:
+    """
+    Some source videos have no audio stream at all, which crashes torchaudio.load()
+    with an opaque "best audio stream is unknown" error. Mux in a silent stereo AAC
+    track in place (same ffmpeg approach as the local AudioCheck.ps1 utility) so
+    training can proceed with silence instead of failing the whole job.
+    """
+    import shutil
+    import subprocess
+
+    ffprobe_exe = shutil.which('ffprobe')
+    ffmpeg_exe = shutil.which('ffmpeg')
+    if not ffprobe_exe or not ffmpeg_exe:
+        return
+
+    probe = subprocess.run(
+        [ffprobe_exe, '-v', 'error', '-select_streams', 'a',
+         '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', video_path],
+        capture_output=True, text=True,
+    )
+    if probe.stdout.strip():
+        # Already has an audio stream
+        return
+
+    print_acc(f" - No audio stream in {video_path}, adding silent track...")
+    temp_path = video_path + '.with_silent_audio.mp4'
+    result = subprocess.run(
+        [ffmpeg_exe, '-y', '-i', video_path,
+         '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+         '-map', '0:v', '-map', '1:a',
+         '-c:v', 'copy', '-c:a', 'aac', '-shortest',
+         '-movflags', '+faststart', temp_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not os.path.exists(temp_path):
+        print_acc(f" - Failed to add silent audio track to {video_path}: {result.stderr}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return
+
+    try:
+        os.replace(temp_path, video_path)
+    except OSError:
+        # WSL/NTFS cross-device rename can fail; fall back to copy+delete
+        shutil.copyfile(temp_path, video_path)
+        os.remove(temp_path)
+
+
 def waveform_to_stereo(waveform):
     c = waveform.shape[0]
     if c == 2:
@@ -687,6 +735,7 @@ class ImageProcessingDTOMixin:
                     else:
                         target_duration = source_duration
 
+                    ensure_video_has_audio_track(self.path)
                     waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
                     
                     waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
