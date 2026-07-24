@@ -212,6 +212,17 @@ class Wan2214bModel(Wan21):
         if not self.train_high_noise or not self.train_low_noise:
             self.target_lora_modules = ["WanTransformer3DModel"]
 
+    def get_transformer_block_names(self):
+        # The unet for WAN 2.2 14B is a DualWanTransformer3DModel wrapper that holds
+        # transformer_1 and transformer_2, each with their own .blocks list.
+        # Return dotted paths so block_compile can reach them.
+        block_names = []
+        if self.train_high_noise:
+            block_names.append("transformer_1.blocks")
+        if self.train_low_noise:
+            block_names.append("transformer_2.blocks")
+        return block_names
+
     def get_quantization_exclude_modules(self):
         # the timestep/text conditioning embedders and the final projection feed
         # every downstream modulation; keep them in full precision when quantizing.

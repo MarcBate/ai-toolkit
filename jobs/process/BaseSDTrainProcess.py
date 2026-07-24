@@ -2733,6 +2733,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             import time as _t
             _elapsed = _t.time() - float(_proc_start)
             print_acc(f"Time to first step: {_elapsed:.0f}s ({_elapsed / 60:.1f}min)")
+            if self.accelerator.is_main_process:
+                self.logger.record_startup_time(_elapsed)
 
         start_step_num = self.step_num
         did_first_flush = False
