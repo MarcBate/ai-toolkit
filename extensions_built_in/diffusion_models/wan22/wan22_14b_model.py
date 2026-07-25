@@ -213,15 +213,24 @@ class Wan2214bModel(Wan21):
             self.target_lora_modules = ["WanTransformer3DModel"]
 
     def get_transformer_block_names(self):
-        # The unet for WAN 2.2 14B is a DualWanTransformer3DModel wrapper that holds
-        # transformer_1 and transformer_2, each with their own .blocks list.
-        # Return dotted paths so block_compile can reach them.
-        block_names = []
-        if self.train_high_noise:
-            block_names.append("transformer_1.blocks")
-        if self.train_low_noise:
-            block_names.append("transformer_2.blocks")
-        return block_names
+        # This is called from two different places against two different roots:
+        #  - quantize_model() is called once per bare transformer (transformer_1 /
+        #    transformer_2) during load_model(), before they're combined — the
+        #    right answer there is just "blocks" (relative to that transformer).
+        #  - block_compile targets self.unet, which by the time training starts
+        #    IS the combined DualWanTransformer3DModel wrapper holding
+        #    transformer_1/transformer_2, each with their own .blocks.
+        # self.model is only swapped to the wrapper once both transformers are
+        # loaded and quantized, so checking it here tells us which caller this is.
+        model = getattr(self, 'model', None)
+        if isinstance(model, DualWanTransformer3DModel):
+            block_names = []
+            if self.train_high_noise:
+                block_names.append("transformer_1.blocks")
+            if self.train_low_noise:
+                block_names.append("transformer_2.blocks")
+            return block_names
+        return ["blocks"]
 
     def get_quantization_exclude_modules(self):
         # the timestep/text conditioning embedders and the final projection feed
