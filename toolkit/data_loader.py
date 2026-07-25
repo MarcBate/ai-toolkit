@@ -762,7 +762,14 @@ def get_dataloader_from_datasets(
         primary = datasets[0]
         primary.file_list = combined_file_list
         if has_buckets:
+            # primary.epoch_num was already bumped to 1 by its own setup_epoch()
+            # during construction above, and setup_buckets() no-ops once
+            # epoch_num > 0 (see dataloader_mixins.py) — without resetting it
+            # here, the merged file list from the other dataset(s) would never
+            # actually get assigned to a bucket.
+            primary.epoch_num = 0
             primary.setup_buckets()
+            primary.epoch_num = 1
         datasets = [primary]
 
     concatenated_dataset = ConcatDataset(datasets)
