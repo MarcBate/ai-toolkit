@@ -617,7 +617,8 @@ export default function SimpleJob({
               )}
               {jobConfig.config.process[0].model.quantize && (
                 <Checkbox
-                  label="Cache quantized model (skip re-quantization on subsequent runs)"
+                  label="Cache Quantized Model"
+                  docKey="model.cache_quantized_model"
                   checked={jobConfig.config.process[0].model.cache_quantized_model ?? false}
                   onChange={value => setJobConfig(value, 'config.process[0].model.cache_quantized_model')}
                 />
@@ -644,7 +645,8 @@ export default function SimpleJob({
               {jobConfig.config.process[0].model.compile && (
                 <>
                   <Checkbox
-                    label="Block Compile (compile each transformer block separately — more compatible)"
+                    label="Block Compile"
+                    docKey="model.block_compile"
                     checked={jobConfig.config.process[0].model.block_compile ?? true}
                     onChange={value => setJobConfig(value, 'config.process[0].model.block_compile')}
                   />
@@ -659,7 +661,8 @@ export default function SimpleJob({
                     ]}
                   />
                   <Checkbox
-                    label="Full Graph (stricter compile — may fail with quantized/offloaded models)"
+                    label="Full Graph"
+                    docKey="model.compile_fullgraph"
                     checked={jobConfig.config.process[0].model.compile_fullgraph ?? false}
                     onChange={value => setJobConfig(value, 'config.process[0].model.compile_fullgraph')}
                   />
