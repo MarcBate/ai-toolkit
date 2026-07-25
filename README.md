@@ -52,6 +52,11 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 ### UI — Loss Graph
 
 - **Settings persistence** — display settings (smooth/raw/log/clip) saved per job across sessions
+- **Training time grid** — expandable panel below the loss graph shows per-session timing broken into three components: startup (model load), sampling (inference), and pure training time, plus a total column. Subtotals row at top with grand total. Columns: Start, End (time-only when same calendar day), Start Step, Startup, Sampling, Training, Total.
+  - **Startup time persisted** — `startup_seconds` is written to `training_sessions` in `loss_log.db` once the first training step completes; backfilled from `logs/N_log.txt` files for up to 30 days of history via `scripts/backfill_startup_times.py`
+  - **Sampling time from `sampling_periods`** — already tracked; now surfaced per-session instead of just subtracted from training
+  - **Pure training time** — computed as step-span minus sampling time so the three components sum correctly to wall-clock elapsed
+  - **Manual override** — click any Training cell to type a corrected value (`2h 15m`, `135m`, etc.); Enter/blur saves via `PUT /api/jobs/[jobID]/sessions/[sessionId]`; overridden cells shown in blue with `*`; blank input clears the override; stored in `training_seconds_override` column
 
 ### UI — Samples
 

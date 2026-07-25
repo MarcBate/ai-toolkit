@@ -290,18 +290,21 @@ class UILogger:
 
         con.execute("""
             CREATE TABLE IF NOT EXISTS training_sessions (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_time     REAL NOT NULL,
-                startup_seconds REAL
+                id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_time                REAL NOT NULL,
+                startup_seconds           REAL,
+                training_seconds_override REAL
             );
         """)
 
-        # older DBs may have training_sessions without startup_seconds
+        # older DBs may be missing columns added after initial release
         existing_cols = {
             row[1] for row in con.execute("PRAGMA table_info(training_sessions);").fetchall()
         }
         if "startup_seconds" not in existing_cols:
             con.execute("ALTER TABLE training_sessions ADD COLUMN startup_seconds REAL;")
+        if "training_seconds_override" not in existing_cols:
+            con.execute("ALTER TABLE training_sessions ADD COLUMN training_seconds_override REAL;")
 
         con.execute("""
             CREATE TABLE IF NOT EXISTS sampling_periods (

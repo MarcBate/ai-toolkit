@@ -47,6 +47,7 @@ function closeDb(db: sqlite3.Database) {
 }
 
 interface SessionResult {
+  id: number | null;
   start_time: number;
   end_time: number | null;
   start_step: number | null;
@@ -55,6 +56,7 @@ interface SessionResult {
   training_seconds: number | null;
   total_seconds: number | null;
   in_progress: boolean;
+  overridden?: true;
   estimated?: true;
 }
 
@@ -99,6 +101,7 @@ function groupToSession(rows: { step: number; wall_time: number }[]): SessionRes
     if (gap > 0 && gap < INACTIVE_GAP_SECONDS) active += gap;
   }
   return {
+    id: null,
     start_time: rows[0].wall_time,
     end_time: rows[rows.length - 1].wall_time,
     start_step: rows[0].step || null,
@@ -151,11 +154,21 @@ export async function GET(_request: NextRequest, { params }: { params: { jobID: 
         await all<{ name: string }>(db, `PRAGMA table_info(training_sessions);`)
       ).some(col => col.name === 'startup_seconds');
 
-      const sessionRows = await all<{ start_time: number; startup_seconds: number | null }>(
+      const hasOverrideColumn = (
+        await all<{ name: string }>(db, `PRAGMA table_info(training_sessions);`)
+      ).some(col => col.name === 'training_seconds_override');
+
+      const sessionRows = await all<{
+        id: number;
+        start_time: number;
+        startup_seconds: number | null;
+        training_seconds_override: number | null;
+      }>(
         db,
-        hasStartupColumn
-          ? `SELECT start_time, startup_seconds FROM training_sessions ORDER BY start_time ASC`
-          : `SELECT start_time, NULL AS startup_seconds FROM training_sessions ORDER BY start_time ASC`,
+        `SELECT id, start_time,
+                ${hasStartupColumn ? 'startup_seconds' : 'NULL AS startup_seconds'},
+                ${hasOverrideColumn ? 'training_seconds_override' : 'NULL AS training_seconds_override'}
+         FROM training_sessions ORDER BY start_time ASC`,
       );
 
       if (sessionRows.length === 0) {
@@ -204,6 +217,7 @@ export async function GET(_request: NextRequest, { params }: { params: { jobID: 
 
           if (min_wt === null || max_wt === null) {
             return {
+              id: session.id,
               start_time: session.start_time,
               end_time: null,
               start_step: null,
@@ -228,11 +242,17 @@ export async function GET(_request: NextRequest, { params }: { params: { jobID: 
             sampling_seconds = samplingRow?.total ?? 0;
           }
 
-          const training_seconds = Math.max(0, max_wt - min_wt);
+          const override = session.training_seconds_override ?? null;
+          // training_seconds = pure gradient-step time only (sampling subtracted so it
+          // doesn't get counted twice when we sum training + sampling + startup for the total)
+          const training_seconds = override !== null
+            ? override
+            : Math.max(0, max_wt - min_wt - (sampling_seconds ?? 0));
           const total_seconds =
             (startup_seconds ?? 0) + (sampling_seconds ?? 0) + training_seconds;
 
           return {
+            id: session.id,
             start_time: session.start_time,
             end_time: max_wt,
             start_step: range?.start_step || null,
@@ -241,6 +261,7 @@ export async function GET(_request: NextRequest, { params }: { params: { jobID: 
             training_seconds,
             total_seconds,
             in_progress: false,
+            ...(override !== null ? { overridden: true as const } : {}),
           };
         }),
       );
