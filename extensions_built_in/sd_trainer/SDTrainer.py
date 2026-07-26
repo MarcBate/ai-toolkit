@@ -403,17 +403,20 @@ class SDTrainer(BaseSDTrainProcess):
         super().hook_before_train_loop()
         _hook_phase("super()")
         if self.is_caching_text_embeddings:
-            # The transformer gets evicted here purely to free VRAM for the text
-            # encoder. When every startup embedding is already on disk the text
-            # encoder never reaches the GPU, so this is a ~7s trip out plus ~3s
-            # back for nothing. Peak VRAM is no higher than it already was at
-            # this point, so keeping it resident cannot make an OOM worse.
-            if self._startup_embeds_all_on_disk():
-                print_acc("All startup embeddings on disk, keeping transformer on GPU")
-            else:
-                # make sure model is on cpu for this part so we don't oom.
-                self.sd.unet.to('cpu')
-                _hook_phase("unet offload to cpu")
+            # make sure model is on cpu for this part so we don't oom.
+            #
+            # Do NOT skip this when the startup embeddings are all cached. Tried
+            # that: the text encoder genuinely never needs the GPU, so it looks
+            # free (~7s out plus ~3s back), and it cut time-to-first-step from
+            # 83s to 55s. But it also took training from <5s/it to 90s/it. The
+            # eviction is not only making room for the text encoder — it leaves
+            # headroom that the step itself needs once activations, gradients and
+            # the optimizer are live. With low_vram the transformer coming back
+            # via BaseSDTrainProcess ~2546 lands in a different allocation state,
+            # and keeping it resident pushes CUDA into WDDM shared system memory:
+            # no OOM, just ~18x slower. Startup time is not worth that trade.
+            self.sd.unet.to('cpu')
+            _hook_phase("unet offload to cpu")
         
         # cache unconditional embeds (blank prompt)
         # this one prompt never changes between runs, and encoding it costs a
