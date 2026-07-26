@@ -586,10 +586,12 @@ class Krea2Model(BaseModel):
 
         Called by the persistent-process model cache (run_ui.py) when the hot model
         is reused for a new job but the text encoder was already unloaded by the
-        previous job's embedding-caching step. Tokenizer and processor are already
-        on self.tokenizer / self.processor (unloader never touches them).
+        previous job's embedding-caching step. Tokenizer and processors are already
+        on self.tokenizer / self.processor / self.vl_processor (the unloader never
+        touches them), so the reloaded copies are discarded.
         """
-        _tokenizer, _processor, text_encoder = self._load_text_encoder()
+        # _load_text_encoder returns four values, not three
+        _tokenizer, _processor, _vl_processor, text_encoder = self._load_text_encoder()
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing text encoder")
