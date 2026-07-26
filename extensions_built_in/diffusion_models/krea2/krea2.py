@@ -45,7 +45,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from toolkit.metadata import get_meta_for_safetensors
-from toolkit.print import print_acc
+from toolkit.print import print_acc, print_timing
 from toolkit.util.quantize import quantize, get_qtype, quantize_model, has_quant_cache
 from toolkit.memory_management import MemoryManager
 
@@ -621,16 +621,17 @@ class Krea2Model(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Krea 2 model")
 
-        # Per-phase timing. Startup is dominated by things that are easy to guess
-        # wrong about (the 24.5GB bf16 read turned out to be near-irrelevant once
-        # the quant cache short-circuited it), so measure rather than assume.
+        # Per-phase timing, opt-in via AITK_PROFILE_STARTUP=1. Startup is
+        # dominated by things that are easy to guess wrong about (the 24.5GB bf16
+        # read turned out to be near-irrelevant once the quant cache
+        # short-circuited it), so measure rather than assume.
         _phase_start = time.time()
         _load_start = _phase_start
 
         def _phase(label: str):
             nonlocal _phase_start
             now = time.time()
-            print_acc(f"  [load] {label}: {now - _phase_start:.1f}s")
+            print_timing(f"  [load] {label}: {now - _phase_start:.1f}s")
             _phase_start = now
 
         transformer = self._load_transformer()
@@ -721,7 +722,7 @@ class Krea2Model(BaseModel):
         vae = self._load_vae()
         vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
         _phase("vae")
-        print_acc(f"  [load] TOTAL load_model: {time.time() - _load_start:.1f}s")
+        print_timing(f"  [load] TOTAL load_model: {time.time() - _load_start:.1f}s")
 
         self.noise_scheduler = Krea2Model.get_train_scheduler()
 

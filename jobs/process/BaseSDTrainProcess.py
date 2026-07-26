@@ -67,7 +67,7 @@ from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, Netw
 from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
-from toolkit.print import print_acc
+from toolkit.print import print_acc, print_timing
 from accelerate import Accelerator
 import transformers
 import diffusers
@@ -1970,8 +1970,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # run base sd process run
             self.sd.load_model()
 
-        # Startup phase timing. Model loading turned out to be a small slice of
-        # time-to-first-step, so measure the rest rather than guessing at it.
+        # Startup phase timing, opt-in via AITK_PROFILE_STARTUP=1. Model loading
+        # turned out to be a small slice of time-to-first-step, so measure the
+        # rest rather than guessing at it. The "Time to first step" total below
+        # is NOT gated — that one feeds the training time grid.
         # NB: uses its own alias — `_t` is imported locally further down in this
         # function, which makes it an unbound local anywhere above that point.
         import time as _startup_time
@@ -1980,7 +1982,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         def _startup_phase(label: str):
             nonlocal _startup_mark
             _now = _startup_time.time()
-            print_acc(f"  [startup] {label}: {_now - _startup_mark:.1f}s")
+            print_timing(f"  [startup] {label}: {_now - _startup_mark:.1f}s")
             _startup_mark = _now
 
         _startup_phase("load_model")

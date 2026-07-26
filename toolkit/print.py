@@ -16,6 +16,22 @@ def print_acc(*args, **kwargs):
         print(*args, **kwargs)
 
 
+def timing_enabled():
+    """Startup/phase timing output is opt-in via AITK_PROFILE_STARTUP=1.
+
+    Useful when chasing where time-to-first-step goes, but noise in a normal
+    run, so it stays off unless asked for. Read at call time rather than import
+    time so it can be toggled for a single job without a restart.
+    """
+    return os.environ.get('AITK_PROFILE_STARTUP', '0').lower() in ('1', 'true', 'yes')
+
+
+def print_timing(*args, **kwargs):
+    """print_acc, but only when AITK_PROFILE_STARTUP is set."""
+    if timing_enabled():
+        print_acc(*args, **kwargs)
+
+
 class Logger:
     def __init__(self, terminal, log_file):
         self.terminal = terminal
