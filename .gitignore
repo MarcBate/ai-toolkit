@@ -127,6 +127,9 @@ celerybeat.pid
 .node
 env/
 venv/
+# the venv now lives outside the repo (distro ext4); <repo>/venv is a symlink to
+# it, which "venv/" does not match since that only matches directories
+/venv
 ENV/
 env.bak/
 venv.bak/

@@ -19,7 +19,7 @@ Everything runs inside **WSL Ubuntu-22.04**. The Python venv is at `venv/` insid
 bash run_ai_toolkit.sh          # from WSL; opens browser at http://localhost:8675
 
 # Run a training job directly
-wsl -d Ubuntu-22.04 -- /mnt/c/Data/git/AIToolkitWSL/ai-toolkit/venv/bin/python3 run.py config/my_config.yaml
+wsl -d Ubuntu-22.04 -- /home/marcbate/venvs/ai-toolkit/bin/python3 run.py config/my_config.yaml
 ```
 
 Always use `wsl -d Ubuntu-22.04` explicitly — the default WSL distro is not the right one.
@@ -101,7 +101,22 @@ See `README.md` "Fork additions" section for the full list. Key areas:
 | HuggingFace cache | `/mnt/wsl/hfcache/huggingface` (ext4 VHD, see below) |
 | UI runs on | `http://localhost:8675` |
 | WSL distro | `Ubuntu-22.04` |
-| Python venv | `venv/bin/python3` (inside repo root) |
+| Python venv | `/home/marcbate/venvs/ai-toolkit/bin/python3` (see below — **not** in the repo) |
+
+### The venv is NOT in the repo
+
+`<repo>/venv` is a **symlink** to `/home/marcbate/venvs/ai-toolkit`, which lives on
+the distro's ext4. The venv is ~56,000 small files and that is drvfs's worst case:
+importing torch + transformers + diffusers costs **~67s** under `/mnt/c` versus
+**~2s** native.
+
+**Always invoke the real path.** Going through the symlink does not help — Python
+keeps the invocation path as `sys.prefix`, so every site-packages read is still
+translated across the bridge (measured 30s vs 2s). `run_ai_toolkit.sh` sets
+`VENV_DIR` to the real path and exports `AITK_PYTHON`, which `resolvePythonPath()`
+in `ui/cron/pythonPath.ts` prefers over the in-repo candidates.
+
+The symlink exists only so `source venv/bin/activate` still works by habit.
 
 ### HuggingFace cache lives on a dedicated ext4 VHD
 

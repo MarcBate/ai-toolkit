@@ -17,8 +17,17 @@ set -euo pipefail
 # -----------------------------
 ROOT="/mnt/c/Data/git/AIToolkitWSL"
 REPO_DIR="${ROOT}/ai-toolkit"
-VENV_DIR="${REPO_DIR}/venv"
 UI_DIR="${REPO_DIR}/ui"
+
+# The venv lives on the distro's ext4, NOT under /mnt/c. Importing torch +
+# transformers + diffusers costs ~67s across the drvfs bridge versus ~2s native —
+# the venv is 56k small files, which is drvfs's worst case.
+#
+# It must be invoked by this real path. <repo>/venv is a symlink here for
+# convenience, but going through it does NOT help: Python keeps the invocation
+# path as sys.prefix, so every site-packages read is still translated across the
+# bridge (measured 30s vs 2s).
+VENV_DIR="/home/marcbate/venvs/ai-toolkit"
 
 UI_PORT="8675"
 UI_URL="http://localhost:${UI_PORT}"
@@ -42,6 +51,11 @@ HF_CACHE_MOUNT="/mnt/wsl/hfcache"
 export HF_HOME="${HF_CACHE_MOUNT}/huggingface"
 export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
+
+# The UI worker spawns training processes via resolvePythonPath(), which would
+# otherwise find the <repo>/venv symlink and pay the drvfs import cost on every
+# job start. Point it at the real interpreter.
+export AITK_PYTHON="${VENV_DIR}/bin/python3"
 
 # Optional stability knobs
 export GIT_LFS_SKIP_SMUDGE=1
@@ -315,14 +329,19 @@ mkdir -p "$(dirname "${LOG_FILE}")"
 cd "${UI_DIR}"
 
 # Only rebuild if source files changed since the last build.
-# Checks src/, public/, package.json, next.config.*, and tsconfig files.
+# Checks src/, cron/, public/, package.json, next.config.*, and tsconfig files.
+#
+# cron/ matters as much as src/: the background worker runs from the compiled
+# dist/cron/*.js, so edits to pythonPath.ts / processQueue.ts / startJob.ts do
+# nothing until `npm run build` recompiles them. Leaving cron/ out of this check
+# meant worker fixes silently ran as stale builds.
 NEXT_BUILD="${UI_DIR}/.next/BUILD_ID"
 UI_NEEDS_BUILD=0
 
 if [[ ! -f "${NEXT_BUILD}" ]]; then
   echo "---- No existing build found, will build."
   UI_NEEDS_BUILD=1
-elif find "${UI_DIR}/src" "${UI_DIR}/public" \
+elif find "${UI_DIR}/src" "${UI_DIR}/cron" "${UI_DIR}/public" \
          "${UI_DIR}/package.json" "${UI_DIR}/tsconfig.json" \
          "${UI_DIR}/tsconfig.worker.json" \
          -newer "${NEXT_BUILD}" -print -quit 2>/dev/null | grep -q .; then
