@@ -33,10 +33,15 @@ DO_NPM_INSTALL_ON_UPDATE="0"
 # Default is 0 to skip them.
 RUN_ENV_CHECKS="0"
 
-# Hugging Face cache on Windows NTFS
-export HF_HOME="/mnt/c/Users/marc.bate/.cache/huggingface"
-export HUGGINGFACE_HUB_CACHE="/mnt/c/Users/marc.bate/.cache/huggingface/hub"
-export TRANSFORMERS_CACHE="/mnt/c/Users/marc.bate/.cache/huggingface/hub"
+# Hugging Face cache on a dedicated ext4 VHD (C:\Data\WSL\hf-cache.vhdx).
+# It lives on a real Linux filesystem rather than under /mnt/c because the WSL
+# drvfs bridge caps at ~225 MB/s regardless of how fast the underlying Windows
+# drive is (measured: 223 MB/s on /mnt/c, 228 MB/s on a second NVMe, 13.3 GB/s
+# here). Loading a 25GB transformer went from ~112s to a couple of seconds.
+HF_CACHE_MOUNT="/mnt/wsl/hfcache"
+export HF_HOME="${HF_CACHE_MOUNT}/huggingface"
+export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
+export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 
 # Optional stability knobs
 export GIT_LFS_SKIP_SMUDGE=1
@@ -132,6 +137,13 @@ have_cmd ffmpeg || die "ffmpeg not found in WSL. Run: sudo apt-get update && sud
 
 [[ -d "${REPO_DIR}/.git" ]] || die "Repo not found at ${REPO_DIR}"
 [[ -f "${VENV_DIR}/bin/activate" ]] || die "venv not found at ${VENV_DIR}. Create/fix it first."
+
+# WSL does not re-attach the HF cache VHD after a reboot. Fail loudly rather than
+# starting, because HF_HOME would silently point at an empty directory and every
+# model would re-download (~325GB) instead of erroring.
+grep -q " ${HF_CACHE_MOUNT} " /proc/mounts || die "HF cache disk not mounted at ${HF_CACHE_MOUNT}.
+Attach it from an elevated Windows prompt:
+  wsl --mount --vhd \"C:\\Data\\WSL\\hf-cache.vhdx\" --name hfcache"
 
 cd "${REPO_DIR}"
 

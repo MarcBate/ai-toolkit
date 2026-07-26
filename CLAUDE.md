@@ -98,7 +98,34 @@ See `README.md` "Fork additions" section for the full list. Key areas:
 | Purpose | Path |
 |---------|------|
 | Training output | `C:\Data\AIToolkit-StagingArea\output\` |
-| HuggingFace cache | `/mnt/c/Users/marc.bate/.cache/huggingface` |
+| HuggingFace cache | `/mnt/wsl/hfcache/huggingface` (ext4 VHD, see below) |
 | UI runs on | `http://localhost:8675` |
 | WSL distro | `Ubuntu-22.04` |
 | Python venv | `venv/bin/python3` (inside repo root) |
+
+### HuggingFace cache lives on a dedicated ext4 VHD
+
+The cache is **not** under `/mnt/c` anymore. The WSL drvfs bridge caps at ~225 MB/s
+regardless of how fast the underlying Windows drive is (measured: 223 MB/s on `/mnt/c`,
+228 MB/s on a second NVMe, **13.3 GB/s** on native ext4). Loading a 25GB transformer
+took ~112s across the bridge.
+
+It now lives on `C:\Data\WSL\hf-cache.vhdx`, a 400GB ext4 disk mounted at
+`/mnt/wsl/hfcache`. `run_ai_toolkit.sh` exports `HF_HOME` there and refuses to start
+if the mount is missing — otherwise HF would silently re-download everything.
+
+**WSL does not re-attach the disk after a reboot.** A logon scheduled task runs:
+
+```
+wsl.exe --mount --vhd "C:\Data\WSL\hf-cache.vhdx" --name hfcache
+```
+
+To attach it manually (elevated prompt required):
+
+```
+wsl --mount --vhd "C:\Data\WSL\hf-cache.vhdx" --name hfcache
+```
+
+The captioner project keeps its own copy of the Gliese caption model in the old
+Windows cache (`C:\Users\marc.bate\.cache\huggingface`), along with the HF auth
+token — that path is still live and should not be deleted.
