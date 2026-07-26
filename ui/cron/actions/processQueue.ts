@@ -97,17 +97,34 @@ export default async function processQueue() {
       }
     }
     if (queue.is_running) {
-      // first see if one is already running, status of running or stopping
-      const runningJob: Job | null = await prisma.job.findFirst({
+      // See if one is already running, status of running or stopping.
+      //
+      // A 'running' row is not proof a trainer exists. If the process is killed,
+      // OOMs, or the box loses power, nothing ever clears the row and this check
+      // would skip the queue forever — a permanent deadlock that looks like "the
+      // queue just stopped working". So verify the process before trusting it,
+      // and reconcile any row whose trainer is gone.
+      const claimedJobs: Job[] = await prisma.job.findMany({
         where: {
           status: { in: ['running', 'stopping'] },
           gpu_ids: queue.gpu_ids,
         },
       });
 
-      if (runningJob) {
-        // already running, nothing to do
+      const liveClaimedJob = claimedJobs.find(job => isTrainerAlive(job.pid));
+      if (liveClaimedJob) {
+        // genuinely running, nothing to do
         continue; // skip to next queue
+      }
+
+      for (const stale of claimedJobs) {
+        console.log(
+          `Reconciling stale '${stale.status}' job ${stale.name} (pid ${stale.pid}): no trainer process alive.`,
+        );
+        await prisma.job.update({
+          where: { id: stale.id },
+          data: { status: 'stopped', pid: null, info: 'Stopped (trainer process gone)' },
+        });
       }
 
       // Status said the GPU is free. Confirm no trainer is actually still alive on
