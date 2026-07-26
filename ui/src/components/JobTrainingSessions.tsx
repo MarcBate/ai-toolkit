@@ -99,6 +99,7 @@ export default function JobTrainingSessions({ job }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [editOriginalSeconds, setEditOriginalSeconds] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const fetchSessions = useCallback(async () => {
@@ -124,8 +125,10 @@ export default function JobTrainingSessions({ job }: Props) {
 
   const startEdit = (session: Session) => {
     if (session.id === null) return;
+    const formatted = session.training_seconds !== null ? formatDuration(session.training_seconds) : '';
     setEditingId(session.id);
-    setEditValue(session.training_seconds !== null ? formatDuration(session.training_seconds) : '');
+    setEditValue(formatted);
+    setEditOriginalSeconds(session.training_seconds);
   };
 
   const cancelEdit = () => {
@@ -137,6 +140,11 @@ export default function JobTrainingSessions({ job }: Props) {
     const seconds = editValue.trim() === '' ? null : parseDuration(editValue);
     if (editValue.trim() !== '' && seconds === null) {
       // bad input — keep editing
+      return;
+    }
+    // No real change — parsed value matches what was there before
+    if (seconds === editOriginalSeconds) {
+      cancelEdit();
       return;
     }
     setEditingId(null);

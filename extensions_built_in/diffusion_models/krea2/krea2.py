@@ -44,7 +44,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from toolkit.metadata import get_meta_for_safetensors
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.quantize import quantize, get_qtype, quantize_model, has_quant_cache
 from toolkit.memory_management import MemoryManager
 
 from .src.mmdit import (
@@ -241,6 +241,25 @@ class Krea2Model(BaseModel):
         # Build on meta, then materialize straight from the checkpoint.
         with torch.device("meta"):
             transformer = SingleStreamDiT(config)
+
+        # A quantization cache holds every tensor the model needs — quantized
+        # linears as _data/_scale, everything else (norms, modulation, qk-norm
+        # scales) verbatim — so when one is going to be used there is no point
+        # reading and materializing the full bf16 checkpoint just to overwrite it
+        # moments later. Leave the model on meta and let quantize_model() fill it
+        # in from the cache. load_model() asserts nothing is left on meta after.
+        #
+        # Skipped when an assistant lora is configured: that path reads the real
+        # weights before quantization, and rewrites qtype (changing the cache key).
+        if (
+            self.model_config.quantize
+            and self.model_config.assistant_lora_path is None
+            and has_quant_cache(self)
+        ):
+            self.print_and_status_update(
+                "  - quantization cache hit, skipping bf16 checkpoint load"
+            )
+            return transformer
 
         self.print_and_status_update("  - fetching transformer weights")
         state_dict = _load_mmdit_state_dict(
@@ -613,6 +632,25 @@ class Krea2Model(BaseModel):
             self.print_and_status_update("Quantizing transformer")
             quantize_model(self, transformer)
             flush()
+            # _load_transformer() may have skipped the bf16 checkpoint on the
+            # strength of a cache hit. If the cache then wasn't used after all,
+            # tensors would still be on meta — fail loudly here rather than
+            # training against uninitialised weights.
+            still_meta = [
+                name
+                for name, t in (
+                    list(transformer.named_parameters())
+                    + list(transformer.named_buffers())
+                )
+                if t.is_meta
+            ]
+            if still_meta:
+                raise RuntimeError(
+                    f"{len(still_meta)} tensors are still on the meta device after "
+                    f"quantization (e.g. {', '.join(still_meta[:3])}). The quantization "
+                    "cache was expected to materialize them but did not. Delete the "
+                    "cache entry for this model and re-run to rebuild it."
+                )
 
         if (
             self.model_config.layer_offloading
