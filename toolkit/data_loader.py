@@ -591,23 +591,40 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         if self.epoch_num == 0:
             # initial setup
             # do not call for now
+            # Phase timing: the per-item cache *checks* here (hashing paths,
+            # stat-ing cache files) can cost far more than the caching itself,
+            # which the progress bars make look instant.
+            import time as _ep_time
+            _ep_mark = _ep_time.time()
+
+            def _ep_phase(label):
+                nonlocal _ep_mark
+                _now = _ep_time.time()
+                print_acc(f"   [dataset] {label}: {_now - _ep_mark:.1f}s")
+                _ep_mark = _now
+
             if self.dataset_config.buckets:
                 # setup buckets
                 print_acc(" - Setting up buckets...")
                 self.setup_buckets()
+                _ep_phase("setup_buckets")
             if self.is_caching_latents:
                 print_acc(" - Caching latents...")
                 self.cache_latents_all_latents()
+                _ep_phase("cache_latents_all_latents")
             if self.is_caching_clip_vision_to_disk:
                 print_acc(" - Caching CLIP vision...")
                 self.cache_clip_vision_to_disk()
+                _ep_phase("cache_clip_vision_to_disk")
             if self.is_caching_text_embeddings:
                 print_acc(" - Caching text embeddings...")
                 self.cache_text_embeddings()
+                _ep_phase("cache_text_embeddings")
             if self.is_generating_controls:
                 # always do this last
                 print_acc(" - Setting up controls...")
                 self.setup_controls()
+                _ep_phase("setup_controls")
         self.epoch_num += 1
 
     def __len__(self):

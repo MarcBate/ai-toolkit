@@ -1970,6 +1970,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # run base sd process run
             self.sd.load_model()
 
+        # Startup phase timing. Model loading turned out to be a small slice of
+        # time-to-first-step, so measure the rest rather than guessing at it.
+        # NB: uses its own alias — `_t` is imported locally further down in this
+        # function, which makes it an unbound local anywhere above that point.
+        import time as _startup_time
+        _startup_mark = _startup_time.time()
+
+        def _startup_phase(label: str):
+            nonlocal _startup_mark
+            _now = _startup_time.time()
+            print_acc(f"  [startup] {label}: {_now - _startup_mark:.1f}s")
+            _startup_mark = _now
+
+        _startup_phase("load_model")
+
         self.sd.add_after_sample_image_hook(self.sample_step_hook)
 
         dtype = get_torch_dtype(self.train_config.dtype)
@@ -2087,6 +2102,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         self.hook_after_model_load()
         flush()
+        _startup_phase("hook_after_model_load")
         if not self.is_fine_tuning:
             if self.network_config is not None:
                 print_acc("Setting up LoRA network...")
@@ -2416,12 +2432,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
         self.lr_scheduler = lr_scheduler
 
+        _startup_phase("network/optimizer setup")
+
         # cache validation latents and embeddings now, the vae and text encoder
         # may be dumped before the train loop starts
         self.setup_validation()
+        _startup_phase("setup_validation")
 
         ### HOOk ###
         self.before_dataset_load()
+        _startup_phase("before_dataset_load")
         # some models (e.g. wan22_14b_i2v) need the raw image tensor every step
         # even when latents are cached to disk
         if getattr(self.sd, 'requires_pixels_with_cached_latents', False):
@@ -2440,9 +2460,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                                                 self.sd)
 
         flush()
+        _startup_phase("dataloaders (buckets/latents/embeddings)")
         self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
+        _startup_phase("hook_before_train_loop")
 
         # ============================================================
         # COMPILE
@@ -2732,6 +2754,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if _proc_start:
             import time as _t
             _elapsed = _t.time() - float(_proc_start)
+            _startup_phase("compile/sampling -> first step")
             print_acc(f"Time to first step: {_elapsed:.0f}s ({_elapsed / 60:.1f}min)")
             if self.accelerator.is_main_process:
                 self.logger.record_startup_time(_elapsed)

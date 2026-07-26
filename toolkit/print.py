@@ -1,5 +1,6 @@
 import sys
 import os
+from datetime import datetime
 from toolkit.accelerator import get_accelerator
 
 # Captured once at import time, before any Logger wrapping happens. Reusing
@@ -19,10 +20,39 @@ class Logger:
     def __init__(self, terminal, log_file):
         self.terminal = terminal
         self.log = log_file
+        self._at_line_start = True
+
+    def _stamp(self, message):
+        """Prefix each new line written to the log file with a wall clock time.
+
+        Without this, working out where startup time goes means hand-adding
+        timers to the code and restarting the job for every question. With it,
+        the gap between any two log lines is readable directly.
+
+        Only the log file is stamped, not the terminal, and only real line
+        starts are: tqdm redraws its progress bars with '\\r' and no newline, so
+        splitting on '\\r' too would stamp every single progress tick.
+        """
+        if not message:
+            return message
+        ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        parts = message.split('\n')
+        out = []
+        for i, part in enumerate(parts):
+            if self._at_line_start and part.strip():
+                out.append(f'[{ts}] {part}')
+            else:
+                out.append(part)
+            if i != len(parts) - 1:
+                out.append('\n')
+                self._at_line_start = True
+            else:
+                self._at_line_start = (part == '')
+        return ''.join(out)
 
     def write(self, message):
         self.terminal.write(message)
-        self.log.write(message)
+        self.log.write(self._stamp(message))
         self.log.flush()  # Make sure it's written immediately
 
     def flush(self):
