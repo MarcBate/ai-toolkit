@@ -68,6 +68,7 @@ from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.print import print_acc, print_timing
+from toolkit import embed_disk_cache
 from accelerate import Accelerator
 import transformers
 import diffusers
@@ -1764,6 +1765,32 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 )
             prompt_list.append(prompt)
 
+        # None of this changes between runs, but re-deriving it costs ~24s of
+        # text encoder and VAE round-trips to the GPU. Cache it on disk, keyed on
+        # everything that could change the result.
+        item_key = [
+            {'image': embed_disk_cache.file_stamp(item.image_path), 'prompt': prompt}
+            for item, prompt in zip(validation_items, prompt_list)
+        ]
+        cache_key = embed_disk_cache.build_key_material(
+            self.sd.model_config,
+            kind='validation',
+            items=item_key,
+            resolution=resolution,
+            divisibility=divisibility,
+            dtype=str(dtype),
+            trigger_word=self.trigger_word,
+        )
+        cached = embed_disk_cache.load(self.save_root, cache_key)
+        if cached is not None:
+            self._validation_cache = {
+                'latents': cached['latents'],
+                'noise': cached['noise'],
+                'embeds': [embed_disk_cache.prompt_embeds_from_dict(e) for e in cached['embeds']],
+            }
+            print_acc("Loaded validation latents and embeddings from disk cache")
+            return
+
         fork_devices = [device] if device.type == 'cuda' else []
         with torch.no_grad(), torch.random.fork_rng(devices=fork_devices):
             # encode the prompts one at a time so they can be reassembled per sigma later
@@ -1801,6 +1828,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             'noise': noise_list,
             'embeds': embeds_list,
         }
+        embed_disk_cache.save(self.save_root, cache_key, {
+            'latents': latent_list,
+            'noise': noise_list,
+            'embeds': [embed_disk_cache.prompt_embeds_to_dict(e) for e in embeds_list],
+        })
         flush()
 
     def validate(self):
@@ -1977,7 +2009,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # NB: uses its own alias — `_t` is imported locally further down in this
         # function, which makes it an unbound local anywhere above that point.
         import time as _startup_time
+        # Seed the first phase from process start, not from here. Previously the
+        # mark was taken *after* load_model and the first phase was still labelled
+        # "load_model", so it always reported 0.0s and everything from interpreter
+        # start to this point — the largest slice by far — went unmeasured.
         _startup_mark = _startup_time.time()
+        _proc_start_env = os.environ.get('AITK_PROCESS_START')
+        if _proc_start_env:
+            try:
+                _startup_mark = float(_proc_start_env)
+            except ValueError:
+                pass
 
         def _startup_phase(label: str):
             nonlocal _startup_mark
@@ -1985,7 +2027,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             print_timing(f"  [startup] {label}: {_now - _startup_mark:.1f}s")
             _startup_mark = _now
 
-        _startup_phase("load_model")
+        _startup_phase("process start -> model ready (imports + load/hot-reuse)")
 
         self.sd.add_after_sample_image_hook(self.sample_step_hook)
 
@@ -2042,6 +2084,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         #     except ImportError:
         #         print_acc("sage attention is not installed. Using SDP instead")
 
+        _startup_phase("attention_backend")
+
         if self.train_config.gradient_checkpointing:
             # if has method enable_gradient_checkpointing
             if hasattr(unet, 'enable_gradient_checkpointing'):
@@ -2062,6 +2106,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if hasattr(text_encoder, "gradient_checkpointing_enable"):
                     text_encoder.gradient_checkpointing_enable()
 
+        _startup_phase("gradient_checkpointing")
+
         if self.sd.refiner_unet is not None:
             self.sd.refiner_unet.to(self.device_torch, dtype=dtype)
             self.sd.refiner_unet.requires_grad_(False)
@@ -2078,12 +2124,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             text_encoder.requires_grad_(False)
             text_encoder.eval()
+        _startup_phase("text_encoder_eval")
         unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
+        _startup_phase("unet_to_device")
         vae = vae.to(torch.device('cpu'), dtype=dtype)
         vae.requires_grad_(False)
         vae.eval()
+        _startup_phase("vae_to_cpu")
         if self.train_config.learnable_snr_gos:
             self.snr_gos = LearnableSNRGamma(
                 self.sd.noise_scheduler, device=self.device_torch
@@ -2103,8 +2152,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.snr_gos.gamma.data = torch.tensor(json_data['gamma'], device=self.device_torch)
 
         self.hook_after_model_load()
-        flush()
         _startup_phase("hook_after_model_load")
+        flush()
+        _startup_phase("flush")
         if not self.is_fine_tuning:
             if self.network_config is not None:
                 print_acc("Setting up LoRA network...")
@@ -2229,8 +2279,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if latest_save_path is not None and not self.train_config.merge_network_on_save:
                     print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                     print_acc(f"Loading from {latest_save_path}")
+                    # load_weights already loads the training state from metadata
+                    # when there is a network, which there always is here
                     extra_weights = self.load_weights(latest_save_path)
-                    self.load_training_state_from_metadata(latest_save_path)
                     self.network.multiplier = 1.0
                 elif self.train_config.merge_network_on_save and self.network_config.pretrained_lora_path is not None:
                     # with merge_network_on_save, saved checkpoints are full models that get loaded as the

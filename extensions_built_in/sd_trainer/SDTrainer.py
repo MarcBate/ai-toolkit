@@ -11,6 +11,7 @@ from safetensors.torch import load_file
 from torch.utils.data import DataLoader, ConcatDataset
 
 from toolkit import train_tools
+from toolkit import embed_disk_cache
 from toolkit.basic import value_map, adain, get_mean_std
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.config_modules import GenerateImageConfig
@@ -20,7 +21,7 @@ from toolkit.guidance import get_targeted_guidance_loss, get_guidance_loss, Guid
 from toolkit.image_utils import show_tensors, show_latents
 from toolkit.ip_adapter import IPAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.print import print_acc
+from toolkit.print import print_acc, print_timing
 from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
@@ -122,6 +123,105 @@ class SDTrainer(BaseSDTrainProcess):
             return False
         te_list = te if isinstance(te, list) else [te]
         return any(isinstance(t, FakeTextEncoder) for t in te_list)
+
+    def _startup_embed_keys(self):
+        """Key material for the fixed startup prompts: (blank, trigger, dop).
+
+        Trigger and dop are None when not configured. Shared by the load path and
+        by the decision about whether the transformer needs evicting.
+        """
+        def _key(kind, prompt, with_control):
+            return embed_disk_cache.build_key_material(
+                self.sd.model_config,
+                kind=kind,
+                prompt=prompt,
+                encode_control=with_control and self.sd.encode_control_in_text_embeddings,
+                multiple_control_images=self.sd.has_multiple_control_images,
+                dtype=str(self.sd.torch_dtype),
+            )
+
+        blank_key = _key('blank', "", True)
+        trigger_key = None if self.trigger_word is None else \
+            _key('trigger', self.trigger_word, True)
+        dop_key = None if not self.train_config.diff_output_preservation else \
+            _key('dop', self.train_config.diff_output_preservation_class, False)
+        return blank_key, trigger_key, dop_key
+
+    def _startup_embeds_all_on_disk(self):
+        """True when no startup prompt needs the text encoder.
+
+        Existence-only, so it is cheap enough to run before deciding whether to
+        evict the transformer. The real loads still re-verify the key material,
+        so a wrong True here costs an unnecessary text encoder move, never a
+        stale embedding.
+        """
+        if self.train_config.train_text_encoder:
+            return False
+        for key in self._startup_embed_keys():
+            if key is not None and not embed_disk_cache.exists(self.save_root, key):
+                return False
+        sample_key = self._sample_prompts_cache_key()
+        if sample_key is not None and not embed_disk_cache.exists(self.save_root, sample_key):
+            return False
+        return True
+
+    def _sample_prompts_cache_key(self):
+        """Key material for the sample prompt embeds, or None if there is nothing to cache.
+
+        Sample prompts are editable from the UI mid-run, and a sample item can
+        carry up to four control images that get folded into the text embeds on
+        some models. All of it goes in the key, so an edited prompt or a swapped
+        control image misses and re-encodes on the next run.
+        """
+        if self.sample_config is None or not self.sample_config.samples:
+            return None
+        items = []
+        for i in range(len(self.sample_config.prompts)):
+            sample_item = self.sample_config.samples[i]
+            prompt = self.sample_config.prompts[i]
+            if self.trigger_word is not None:
+                prompt = self.sd.inject_trigger_into_prompt(
+                    prompt, self.trigger_word, add_if_not_present=False
+                )
+            items.append({
+                'prompt': prompt,
+                'negative': sample_item.neg,
+                'ctrl_imgs': [
+                    embed_disk_cache.file_stamp(p) for p in (
+                        sample_item.ctrl_img,
+                        sample_item.ctrl_img_1,
+                        sample_item.ctrl_img_2,
+                        sample_item.ctrl_img_3,
+                    )
+                ],
+            })
+        return embed_disk_cache.build_key_material(
+            self.sd.model_config,
+            kind='sample_prompts',
+            items=items,
+            trigger_word=self.trigger_word,
+            encode_control=self.sd.encode_control_in_text_embeddings,
+            multiple_control_images=self.sd.has_multiple_control_images,
+        )
+
+    def load_sample_prompts_cache_from_disk(self):
+        """Populate sd.sample_prompts_cache from disk. True if it is now satisfied."""
+        key = self._sample_prompts_cache_key()
+        if key is None:
+            return True  # nothing to encode, so nothing is missing
+        cached = embed_disk_cache.load(self.save_root, key)
+        if cached is None or len(cached) != len(self.sample_config.prompts):
+            return False
+        self.sd.sample_prompts_cache = [
+            {
+                'conditional': embed_disk_cache.prompt_embeds_from_dict(entry['conditional']),
+                'unconditional': embed_disk_cache.prompt_embeds_from_dict(entry['unconditional']),
+            }
+            for entry in cached
+        ]
+        self._cached_prompt_list = list(self.sample_config.prompts)
+        print_acc(f"Loaded {len(cached)} sample prompt embeds from disk cache")
+        return True
 
     def cache_sample_prompts(self):
         if self.train_config.disable_sampling:
@@ -243,6 +343,19 @@ class SDTrainer(BaseSDTrainProcess):
             # atomically swap in the fully-built cache
             self.sd.sample_prompts_cache = new_cache
             self._cached_prompt_list = list(self.sample_config.prompts)
+
+            # Persist under the current prompts. When the UI edits prompts mid-run
+            # this path re-runs, so the new set lands on disk and the next run of
+            # the job hits it instead of re-encoding.
+            disk_key = self._sample_prompts_cache_key()
+            if disk_key is not None:
+                embed_disk_cache.save(self.save_root, disk_key, [
+                    {
+                        'conditional': embed_disk_cache.prompt_embeds_to_dict(entry['conditional']),
+                        'unconditional': embed_disk_cache.prompt_embeds_to_dict(entry['unconditional']),
+                    }
+                    for entry in new_cache
+                ])
         
 
     def before_dataset_load(self):
@@ -278,30 +391,71 @@ class SDTrainer(BaseSDTrainProcess):
             self.taesd.requires_grad_(False)
 
     def hook_before_train_loop(self):
+        import time as _hook_time
+        _hook_mark = _hook_time.time()
+
+        def _hook_phase(label):
+            nonlocal _hook_mark
+            _now = _hook_time.time()
+            print_timing(f"  [hook_before_train_loop] {label}: {_now - _hook_mark:.1f}s")
+            _hook_mark = _now
+
         super().hook_before_train_loop()
+        _hook_phase("super()")
         if self.is_caching_text_embeddings:
-            # make sure model is on cpu for this part so we don't oom.
-            self.sd.unet.to('cpu')
+            # The transformer gets evicted here purely to free VRAM for the text
+            # encoder. When every startup embedding is already on disk the text
+            # encoder never reaches the GPU, so this is a ~7s trip out plus ~3s
+            # back for nothing. Peak VRAM is no higher than it already was at
+            # this point, so keeping it resident cannot make an OOM worse.
+            if self._startup_embeds_all_on_disk():
+                print_acc("All startup embeddings on disk, keeping transformer on GPU")
+            else:
+                # make sure model is on cpu for this part so we don't oom.
+                self.sd.unet.to('cpu')
+                _hook_phase("unet offload to cpu")
         
         # cache unconditional embeds (blank prompt)
-        with torch.no_grad():
-            kwargs = {}
-            if self.sd.encode_control_in_text_embeddings:
-                # just do a blank image for unconditionals
-                control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
-                if self.sd.has_multiple_control_images:
-                    control_image = [control_image]
-                
-                kwargs['control_images'] = control_image
-            self.unconditional_embeds = self.sd.encode_prompt(
-                [self.train_config.unconditional_prompt],
-                long_prompts=self.do_long_prompts,
-                **kwargs
-            ).to(
-                self.device_torch,
-                dtype=self.sd.torch_dtype
-            ).detach()
-        
+        # this one prompt never changes between runs, and encoding it costs a
+        # full text encoder round-trip to the GPU, so it is cached on disk too
+        uncond_key = embed_disk_cache.build_key_material(
+            self.sd.model_config,
+            kind='unconditional',
+            prompt=self.train_config.unconditional_prompt,
+            long_prompts=self.do_long_prompts,
+            encode_control=self.sd.encode_control_in_text_embeddings,
+            multiple_control_images=self.sd.has_multiple_control_images,
+            dtype=str(self.sd.torch_dtype),
+        )
+        cached_uncond = embed_disk_cache.load(self.save_root, uncond_key)
+        if cached_uncond is not None:
+            self.unconditional_embeds = embed_disk_cache.prompt_embeds_from_dict(
+                cached_uncond
+            ).to(self.device_torch, dtype=self.sd.torch_dtype)
+            print_acc("Loaded unconditional embeds from disk cache")
+        else:
+            with torch.no_grad():
+                kwargs = {}
+                if self.sd.encode_control_in_text_embeddings:
+                    # just do a blank image for unconditionals
+                    control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.has_multiple_control_images:
+                        control_image = [control_image]
+
+                    kwargs['control_images'] = control_image
+                self.unconditional_embeds = self.sd.encode_prompt(
+                    [self.train_config.unconditional_prompt],
+                    long_prompts=self.do_long_prompts,
+                    **kwargs
+                ).to(
+                    self.device_torch,
+                    dtype=self.sd.torch_dtype
+                ).detach()
+            embed_disk_cache.save(self.save_root, uncond_key, embed_disk_cache.prompt_embeds_to_dict(
+                self.unconditional_embeds.clone().to('cpu')
+            ))
+
+
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
         # move vae to device if we did not cache latents
@@ -353,22 +507,63 @@ class SDTrainer(BaseSDTrainProcess):
             with torch.no_grad():
                 if self.train_config.train_text_encoder:
                     raise ValueError("Cannot unload text encoder if training text encoder")
-                # cache embeddings
-                self.sd.text_encoder_to(self.device_torch)
-                encode_kwargs = {}
-                if self.sd.encode_control_in_text_embeddings:
-                    # just do a blank image for unconditionals
-                    control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
-                    if self.sd.has_multiple_control_images:
-                        control_image = [control_image]
-                    encode_kwargs['control_images'] = control_image
-                self.cached_blank_embeds = self.sd.encode_prompt("", **encode_kwargs)
-                if self.trigger_word is not None:
-                    self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word, **encode_kwargs)
-                if self.train_config.diff_output_preservation:
-                    self.diff_output_preservation_embeds = self.sd.encode_prompt(self.train_config.diff_output_preservation_class)
+                # Everything below needs the text encoder on the GPU, and moving
+                # it there and back is the single biggest remaining chunk of
+                # startup. None of these inputs change between runs, so try the
+                # disk cache for all of them first and only pay for the move if
+                # something actually missed.
+                blank_key, trigger_key, dop_key = self._startup_embed_keys()
 
-                self.cache_sample_prompts()
+                def _load_fixed(key):
+                    if key is None:
+                        return None
+                    data = embed_disk_cache.load(self.save_root, key)
+                    if data is None:
+                        return None
+                    return embed_disk_cache.prompt_embeds_from_dict(data).to(
+                        self.device_torch, dtype=self.sd.torch_dtype
+                    )
+
+                self.cached_blank_embeds = _load_fixed(blank_key)
+                self.cached_trigger_embeds = _load_fixed(trigger_key)
+                self.diff_output_preservation_embeds = _load_fixed(dop_key)
+                samples_hit = self.load_sample_prompts_cache_from_disk()
+
+                needs_text_encoder = (
+                    self.cached_blank_embeds is None
+                    or (trigger_key is not None and self.cached_trigger_embeds is None)
+                    or (dop_key is not None and self.diff_output_preservation_embeds is None)
+                    or not samples_hit
+                )
+
+                if not needs_text_encoder:
+                    print_acc("All startup embeddings came from the disk cache, text encoder never moved to GPU")
+                else:
+                    # cache embeddings
+                    self.sd.text_encoder_to(self.device_torch)
+                    encode_kwargs = {}
+                    if self.sd.encode_control_in_text_embeddings:
+                        # just do a blank image for unconditionals
+                        control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        if self.sd.has_multiple_control_images:
+                            control_image = [control_image]
+                        encode_kwargs['control_images'] = control_image
+                    if self.cached_blank_embeds is None:
+                        self.cached_blank_embeds = self.sd.encode_prompt("", **encode_kwargs)
+                        embed_disk_cache.save(self.save_root, blank_key, embed_disk_cache.prompt_embeds_to_dict(
+                            self.cached_blank_embeds.clone().to('cpu')))
+                    if trigger_key is not None and self.cached_trigger_embeds is None:
+                        self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word, **encode_kwargs)
+                        embed_disk_cache.save(self.save_root, trigger_key, embed_disk_cache.prompt_embeds_to_dict(
+                            self.cached_trigger_embeds.clone().to('cpu')))
+                    if dop_key is not None and self.diff_output_preservation_embeds is None:
+                        self.diff_output_preservation_embeds = self.sd.encode_prompt(
+                            self.train_config.diff_output_preservation_class)
+                        embed_disk_cache.save(self.save_root, dop_key, embed_disk_cache.prompt_embeds_to_dict(
+                            self.diff_output_preservation_embeds.clone().to('cpu')))
+
+                    if not samples_hit:
+                        self.cache_sample_prompts()
 
                 if using_api:
                     print_acc("\n***** GEMMA API MODE - NO LOCAL TEXT ENCODER *****")
