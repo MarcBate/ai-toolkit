@@ -15,6 +15,7 @@ target = noise - clean), so ``get_noise_prediction`` does no time flip / negatio
 
 import math
 import os
+import time
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
@@ -44,6 +45,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from toolkit.metadata import get_meta_for_safetensors
+from toolkit.print import print_acc
 from toolkit.util.quantize import quantize, get_qtype, quantize_model, has_quant_cache
 from toolkit.memory_management import MemoryManager
 
@@ -619,7 +621,20 @@ class Krea2Model(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Krea 2 model")
 
+        # Per-phase timing. Startup is dominated by things that are easy to guess
+        # wrong about (the 24.5GB bf16 read turned out to be near-irrelevant once
+        # the quant cache short-circuited it), so measure rather than assume.
+        _phase_start = time.time()
+        _load_start = _phase_start
+
+        def _phase(label: str):
+            nonlocal _phase_start
+            now = time.time()
+            print_acc(f"  [load] {label}: {now - _phase_start:.1f}s")
+            _phase_start = now
+
         transformer = self._load_transformer()
+        _phase("transformer")
 
         # load assistant lora if specified
         if self.model_config.assistant_lora_path is not None:
@@ -651,6 +666,7 @@ class Krea2Model(BaseModel):
                     "cache was expected to materialize them but did not. Delete the "
                     "cache entry for this model and re-run to rebuild it."
                 )
+            _phase("quantize transformer")
 
         if (
             self.model_config.layer_offloading
@@ -666,6 +682,7 @@ class Krea2Model(BaseModel):
                     if isinstance(module, (SimpleModulation, DoubleSharedModulation))
                 ],
             )
+            _phase("transformer layer offloading")
 
         if self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")
@@ -673,8 +690,10 @@ class Krea2Model(BaseModel):
         else:
             transformer.to(self.device_torch, dtype=dtype)
         flush()
+        _phase("transformer to device")
 
         tokenizer, processor, vl_processor, text_encoder = self._load_text_encoder()
+        _phase("text encoder load")
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing text encoder")
             text_encoder.to(self.device_torch)
@@ -697,9 +716,12 @@ class Krea2Model(BaseModel):
         else:
             text_encoder.to(self.device_torch)
         flush()
+        _phase("text encoder to device")
 
         vae = self._load_vae()
         vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
+        _phase("vae")
+        print_acc(f"  [load] TOTAL load_model: {time.time() - _load_start:.1f}s")
 
         self.noise_scheduler = Krea2Model.get_train_scheduler()
 
