@@ -12,11 +12,8 @@ from optimum.quanto.tensor import Optimizer, qtype, qtypes
 from torchao.quantization.quant_api import (
     quantize_ as torchao_quantize_,
     Float8WeightOnlyConfig,
-    IntxWeightOnlyConfig,
     Int8WeightOnlyConfig
 )
-from torchao.quantization.granularity import PerAxis
-from torchao.quantization.quant_primitives import MappingType
 from optimum.quanto import freeze
 from tqdm import tqdm
 from safetensors.torch import load_file, save_file
@@ -99,15 +96,9 @@ def filter_lora_state_dict_for_quantized_model(
 
 torchao_qtypes = {
     # "int4": Int4WeightOnlyConfig(),
-    # UIntXWeightOnlyConfig was removed in torchao 0.17; IntxWeightOnlyConfig with
-    # asymmetric mapping is the replacement (torchao has no unsigned intx dtypes).
-    "uint2": IntxWeightOnlyConfig(torch.int2, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
-    "uint3": IntxWeightOnlyConfig(torch.int3, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
-    "uint4": IntxWeightOnlyConfig(torch.int4, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
-    "uint5": IntxWeightOnlyConfig(torch.int5, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
-    "uint6": IntxWeightOnlyConfig(torch.int6, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
-    "uint7": IntxWeightOnlyConfig(torch.int7, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
-    "uint8": IntxWeightOnlyConfig(torch.int8, granularity=PerAxis(0), mapping_type=MappingType.ASYMMETRIC),
+    # uint2..uint8 are handled by the UIntXQuantizer ostris backend
+    # (toolkit/util/uintx_quant.py), a bit-exact reproduction of torchao 0.10.0's
+    # UIntXWeightOnlyConfig, so ARAs stay byte-identical after torchao upgrades
     "int8": Int8WeightOnlyConfig(),
     "float8": Float8WeightOnlyConfig(),
 }
