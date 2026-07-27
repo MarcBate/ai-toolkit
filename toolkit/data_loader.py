@@ -527,6 +527,11 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     sd=self.sd,
                     path=file,
                     is_audio_model=self.is_audio_model,
+                    # gates the first_frame_condition cache-key marker to models that
+                    # actually precompute it, so other i2v archs keep their caches
+                    caches_first_frame_condition=(
+                        getattr(self.sd, 'encode_first_frame_condition_for_cache', None)
+                        is not None if self.sd else False),
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,

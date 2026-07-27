@@ -1875,6 +1875,10 @@ class LatentCachingFileItemDTOMixin:
         # fully-encoded first-frame conditioning latent, precomputed while the VAE
         # is on the GPU so i2v training never needs a VAE forward pass
         self._cached_first_frame_condition: Union[torch.Tensor, None] = None
+        # only true for models that actually precompute the above (wan22_14b_i2v).
+        # Other do_i2v models (e.g. ltx2.3) must not have their cache key changed.
+        self.caches_first_frame_condition: bool = kwargs.get(
+            'caches_first_frame_condition', False)
         self._cached_audio_latent: Union[torch.Tensor, None] = None
         self._latent_path: Union[str, None] = None
         self.is_latent_cached = False
@@ -1914,10 +1918,12 @@ class LatentCachingFileItemDTOMixin:
             item["fps"] = self.dataset_config.fps
         if is_video and self.dataset_config.do_i2v:
                 item["do_i2v"] = True
-                # i2v caches now also carry the precomputed first-frame conditioning
-                # latent. Keying on it invalidates only i2v video caches, leaving
-                # every other dataset's cache intact.
-                item["first_frame_condition"] = True
+                # Only models that precompute the first-frame conditioning latent
+                # store an extra tensor, so only their caches need invalidating.
+                # Keying this on do_i2v alone would needlessly blow away the cache
+                # of every other i2v arch (ltx2.3 etc.) for a tensor they never use.
+                if self.caches_first_frame_condition:
+                    item["first_frame_condition"] = True
         if is_video and self.dataset_config.do_audio:
             item["do_audio"] = True
             if self.dataset_config.audio_normalize:
