@@ -121,14 +121,18 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
       PYTHONUNBUFFERED: '1', // write Python output immediately so log tail isn't lost on a crash
-      // Every cuBLAS GEMM needs a scratch allocation. The LoRA path casts activations
-      // to fp32 (network_mixins ~336), so on video training a single rank-64 lora_up
-      // output runs to hundreds of MB. Near full VRAM the default caching allocator
-      // fragments badly enough that even these fail, and cuBLAS reports that as
-      // CUBLAS_STATUS_INTERNAL_ERROR from cublasSgemm rather than a clean OOM --
-      // which is what killed both wan2.2 runs mid-training. expandable_segments lets
-      // the allocator grow existing segments instead of demanding one contiguous block.
-      PYTORCH_CUDA_ALLOC_CONF: process.env.PYTORCH_CUDA_ALLOC_CONF || 'expandable_segments:True',
+      // NOTE: expandable_segments:True was set here to fix CUBLAS_STATUS_INTERNAL_ERROR
+      // crashes, which were allocator fragmentation at ~97% VRAM under qfloat8. It is
+      // NOT set by default any more: on its first live run (wan2.2 i2v, uint4+ARA) the
+      // failure changed to "CUDA driver error: device not ready" in backward, an async
+      // stream fault rather than an allocation failure. expandable_segments uses the
+      // CUDA virtual-memory APIs, which interact badly with the constant host<->device
+      // transfers low_vram does (it swaps whole transformers mid-forward). uint4 also
+      // roughly halves weight memory, so the fragmentation it was solving may no longer
+      // exist. Export PYTORCH_CUDA_ALLOC_CONF before launching to opt back in.
+      ...(process.env.PYTORCH_CUDA_ALLOC_CONF
+        ? { PYTORCH_CUDA_ALLOC_CONF: process.env.PYTORCH_CUDA_ALLOC_CONF }
+        : {}),
     };
 
     if (sampleOnly) {
