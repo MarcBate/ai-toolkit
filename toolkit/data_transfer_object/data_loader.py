@@ -205,6 +205,9 @@ class DataLoaderBatchDTO:
             )
             self.audio_tensor: Union[torch.Tensor, None] = None
             self.first_frame_latents: Union[torch.Tensor, None] = None
+            # precomputed i2v conditioning latent (see LatentCachingMixin); lets the
+            # training step skip the VAE entirely
+            self.first_frame_conditions: Union[torch.Tensor, None] = None
             self.audio_latents: Union[torch.Tensor, None] = None
 
             # just for holding noise and preds during training
@@ -235,6 +238,19 @@ class DataLoaderBatchDTO:
                             if x._cached_first_frame_latent is not None
                             else torch.zeros_like(
                                 self.file_items[0]._cached_first_frame_latent
+                            ).unsqueeze(0)
+                            for x in self.file_items
+                        ]
+                    )
+                if any(
+                    [x._cached_first_frame_condition is not None for x in self.file_items]
+                ):
+                    self.first_frame_conditions = torch.cat(
+                        [
+                            x._cached_first_frame_condition.unsqueeze(0)
+                            if x._cached_first_frame_condition is not None
+                            else torch.zeros_like(
+                                self.file_items[0]._cached_first_frame_condition
                             ).unsqueeze(0)
                             for x in self.file_items
                         ]
@@ -466,6 +482,7 @@ class DataLoaderBatchDTO:
         del self.audio_target
         del self.audio_pred
         del self.first_frame_latents
+        del self.first_frame_conditions
         del self.audio_latents
         for file_item in self.file_items:
             file_item.cleanup()

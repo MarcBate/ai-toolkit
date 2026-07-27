@@ -2512,9 +2512,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # some models (e.g. wan22_14b_i2v) need the raw image tensor every step
         # even when latents are cached to disk
         if getattr(self.sd, 'requires_pixels_with_cached_latents', False):
+            caches_condition = getattr(
+                self.sd, 'encode_first_frame_condition_for_cache', None) is not None
             for ds_list in (self.datasets, self.datasets_reg):
                 if ds_list is not None:
                     for ds in ds_list:
+                        # i2v video datasets get the conditioning precomputed into the
+                        # latent cache, so there is no reason to decode the whole clip
+                        # every step just to read frame 0.
+                        is_video = ds.auto_frame_count or ds.num_frames > 1
+                        if caches_condition and is_video and ds.do_i2v:
+                            continue
                         ds.load_image_when_caching_latents = True
         # load datasets if passed in the root process
         if self.datasets is not None and not self.sample_only:

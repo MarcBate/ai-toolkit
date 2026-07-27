@@ -1872,6 +1872,9 @@ class LatentCachingFileItemDTOMixin:
             super().__init__(*args, **kwargs)
         self._encoded_latent: Union[torch.Tensor, None] = None
         self._cached_first_frame_latent: Union[torch.Tensor, None] = None
+        # fully-encoded first-frame conditioning latent, precomputed while the VAE
+        # is on the GPU so i2v training never needs a VAE forward pass
+        self._cached_first_frame_condition: Union[torch.Tensor, None] = None
         self._cached_audio_latent: Union[torch.Tensor, None] = None
         self._latent_path: Union[str, None] = None
         self.is_latent_cached = False
@@ -1911,6 +1914,10 @@ class LatentCachingFileItemDTOMixin:
             item["fps"] = self.dataset_config.fps
         if is_video and self.dataset_config.do_i2v:
                 item["do_i2v"] = True
+                # i2v caches now also carry the precomputed first-frame conditioning
+                # latent. Keying on it invalidates only i2v video caches, leaving
+                # every other dataset's cache intact.
+                item["first_frame_condition"] = True
         if is_video and self.dataset_config.do_audio:
             item["do_audio"] = True
             if self.dataset_config.audio_normalize:
@@ -1945,12 +1952,15 @@ class LatentCachingFileItemDTOMixin:
                 # we are caching on disk, don't save in memory
                 self._encoded_latent = None
                 self._cached_first_frame_latent = None
+                self._cached_first_frame_condition = None
                 self._cached_audio_latent = None
             else:
                 # move it back to cpu
                 self._encoded_latent = self._encoded_latent.to('cpu')
                 if self._cached_first_frame_latent is not None:
                     self._cached_first_frame_latent = self._cached_first_frame_latent.to('cpu')
+                if self._cached_first_frame_condition is not None:
+                    self._cached_first_frame_condition = self._cached_first_frame_condition.to('cpu')
                 if self._cached_audio_latent is not None:
                     self._cached_audio_latent = self._cached_audio_latent.to('cpu')
 
@@ -1972,6 +1982,10 @@ class LatentCachingFileItemDTOMixin:
                 self._cached_first_frame_latent = state_dict['first_frame_latent']
                 if self._cached_first_frame_latent.dtype == torch.uint8:
                     self._cached_first_frame_latent = _latent_from_uint8(self._cached_first_frame_latent)
+            if 'first_frame_condition' in state_dict:
+                # already normalized at cache time; never uint8-packed (that helper is
+                # calibrated for pixel-space latents in [-1, 1], not for this)
+                self._cached_first_frame_condition = state_dict['first_frame_condition']
             if 'audio_latent' in state_dict:
                 self._cached_audio_latent = state_dict['audio_latent']
             if 'num_frames' in state_dict:
@@ -2024,6 +2038,9 @@ class LatentCachingMixin:
                             if cached_first_frame.dtype == torch.uint8:
                                 cached_first_frame = _latent_from_uint8(cached_first_frame)
                             file_item._cached_first_frame_latent = cached_first_frame.to('cpu', dtype=self.sd.torch_dtype)
+                        if 'first_frame_condition' in state_dict:
+                            file_item._cached_first_frame_condition = \
+                                state_dict['first_frame_condition'].to('cpu', dtype=self.sd.torch_dtype)
                         if 'audio_latent' in state_dict:
                             file_item._cached_audio_latent = state_dict['audio_latent'].to('cpu', dtype=self.sd.torch_dtype)
                 else:
@@ -2034,6 +2051,7 @@ class LatentCachingMixin:
                     device = self.sd.device_torch
                     state_dict = OrderedDict()
                     first_frame_latent = None
+                    first_frame_condition = None
                     audio_latent = None
                     frames = None
                     # add batch dimension
@@ -2071,6 +2089,17 @@ class LatentCachingMixin:
                                 state_dict['first_frame_latent'] = _latent_to_uint8(first_frame_latent).cpu()
                             else:
                                 state_dict['first_frame_latent'] = first_frame_latent.clone().detach().cpu()
+
+                        # Some models (wan22_14b_i2v) VAE-encode a whole zero-padded
+                        # conditioning block every training step. Do it here instead,
+                        # while the VAE is on the GPU, so the training loop never needs
+                        # a VAE forward pass at all.
+                        cond_fn = getattr(self.sd, 'encode_first_frame_condition_for_cache', None)
+                        if cond_fn is not None:
+                            first_frame_condition = cond_fn(first_frames, latent)
+                            if first_frame_condition is not None and to_disk:
+                                state_dict['first_frame_condition'] = \
+                                    first_frame_condition.clone().detach().cpu()
                     
                     # audio (video+audio models only — audio-only models already encoded above via encode_images)
                     if not self.is_audio_model and file_item.audio_data is not None:
@@ -2093,6 +2122,8 @@ class LatentCachingMixin:
                         file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
                         if first_frame_latent is not None:
                             file_item._cached_first_frame_latent = first_frame_latent.to('cpu', dtype=self.sd.torch_dtype)
+                        if first_frame_condition is not None:
+                            file_item._cached_first_frame_condition = first_frame_condition.to('cpu', dtype=self.sd.torch_dtype)
                         if audio_latent is not None:
                             file_item._cached_audio_latent = audio_latent.to('cpu', dtype=self.sd.torch_dtype)
 
@@ -2102,6 +2133,7 @@ class LatentCachingMixin:
                     del file_item.tensor
                     del state_dict
                     del first_frame_latent
+                    del first_frame_condition
                     del audio_latent
                     file_item.cleanup()
 
