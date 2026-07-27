@@ -953,6 +953,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # Filter out non-existent paths and sort by creation time
             if paths:
                 paths = [p for p in paths if os.path.exists(p)]
+                # The third pattern above has no extension, to match directory-style
+                # checkpoints (some models save as a folder of shards). As a side
+                # effect it also matches any stray file with the same prefix and a
+                # different extension - e.g. ComfyUI's "<name>.safetensors.rgthree-info.json"
+                # metadata sidecar. For an unnumbered save (e.g. "_merged.safetensors")
+                # the step-number regex below returns -1 for both the real checkpoint
+                # and its sidecar, and the tie then breaks on ctime - the sidecar is
+                # written after ComfyUI scans the checkpoint, so it's newer and wins,
+                # handing the "latest checkpoint" a JSON metadata file. Restrict to
+                # actual checkpoint candidates: directories, or known model extensions.
+                paths = [
+                    p for p in paths
+                    if os.path.isdir(p) or p.endswith('.safetensors') or p.endswith('.pt')
+                ]
                 # remove false positives
                 if '_LoRA' not in name:
                     paths = [p for p in paths if '_LoRA' not in p]
