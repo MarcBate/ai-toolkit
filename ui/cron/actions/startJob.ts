@@ -121,6 +121,14 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
       PYTHONUNBUFFERED: '1', // write Python output immediately so log tail isn't lost on a crash
+      // Every cuBLAS GEMM needs a scratch allocation. The LoRA path casts activations
+      // to fp32 (network_mixins ~336), so on video training a single rank-64 lora_up
+      // output runs to hundreds of MB. Near full VRAM the default caching allocator
+      // fragments badly enough that even these fail, and cuBLAS reports that as
+      // CUBLAS_STATUS_INTERNAL_ERROR from cublasSgemm rather than a clean OOM --
+      // which is what killed both wan2.2 runs mid-training. expandable_segments lets
+      // the allocator grow existing segments instead of demanding one contiguous block.
+      PYTORCH_CUDA_ALLOC_CONF: process.env.PYTORCH_CUDA_ALLOC_CONF || 'expandable_segments:True',
     };
 
     if (sampleOnly) {
