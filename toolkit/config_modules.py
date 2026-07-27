@@ -778,10 +778,16 @@ class ModelConfig:
         if self.auto_memory:
             print("auto_memory is deprecated, use layer_offloading instead")
         self.layer_offloading = kwargs.get("layer_offloading", self.auto_memory )
+        # quanto's qfloat8 does not work with layer offloading, so it is swapped for
+        # torchao's float8. Say so out loud: the job config still reads "qfloat8", so
+        # a failure inside torchao (e.g. the Float8Tensor.abs() gap in torchao 0.17)
+        # otherwise looks like it came from a qtype the user never selected.
         if self.layer_offloading and self.qtype == "qfloat8":
             self.qtype = "float8"
+            print("layer_offloading is on: switching qtype qfloat8 (quanto) -> float8 (torchao)")
         if self.layer_offloading and self.qtype_te == "qfloat8":
             self.qtype_te = "float8"
+            print("layer_offloading is on: switching qtype_te qfloat8 (quanto) -> float8 (torchao)")
             
         # Mac mps only works with torachao uint
         if torch.backends.mps.is_available() and self.qtype == "qfloat8":
