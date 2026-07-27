@@ -159,6 +159,31 @@ grep -q " ${HF_CACHE_MOUNT} " /proc/mounts || die "HF cache disk not mounted at 
 Attach it from an elevated Windows prompt:
   wsl --mount --vhd \"C:\\Data\\WSL\\hf-cache.vhdx\" --name hfcache"
 
+# Training processes are spawned detached (startJob.ts uses detached + unref), so
+# they keep running after this script exits. Restarting the stack while one is
+# alive hands a fresh worker a database full of rows it did not create, alongside
+# a live trainer it never spawned — which is how two jobs ended up sharing one
+# GPU (90s/it instead of <5s/it, no OOM, just CUDA spilling to shared memory).
+LIVE_TRAINERS="$(pgrep -af 'run_ui\.py' 2>/dev/null || true)"
+if [[ -n "${LIVE_TRAINERS}" ]]; then
+  echo
+  echo "WARNING: training is already running. Stopping this script does not stop it."
+  echo
+  echo "${LIVE_TRAINERS}"
+  echo
+  echo "Restarting the UI on top of a live trainer risks a second job on the same GPU."
+  echo "Safe if you only need the UI back (a crashed UI does not kill training)."
+  read -r -p "Continue anyway? [y/N] " _trainer_answer
+  case "${_trainer_answer}" in
+    [Yy]|[Yy][Ee][Ss])
+      echo "---- Continuing with a trainer still running."
+      ;;
+    *)
+      die "Aborted. Stop the job from the UI, or wait for it to finish, then re-run."
+      ;;
+  esac
+fi
+
 cd "${REPO_DIR}"
 
 UPDATED="0"
