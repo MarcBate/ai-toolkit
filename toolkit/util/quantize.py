@@ -25,6 +25,8 @@ from toolkit.util.ostris_quant import (
     OstrisQuantizer,
     convert_linear_to_ostris,
     get_ostris_quantizer,
+    load_quantized_layers,
+    save_quantized_layers,
 )
 
 if TYPE_CHECKING:
@@ -459,9 +461,18 @@ def _save_torchao_cache(
     torchao quantized weights are tensor subclasses (AffineQuantizedTensor etc.)
     that carry their own quantization metadata. safetensors cannot store them,
     but torch.save/load handles them natively via pickle.
+
+    Must read orig_state_dict, not state_dict: quantize_model calls
+    patch_dequantization_on_save first, which swaps state_dict for a version that
+    dequantizes on the way out (for writing user-facing checkpoints). Going through
+    the patched one here defeats the point of the cache and raises "Attempted to
+    access the data pointer on an invalid python storage" on the tensor subclasses.
+    The quanto save path already reads orig_state_dict for the same reason.
     """
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    state = {k: v.cpu() for k, v in model_to_quantize.state_dict().items()}
+    raw_state_dict = getattr(model_to_quantize, 'orig_state_dict',
+                             model_to_quantize.state_dict)
+    state = {k: v.cpu() for k, v in raw_state_dict().items()}
     torch.save(state, cache_path)
 
 
@@ -625,6 +636,44 @@ def quantize_model(
         network.can_merge_in = False
         base_model.accuracy_recovery_adapter = network
 
+        # Cache check. The ARA network above must be rebuilt either way (it owns the
+        # module hijacking), but the per-module quantization below is the slow part
+        # and is fully determined by the weights + qtype + adapter, so it can be
+        # restored from disk. load_quantized_layers converts plain Linears in place
+        # without redoing the quantization math.
+        ara_cache_dir = os.environ.get("AITK_QUANTIZATION_CACHE_DIR", None)
+        ara_wants_cache = getattr(
+            base_model.model_config, "cache_quantized_model", False)
+        ara_use_cache = bool(ara_cache_dir and ara_wants_cache)
+        ara_cache_path = None
+        if ara_wants_cache and not ara_cache_dir:
+            base_model.print_and_status_update(
+                " - Note: cache_quantized_model is enabled but "
+                "AITK_QUANTIZATION_CACHE_DIR is not set. Configure a cache "
+                "directory in Settings."
+            )
+        if ara_use_cache:
+            # the adapter is part of the cached result, so key on it too
+            ara_extra = f"{cache_key_extra}|ara:{os.path.basename(load_lora_path)}"
+            ara_slug, ara_key = _compute_quant_cache_key(base_model, ara_extra)
+            ara_cache_path = os.path.join(
+                ara_cache_dir, f"quant_{ara_slug}_{ara_key}_ara.safetensors")
+            ara_resolved = _resolve_cache_path(
+                base_model, ara_cache_dir, f"{ara_slug}", f"{ara_key}_ara",
+                "safetensors")
+            if ara_resolved is not None:
+                try:
+                    base_model.print_and_status_update(
+                        " - loading cached ARA-quantized model...")
+                    n = load_quantized_layers(model_to_quantize, ara_resolved)
+                    base_model.print_and_status_update(
+                        f" - cached ARA-quantized model loaded ({n} layers)")
+                    return
+                except Exception as e:
+                    base_model.print_and_status_update(
+                        f" - ARA cache load failed ({e}), re-quantizing from scratch"
+                    )
+
         # quantize it
         lora_exclude_modules = []
         quantization_type = get_qtype(base_model.model_config.qtype)
@@ -651,6 +700,32 @@ def quantize_model(
             weights=quantization_type,
             exclude=lora_exclude_modules + exclude_modules
         )
+
+        # Save every module the passes above actually converted. Only the ostris
+        # backends produce OstrisLinear, which is what save/load_quantized_layers
+        # round-trips; quanto/torchao qtypes are skipped with a note rather than
+        # silently writing a cache that would restore nothing.
+        if ara_use_cache and ara_cache_path:
+            ostris_modules = {
+                name: mod for name, mod in model_to_quantize.named_modules()
+                if isinstance(mod, OstrisLinear)
+            }
+            if not ostris_modules:
+                base_model.print_and_status_update(
+                    f" - note: qtype '{base_model.model_config.qtype}' with an ARA "
+                    "does not use the ostris backend, so there is nothing to cache"
+                )
+            else:
+                try:
+                    base_model.print_and_status_update(
+                        " - saving ARA quantization cache...")
+                    os.makedirs(os.path.dirname(ara_cache_path), exist_ok=True)
+                    save_quantized_layers(ostris_modules, ara_cache_path)
+                    base_model.print_and_status_update(
+                        f" - ARA quantization cache saved to {ara_cache_path}")
+                except Exception as e:
+                    base_model.print_and_status_update(
+                        f" - warning: failed to save ARA quantization cache: {e}")
     else:
         # quantize model the original way without an accuracy recovery adapter
         # move and quantize only certain pieces at a time.
