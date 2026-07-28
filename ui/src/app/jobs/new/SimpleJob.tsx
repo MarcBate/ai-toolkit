@@ -8,6 +8,8 @@ import {
   defaultQtype,
   jobTypeOptions,
   SampleTags,
+  isOstrisBackedQtype,
+  parseQtypeAra,
 } from './options';
 import { defaultCompileOptions, defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
@@ -615,14 +617,40 @@ export default function SimpleJob({
                   options={quantizationOptions}
                 />
               )}
-              {jobConfig.config.process[0].model.quantize && (
-                <Checkbox
-                  label="Cache Quantized Model"
-                  docKey="model.cache_quantized_model"
-                  checked={jobConfig.config.process[0].model.cache_quantized_model ?? false}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.cache_quantized_model')}
-                />
-              )}
+              {jobConfig.config.process[0].model.quantize &&
+                (() => {
+                  const { base, ara } = parseQtypeAra(jobConfig.config.process[0].model.qtype || '');
+                  // An accuracy recovery adapter's own quantization only round-trips
+                  // through the ostris backends (uintN / convrot*) -- see
+                  // quantize_model's ARA branch in toolkit/util/quantize.py. qfloat8
+                  // and float8 go through a different save path that has nothing to
+                  // persist when an ARA is attached, so the cache would silently do
+                  // nothing.
+                  const cacheUnsupported = !!ara && !isOstrisBackedQtype(base);
+                  if (cacheUnsupported && jobConfig.config.process[0].model.cache_quantized_model) {
+                    // don't let a combination that can't work linger in a saved config
+                    setJobConfig(false, 'config.process[0].model.cache_quantized_model');
+                  }
+                  return (
+                    <>
+                      <Checkbox
+                        label="Cache Quantized Model"
+                        docKey="model.cache_quantized_model"
+                        checked={
+                          !cacheUnsupported && (jobConfig.config.process[0].model.cache_quantized_model ?? false)
+                        }
+                        disabled={cacheUnsupported}
+                        onChange={value => setJobConfig(value, 'config.process[0].model.cache_quantized_model')}
+                      />
+                      {cacheUnsupported && (
+                        <p className="text-xs text-yellow-500 mt-1">
+                          Caching isn't supported for this accuracy recovery adapter with a {base} base quantization —
+                          only 4/8-bit and convrot quantization can be cached with an adapter attached.
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               <FormGroup label="Compile Options">
                 <></>
               </FormGroup>

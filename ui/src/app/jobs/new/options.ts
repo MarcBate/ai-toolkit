@@ -1351,6 +1351,24 @@ export const quantizationOptions: SelectOption[] = [
 
 export const defaultQtype = 'qfloat8';
 
+// Quantization caching (model.cache_quantized_model) only round-trips backends
+// that store their own restorable state: the ostris backends (uintN, convrot*).
+// qfloat8 (quanto) and float8 (torchao) go through a different save path that,
+// when paired with an accuracy recovery adapter, has nothing to persist — see
+// quantize_model's ARA branch in toolkit/util/quantize.py. Mirror that here so
+// the UI can't save a combination that would silently do nothing.
+export function isOstrisBackedQtype(qtype: string): boolean {
+  return qtype.startsWith('uint') || qtype.startsWith('convrot');
+}
+
+// qtype strings for an ARA-bearing model look like "uint4|<path-to-adapter>".
+// Splits that apart; ara is '' when the string is a plain qtype with no adapter.
+export function parseQtypeAra(qtype: string): { base: string; ara: string } {
+  const idx = qtype.indexOf('|');
+  if (idx === -1) return { base: qtype, ara: '' };
+  return { base: qtype.slice(0, idx), ara: qtype.slice(idx + 1) };
+}
+
 interface JobTypeOption extends SelectOption {
   disableSections?: DisableableSections[];
   processSections?: string[];
