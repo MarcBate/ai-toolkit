@@ -401,8 +401,10 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
     setFindNextIndex(-1);
     setFindMatchCharIndex(-1);
     setFindResultStatus('none');
+  // isFindReplaceOpen intentionally omitted: openFindReplace() already resets state on open;
+  // this effect only needs to clear stale results when the caption extension changes mid-search.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captionExt, isFindReplaceOpen]);
+  }, [captionExt]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -618,7 +620,11 @@ export default function DatasetPage({ params }: { params: Promise<{ datasetName:
                   onImageClick={() => setSelectedImgPath(img.img_path)}
                   onCaptionSave={(newCaption, imgPath) => {
                     setImgList(prev =>
-                      prev.map(item => (item.img_path === imgPath ? { ...item, caption: newCaption } : item)),
+                      prev.map(item =>
+                        item.img_path === imgPath
+                          ? { ...item, caption: newCaption, captions: { ...item.captions, [captionExt]: newCaption } }
+                          : item,
+                      ),
                     );
                   }}
                   captionRefreshKey={captionRefreshKeys[img.img_path] || 0}

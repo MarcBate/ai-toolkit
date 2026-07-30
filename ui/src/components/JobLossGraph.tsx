@@ -28,6 +28,29 @@ function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
 }
 
+// A constant metric (e.g. learning_rate under a constant scheduler) does not
+// reach the chart as bit-identical values: the zero-phase EMA below computes
+// s/w, which is algebraically the input but lands on a few adjacent float64
+// ULPs. Handing those extents straight to a y-scale zooms the axis into ~1e-20
+// of rounding noise and renders it as a full-height square wave. Anything
+// narrower than this (relative) span is noise, not signal.
+const DEGENERATE_SPAN_RATIO = 1e-9;
+
+function isDegenerateSpan(min: number, max: number): boolean {
+  const span = max - min;
+  if (!(span > 0)) return true;
+  const mag = Math.max(Math.abs(min), Math.abs(max));
+  return mag > 0 ? span <= mag * DEGENERATE_SPAN_RATIO : true;
+}
+
+// Widen a flat/degenerate domain to ±10% of its magnitude so the series draws
+// as a centered flat line instead of noise filling the canvas.
+function padDegenerate(min: number, max: number): [number, number] {
+  const center = (min + max) / 2;
+  const pad = center !== 0 ? Math.abs(center) * 0.1 : 1;
+  return [center - pad, center + pad];
+}
+
 // Fallback canvas height used before the container has been measured.
 const FALLBACK_CANVAS_HEIGHT = 360;
 const MIN_CANVAS_HEIGHT = 160;
@@ -352,6 +375,12 @@ export default function JobLossGraph({ job }: Props) {
           const min = c ? c.min : dataMin;
           const max = c ? c.max : dataMax;
           if (min == null || max == null) return [null, null];
+          // Flat series: pad before the log snap too, so rangeLog gets a real
+          // interval rather than a single point.
+          if (isDegenerateSpan(min, max)) {
+            const [pMin, pMax] = padDegenerate(min, max);
+            return useLogScale && pMin > 0 ? uPlot.rangeLog(pMin, pMax, 10, false) : [pMin, pMax];
+          }
           // uPlot's log tick generator (logAxisSplits) assumes the scale min
           // sits on a magnitude boundary — its default log range snaps via
           // rangeLog before ticks are computed. Handing it raw data extents
@@ -393,7 +422,9 @@ export default function JobLossGraph({ job }: Props) {
           vals.sort((a, b) => a - b);
           const lo = vals[Math.floor(vals.length * 0.02)];
           const hi = vals[Math.ceil(vals.length * 0.98) - 1];
-          if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
+          // `lo !== hi` alone is satisfied by ULP-level noise on a constant
+          // metric, which would then be handed back as the clip band.
+          if (Number.isFinite(lo) && Number.isFinite(hi) && !isDegenerateSpan(lo, hi)) {
             yClip[scaleKey] = { min: lo, max: hi };
           }
         }
