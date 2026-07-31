@@ -125,6 +125,9 @@ celerybeat.pid
 .venv
 .python
 .node
+.ffmpeg
+.mingit
+.uv
 env/
 venv/
 # the venv now lives outside the repo (distro ext4); <repo>/venv is a symlink to
