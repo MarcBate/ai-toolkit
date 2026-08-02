@@ -28,6 +28,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Video-only files auto-fixed** — dataset videos with no audio stream at all (common with some video generators) used to crash the whole job on `torchaudio.load()`; a silent stereo AAC track is now muxed in automatically the first time the file is loaded, in place, via ffmpeg
 - **`torch.compile` + CPU/GPU layer-offloading stream fix** — the offloading autograd functions (`_BouncingLinearFn`, `_BouncingConv2dFn`) manage raw CUDA streams/events directly; newer PyTorch Dynamo's stream tracing mis-codegenned `torch.ops.streams.record_event` on them under `compile: true` + `low_vram: true`, crashing with `RuntimeError: expected event to be a torch.Event object`. Their `forward`/`backward` are now marked `@torch._dynamo.disable` so Dynamo treats them as an opaque call instead of tracing into them
 - **`block_compile` + torchao guard** — block-level `torch.compile` is automatically disabled (with a warning) when the model is torchao-quantized, avoiding an infinite-recursion crash in `torchao.utils._dispatch__torch_function__` under PyTorch 2.9+'s AOT autograd path
+- **Audio validation support** — the held-out validation-loss feature (`validation_config`) now works with audio models (AceStep), not just images. Point a validation item at an `audio_path` and a `caption_path` (or an inline `prompt`) using the same `<CAPTION>/<LYRICS>/<BPM>/...` tagged format as training captions; the audio is loaded via `torchaudio` and resampled to the model's sample rate instead of going through the image bucket-resize path, and the prompt is fed to `encode_prompt` as-is since AceStep expects the full tagged string rather than free text
 
 ### UI — Queue & Job Management
 
@@ -79,6 +80,7 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 Real-time anomaly detection that writes to the DB and surfaces in the UI without ever pausing training.
 
 - **Loss spike detection** — rolling 50-step deque; flags when current loss > 3× average and > 0.4 absolute floor; 10-step debounce prevents alert storms during sustained divergence
+- **Loss stall detection** — tracks a rolling-median best-seen loss; flags when it hasn't improved in ~3000 steps, catching runs that never diverge but also never learn (e.g. automagic3's per-tensor LR decaying to its floor) without false-alarming on noisy runs that dip and recover non-monotonically
 - **White-noise sample detection** — compares JPEG/PNG file sizes of new samples against the step-0 baseline; flags when current batch avg exceeds baseline by 1.8× (empirically confirmed signal for mode collapse / LR divergence)
 - **OOM crash detection** — `on_error()` catches CUDA out-of-memory errors, collects VRAM stats via `nvidia-smi`, and writes an `oom` alert type with memory details
 - **Dataset stats persistence** — image count and bucket distribution written to DB after each latent-caching phase so the AI Config Check has context without a running trainer
