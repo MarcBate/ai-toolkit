@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sqlite3
+import statistics
 import asyncio
 import concurrent.futures
 import traceback
@@ -59,6 +60,14 @@ class DiffusionTrainer(SDTrainer):
         self._last_spike_step: int = -1
         self._spike_streak: int = 0
         self._baseline_sample_avg_bytes: float | None = None
+        # Stall detection state (separate, longer horizon than spike detection above —
+        # a spike is a single bad step, a stall is loss never improving over thousands
+        # of steps, e.g. automagic3's per-tensor LR decaying to near-zero before it
+        # fits anything). See _check_loss_stall.
+        self._stall_window: deque = deque(maxlen=300)
+        self._stall_best_median: float | None = None
+        self._stall_best_step: int = 0
+        self._last_stall_alert_step: int = -1
 
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
@@ -621,9 +630,61 @@ class DiffusionTrainer(SDTrainer):
             })
             self.preserve_safe_snapshot("loss_spike")
 
+    # Rolling-median window for stall detection, how long loss can go without a
+    # new low before we call it stalled, how much improvement counts as a genuine
+    # new low (filters noise so a run doesn't reset its own clock every step), and
+    # how early training can start being evaluated. Calibrated against this
+    # project's own run history: every labelled-good ACE-Step run (including
+    # noisy automagic2/3 runs that dip and partially recover mid-run) went at
+    # most ~2,600 steps without a new low; every automagic3 run that flatlined
+    # and never recovered went >=3,750 steps. 3000 sits in that gap.
+    STALL_WINDOW = 300
+    STALL_PATIENCE = 3000
+    STALL_MARGIN = 0.01
+    STALL_MIN_STEP = 2500
+
+    def _check_loss_stall(self):
+        """Fire an alert if the loss hasn't set a new (meaningfully lower) rolling
+        median in STALL_PATIENCE steps.
+
+        Unlike _check_loss_spike (a single bad step), this catches a run that never
+        diverges but also never learns — e.g. automagic3's per-tensor LR decaying
+        toward its floor before the model fits anything, which produces a loss curve
+        that looks calm (no spikes) but never moves. A plain "loss went up over
+        window X" check would false-alarm on good automagic2/3 runs, which are
+        noisy and dip-then-partially-recover mid-run without ever being stalled;
+        tracking the best-seen rolling median (like early-stopping patience) avoids
+        that because those runs keep setting new lows overall, just non-monotonically.
+        """
+        loss = getattr(self, '_last_step_loss', 0.0)
+        self._stall_window.append(loss)
+        if self.step_num < self.STALL_MIN_STEP or len(self._stall_window) < self.STALL_WINDOW:
+            return
+        median = statistics.median(self._stall_window)
+        if self._stall_best_median is None or median < self._stall_best_median * (1 - self.STALL_MARGIN):
+            self._stall_best_median = median
+            self._stall_best_step = self.step_num
+            return
+        gap = self.step_num - self._stall_best_step
+        if (gap >= self.STALL_PATIENCE
+                and self.step_num - self._last_stall_alert_step >= self.STALL_PATIENCE):
+            self._last_stall_alert_step = self.step_num
+            msg = (f"Loss hasn't improved in {gap} steps (best {self._stall_best_median:.4f} "
+                   f"at step {self._stall_best_step}, currently {median:.4f}). This matches "
+                   f"the stall pattern seen in past runs that never recovered — worth checking "
+                   f"the optimizer/LR rather than waiting it out.")
+            print(f"\n[AITK] ⚠ {msg}")
+            self.append_alert("loss_stalled", msg, {
+                "best_median": self._stall_best_median,
+                "best_step": self._stall_best_step,
+                "current_median": median,
+                "gap_steps": gap,
+            })
+
     def end_step_hook(self):
         super(DiffusionTrainer, self).end_step_hook()
         self._check_loss_spike()
+        self._check_loss_stall()
         if self.is_ui_trainer:
             self.update_step()
             # Order matters: maybe_save() runs before maybe_stop() so that
