@@ -902,6 +902,14 @@ export default function SimpleJob({
                     { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
                 />
+                {isAudioModel && jobConfig.config.process[0].train.optimizer === 'automagic3' && (
+                  <p className="text-xs text-yellow-500 mt-1">
+                    This has never worked well for you on audio models — loss has stalled flat in
+                    4 of 5 past ACE-Step runs with automagic3 (automagic v3 has no effective max_lr
+                    clamp, so per-tensor LR can decay to near-zero before anything is learned).
+                    AdamW8Bit or Automagic v2 have consistently trained instead.
+                  </p>
+                )}
                 <NumberInput
                   label="Learning Rate"
                   className="pt-2"
@@ -1120,7 +1128,9 @@ export default function SimpleJob({
               if (value) {
                 setJobConfig(
                   {
-                    validation_items: [{ image_path: '', prompt: '' }],
+                    validation_items: isAudioModel
+                      ? [{ audio_path: '', caption_path: '', prompt: '' }]
+                      : [{ image_path: '', prompt: '' }],
                     resolution: 1024,
                     validate_every_n_steps: 1,
                     validation_sigmas: [0.5],
@@ -1135,12 +1145,31 @@ export default function SimpleJob({
             {validationConfig && (
               <>
                 <p className="text-sm text-gray-400 mb-4">
-                  Validation runs a stable loss check on a fixed set of images. Each image is encoded once at startup
-                  and predicted at the selected sigmas with fixed seeds, so the result is always deterministic and
-                  comparable across the run. The average loss is logged as val/loss every time validation runs. The
-                  images need to match the concept of your dataset, but{' '}
-                  <span className="font-bold text-gray-300">do not include the validation images in the dataset</span>.
-                  They must be images containing the concept you want to train, but not an image trained on.
+                  {isAudioModel ? (
+                    <>
+                      Validation runs a stable loss check on a fixed set of held-out audio files. Each file is
+                      encoded once at startup and predicted at the selected sigmas with fixed seeds, so the result is
+                      always deterministic and comparable across the run. The average loss is logged as val/loss
+                      every time validation runs. Point each item at an audio file and either a caption file (using
+                      the same {'<CAPTION>/<LYRICS>/<BPM>/...'} tagged format as training captions) or a prompt typed
+                      directly, but{' '}
+                      <span className="font-bold text-gray-300">
+                        do not include the validation audio in the training dataset
+                      </span>
+                      .
+                    </>
+                  ) : (
+                    <>
+                      Validation runs a stable loss check on a fixed set of images. Each image is encoded once at
+                      startup and predicted at the selected sigmas with fixed seeds, so the result is always
+                      deterministic and comparable across the run. The average loss is logged as val/loss every time
+                      validation runs. The images need to match the concept of your dataset, but{' '}
+                      <span className="font-bold text-gray-300">
+                        do not include the validation images in the dataset
+                      </span>
+                      . They must be images containing the concept you want to train, but not an image trained on.
+                    </>
+                  )}
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <NumberInput
@@ -1153,14 +1182,16 @@ export default function SimpleJob({
                     min={1}
                     required
                   />
-                  <NumberInput
-                    label="Validation Resolution"
-                    value={validationConfig.resolution}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.validation_config.resolution')}
-                    placeholder="eg. 512"
-                    min={64}
-                    required
-                  />
+                  {!isAudioModel && (
+                    <NumberInput
+                      label="Validation Resolution"
+                      value={validationConfig.resolution}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.validation_config.resolution')}
+                      placeholder="eg. 512"
+                      min={64}
+                      required
+                    />
+                  )}
                   <SelectInput
                     label="Validation Sigmas"
                     value={(validationConfig.validation_sigmas ?? [1.0, 0.75, 0.5, 0.25]).join(', ')}
@@ -1180,56 +1211,116 @@ export default function SimpleJob({
                 </div>
                 <div className="mt-4">
                   <label className="block text-xs text-gray-300 mb-2">
-                    Validation Images ({validationConfig.validation_items.length})
+                    {isAudioModel ? 'Validation Audio' : 'Validation Images'} (
+                    {validationConfig.validation_items.length})
                   </label>
                   {validationConfig.validation_items.map((item, i) => (
                     <div key={i} className="rounded-lg pl-4 pr-1 py-3 mb-4 bg-gray-950">
-                      <div className="flex items-center space-x-4">
-                        <SampleControlImage
-                          instruction="Add Image"
-                          src={item.image_path === '' ? null : item.image_path}
-                          onNewImageSelected={imagePath => {
-                            setJobConfig(
-                              imagePath ?? '',
-                              `config.process[0].train.validation_config.validation_items[${i}].image_path`,
-                            );
-                          }}
-                        />
-                        <div className="flex-1">
-                          <TextInput
-                            label="Prompt"
-                            value={item.prompt}
-                            onChange={value =>
+                      {isAudioModel ? (
+                        <div className="flex items-center space-x-4">
+                          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <TextInput
+                              label="Audio Path"
+                              value={item.audio_path ?? ''}
+                              onChange={value =>
+                                setJobConfig(
+                                  value,
+                                  `config.process[0].train.validation_config.validation_items[${i}].audio_path`,
+                                )
+                              }
+                              placeholder="C:\path\to\Girl.mp3"
+                            />
+                            <TextInput
+                              label="Caption Path"
+                              value={item.caption_path ?? ''}
+                              onChange={value =>
+                                setJobConfig(
+                                  value,
+                                  `config.process[0].train.validation_config.validation_items[${i}].caption_path`,
+                                )
+                              }
+                              placeholder="C:\path\to\Girl.caption"
+                            />
+                            <TextInput
+                              label="Prompt (used if no caption path)"
+                              value={item.prompt}
+                              onChange={value =>
+                                setJobConfig(
+                                  value,
+                                  `config.process[0].train.validation_config.validation_items[${i}].prompt`,
+                                )
+                              }
+                              placeholder="<CAPTION>...</CAPTION><LYRICS>...</LYRICS>"
+                            />
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setJobConfig(
+                                  validationConfig.validation_items.filter((_, index) => index !== i),
+                                  'config.process[0].train.validation_config.validation_items',
+                                )
+                              }
+                              className="rounded-full p-1 text-sm"
+                            >
+                              <X />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center space-x-4">
+                          <SampleControlImage
+                            instruction="Add Image"
+                            src={item.image_path === '' ? null : item.image_path}
+                            onNewImageSelected={imagePath => {
                               setJobConfig(
-                                value,
-                                `config.process[0].train.validation_config.validation_items[${i}].prompt`,
-                              )
-                            }
-                            placeholder="Enter prompt"
+                                imagePath ?? '',
+                                `config.process[0].train.validation_config.validation_items[${i}].image_path`,
+                              );
+                            }}
                           />
+                          <div className="flex-1">
+                            <TextInput
+                              label="Prompt"
+                              value={item.prompt}
+                              onChange={value =>
+                                setJobConfig(
+                                  value,
+                                  `config.process[0].train.validation_config.validation_items[${i}].prompt`,
+                                )
+                              }
+                              placeholder="Enter prompt"
+                            />
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setJobConfig(
+                                  validationConfig.validation_items.filter((_, index) => index !== i),
+                                  'config.process[0].train.validation_config.validation_items',
+                                )
+                              }
+                              className="rounded-full p-1 text-sm"
+                            >
+                              <X />
+                            </button>
+                          </div>
                         </div>
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setJobConfig(
-                                validationConfig.validation_items.filter((_, index) => index !== i),
-                                'config.process[0].train.validation_config.validation_items',
-                              )
-                            }
-                            className="rounded-full p-1 text-sm"
-                          >
-                            <X />
-                          </button>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   ))}
                   <button
                     type="button"
                     onClick={() =>
                       setJobConfig(
-                        [...validationConfig.validation_items, { image_path: '', prompt: '' }],
+                        [
+                          ...validationConfig.validation_items,
+                          isAudioModel
+                            ? { audio_path: '', caption_path: '', prompt: '' }
+                            : { image_path: '', prompt: '' },
+                        ],
                         'config.process[0].train.validation_config.validation_items',
                       )
                     }

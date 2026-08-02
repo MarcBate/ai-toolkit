@@ -366,6 +366,11 @@ class AdapterConfig:
 class ValidationItem:
     def __init__(self, **kwargs):
         self.image_path: str = kwargs.get('image_path', '')
+        # audio validation (e.g. AceStep): held-out audio file + its tagged
+        # <CAPTION>/<LYRICS>/... caption. caption_path is read and used as the
+        # prompt automatically when prompt is not set directly.
+        self.audio_path: str = kwargs.get('audio_path', '')
+        self.caption_path: str = kwargs.get('caption_path', '')
         self.prompt: str = kwargs.get('prompt', '')
 
 

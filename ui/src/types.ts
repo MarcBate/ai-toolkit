@@ -121,6 +121,8 @@ export interface EMAConfig {
 
 export interface ValidationItem {
   image_path: string;
+  audio_path?: string;
+  caption_path?: string;
   prompt: string;
 }
 

@@ -1739,65 +1739,115 @@ class BaseSDTrainProcess(BaseTrainProcess):
             return
         if not self.accelerator.is_main_process:
             return
+        is_audio_model = getattr(self.sd, 'is_audio_model', False)
+
         validation_items = []
         for item in val_config.validation_items:
-            if not item.image_path:
-                print_acc("Skipping validation item with no image")
-                continue
-            if not os.path.exists(item.image_path):
-                print_acc(f"Skipping validation item, image not found: {item.image_path}")
-                continue
+            if is_audio_model:
+                if not item.audio_path:
+                    print_acc("Skipping validation item with no audio")
+                    continue
+                if not os.path.exists(item.audio_path):
+                    print_acc(f"Skipping validation item, audio not found: {item.audio_path}")
+                    continue
+                if item.caption_path and not os.path.exists(item.caption_path):
+                    print_acc(f"Skipping validation item, caption not found: {item.caption_path}")
+                    continue
+            else:
+                if not item.image_path:
+                    print_acc("Skipping validation item with no image")
+                    continue
+                if not os.path.exists(item.image_path):
+                    print_acc(f"Skipping validation item, image not found: {item.image_path}")
+                    continue
             validation_items.append(item)
         if len(validation_items) == 0:
             print_acc("Validation config has no valid validation_items, skipping validation")
             return
-        print_acc(f"Caching validation latents and embeddings for {len(validation_items)} images")
         device = self.device_torch
         dtype = get_torch_dtype(self.train_config.dtype)
         resolution = val_config.resolution
 
-        divisibility = self.sd.get_bucket_divisibility()
-
-        image_list = []
         prompt_list = []
         for item in validation_items:
-            img = Image.open(item.image_path)
-            img = ImageOps.exif_transpose(img).convert('RGB')
-            # deterministic resize that keeps the aspect ratio, matches the pixel budget
-            # of the resolution and the bucket divisibility of the model
-            bucket = get_bucket_for_image_size(
-                img.width, img.height,
+            if is_audio_model:
+                # the prompt is the full tagged <CAPTION>/<LYRICS>/... string, read
+                # from caption_path if provided, otherwise the prompt field itself
+                if item.caption_path:
+                    with open(item.caption_path, 'r', encoding='utf-8') as f:
+                        prompt_list.append(f.read())
+                else:
+                    prompt_list.append(item.prompt)
+            else:
+                prompt = item.prompt
+                if self.trigger_word is not None:
+                    prompt = self.sd.inject_trigger_into_prompt(
+                        prompt,
+                        trigger=self.trigger_word,
+                        add_if_not_present=False,
+                    )
+                prompt_list.append(prompt)
+
+        if is_audio_model:
+            print_acc(f"Caching validation latents and embeddings for {len(validation_items)} audio files")
+            import torchaudio
+            from toolkit.dataloader_mixins import waveform_to_stereo
+            sample_rate = getattr(self.sd, 'sample_rate', 48000)
+
+            audio_list = []
+            for item in validation_items:
+                waveform, orig_sample_rate = torchaudio.load(item.audio_path)
+                waveform = waveform_to_stereo(waveform)
+                if orig_sample_rate != sample_rate:
+                    waveform = torchaudio.functional.resample(waveform, orig_sample_rate, sample_rate)
+                audio_list.append(waveform)
+
+            item_key = [
+                {'audio': embed_disk_cache.file_stamp(item.audio_path), 'prompt': prompt}
+                for item, prompt in zip(validation_items, prompt_list)
+            ]
+            cache_key = embed_disk_cache.build_key_material(
+                self.sd.model_config,
+                kind='validation_audio',
+                items=item_key,
+                sample_rate=sample_rate,
+                dtype=str(dtype),
+            )
+        else:
+            divisibility = self.sd.get_bucket_divisibility()
+
+            image_list = []
+            for item in validation_items:
+                img = Image.open(item.image_path)
+                img = ImageOps.exif_transpose(img).convert('RGB')
+                # deterministic resize that keeps the aspect ratio, matches the pixel budget
+                # of the resolution and the bucket divisibility of the model
+                bucket = get_bucket_for_image_size(
+                    img.width, img.height,
+                    resolution=resolution,
+                    divisibility=divisibility,
+                )
+                img = img.resize((bucket['width'], bucket['height']), Image.BICUBIC)
+                tensor = transforms.ToTensor()(img) * 2.0 - 1.0
+                image_list.append(tensor)
+
+            # None of this changes between runs, but re-deriving it costs ~24s of
+            # text encoder and VAE round-trips to the GPU. Cache it on disk, keyed on
+            # everything that could change the result.
+            item_key = [
+                {'image': embed_disk_cache.file_stamp(item.image_path), 'prompt': prompt}
+                for item, prompt in zip(validation_items, prompt_list)
+            ]
+            cache_key = embed_disk_cache.build_key_material(
+                self.sd.model_config,
+                kind='validation',
+                items=item_key,
                 resolution=resolution,
                 divisibility=divisibility,
+                dtype=str(dtype),
+                trigger_word=self.trigger_word,
             )
-            img = img.resize((bucket['width'], bucket['height']), Image.BICUBIC)
-            tensor = transforms.ToTensor()(img) * 2.0 - 1.0
-            image_list.append(tensor)
-            prompt = item.prompt
-            if self.trigger_word is not None:
-                prompt = self.sd.inject_trigger_into_prompt(
-                    prompt,
-                    trigger=self.trigger_word,
-                    add_if_not_present=False,
-                )
-            prompt_list.append(prompt)
 
-        # None of this changes between runs, but re-deriving it costs ~24s of
-        # text encoder and VAE round-trips to the GPU. Cache it on disk, keyed on
-        # everything that could change the result.
-        item_key = [
-            {'image': embed_disk_cache.file_stamp(item.image_path), 'prompt': prompt}
-            for item, prompt in zip(validation_items, prompt_list)
-        ]
-        cache_key = embed_disk_cache.build_key_material(
-            self.sd.model_config,
-            kind='validation',
-            items=item_key,
-            resolution=resolution,
-            divisibility=divisibility,
-            dtype=str(dtype),
-            trigger_word=self.trigger_word,
-        )
         cached = embed_disk_cache.load(self.save_root, cache_key)
         if cached is not None:
             self._validation_cache = {
@@ -1825,11 +1875,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # seed so the vae latent dist sampling is always identical
             torch.manual_seed(42)
             orig_vae_device = self.sd.vae.device
-            # images can have different aspect ratios so they are encoded one at a time
-            latent_list = [
-                self.sd.encode_images([image], device=device, dtype=dtype).to('cpu', dtype=torch.float32)
-                for image in image_list
-            ]
+            # items can have different lengths/aspect ratios so they are encoded one at a time
+            if is_audio_model:
+                latent_list = [
+                    self.sd.encode_images(waveform.unsqueeze(0), device=device, dtype=dtype).to('cpu', dtype=torch.float32)
+                    for waveform in audio_list
+                ]
+            else:
+                latent_list = [
+                    self.sd.encode_images([image], device=device, dtype=dtype).to('cpu', dtype=torch.float32)
+                    for image in image_list
+                ]
             self.sd.vae.to(orig_vae_device)
 
             # fixed noise per image, seeds start at 42 and increment for each image
