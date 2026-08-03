@@ -433,6 +433,8 @@ class MinimaxH3Model(BaseModel):
             quantize_model(self, transformer)
             flush()
 
+        self.maybe_stop()
+
         if (
             self.model_config.layer_offloading
             and self.model_config.layer_offloading_transformer_percent > 0
@@ -454,6 +456,9 @@ class MinimaxH3Model(BaseModel):
         te_prequantized = any(
             isinstance(m, OstrisLinear) for m in text_encoder.modules()
         )
+
+        self.maybe_stop()
+
         if self.model_config.quantize_te and not te_prequantized:
             self.print_and_status_update("Quantizing text encoder")
             quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
