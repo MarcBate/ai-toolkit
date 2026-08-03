@@ -116,54 +116,6 @@ def read_text_file(path: str) -> str:
             return f.read()
 
 
-def ensure_video_has_audio_track(video_path: str) -> None:
-    """
-    Some source videos have no audio stream at all, which crashes torchaudio.load()
-    with an opaque "best audio stream is unknown" error. Mux in a silent stereo AAC
-    track in place (same ffmpeg approach as the local AudioCheck.ps1 utility) so
-    training can proceed with silence instead of failing the whole job.
-    """
-    import shutil
-    import subprocess
-
-    ffprobe_exe = shutil.which('ffprobe')
-    ffmpeg_exe = shutil.which('ffmpeg')
-    if not ffprobe_exe or not ffmpeg_exe:
-        return
-
-    probe = subprocess.run(
-        [ffprobe_exe, '-v', 'error', '-select_streams', 'a',
-         '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', video_path],
-        capture_output=True, text=True,
-    )
-    if probe.stdout.strip():
-        # Already has an audio stream
-        return
-
-    print_acc(f" - No audio stream in {video_path}, adding silent track...")
-    temp_path = video_path + '.with_silent_audio.mp4'
-    result = subprocess.run(
-        [ffmpeg_exe, '-y', '-i', video_path,
-         '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
-         '-map', '0:v', '-map', '1:a',
-         '-c:v', 'copy', '-c:a', 'aac', '-shortest',
-         '-movflags', '+faststart', temp_path],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not os.path.exists(temp_path):
-        print_acc(f" - Failed to add silent audio track to {video_path}: {result.stderr}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return
-
-    try:
-        os.replace(temp_path, video_path)
-    except OSError:
-        # WSL/NTFS cross-device rename can fail; fall back to copy+delete
-        shutil.copyfile(temp_path, video_path)
-        os.remove(temp_path)
-
-
 def waveform_to_stereo(waveform):
     c = waveform.shape[0]
     if c == 2:
@@ -584,15 +536,19 @@ class ImageProcessingDTOMixin:
             if self.dataset_config.auto_frame_count:
                 # allow for any length video here but make sure it is temporally compressable.
                 vid_length_seconds = total_frames / video_fps
-                
+
                 desired_num_frames = int(vid_length_seconds * self.dataset_config.fps)
-                
-                # make sure it is divisible by temporal_compression
-                desired_num_frames = desired_num_frames // self.temporal_compression * self.temporal_compression
-                
-                # TODO, all models currently add a key frame, but future models may not, update here if this changes.
-                desired_num_frames += 1  # add one for the key frame that is always added
-                
+
+                if getattr(self, 'frame_count_snapper', None) is not None:
+                    # model-specific valid-frame-count grid (e.g. minimax_h3's 17n+5)
+                    desired_num_frames = self.frame_count_snapper(desired_num_frames)
+                else:
+                    # make sure it is divisible by temporal_compression
+                    desired_num_frames = desired_num_frames // self.temporal_compression * self.temporal_compression
+
+                    # TODO, all models currently add a key frame, but future models may not, update here if this changes.
+                    desired_num_frames += 1  # add one for the key frame that is always added
+
                 self.num_frames = desired_num_frames
                 
             
@@ -781,32 +737,39 @@ class ImageProcessingDTOMixin:
                     else:
                         target_duration = source_duration
 
-                    ensure_video_has_audio_track(self.path)
-                    waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
-                    
-                    waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
-                    
-                    if self.dataset_config.audio_normalize:
-                        peak = waveform.abs().amax()  # global peak across channels
-                        eps = 1e-9
-                        target_peak = 0.999  # ~ -0.01 dBFS
-                        gain = target_peak / (peak + eps)
-                        waveform = waveform * gain
+                    # torchcodec's AudioDecoder raises when a video has no audio
+                    # track, so probe for a stream before decoding.
+                    import av
+                    with av.open(self.path) as container:
+                        has_audio_stream = len(container.streams.audio) > 0
 
-                    # Slice to the selected clip region (when we have a meaningful time range)
-                    if source_duration > 0.0:
-                        start_sample = int(round(clip_start_time * sample_rate))
-                        end_sample = int(round(clip_end_time * sample_rate))
-                        start_sample = max(0, min(start_sample, waveform.shape[-1]))
-                        end_sample = max(0, min(end_sample, waveform.shape[-1]))
-                        if end_sample > start_sample:
-                            waveform = waveform[..., start_sample:end_sample]
+                    waveform = None
+                    if has_audio_stream:
+                        waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+
+                        waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
+
+                        if self.dataset_config.audio_normalize:
+                            peak = waveform.abs().amax()  # global peak across channels
+                            eps = 1e-9
+                            target_peak = 0.999  # ~ -0.01 dBFS
+                            gain = target_peak / (peak + eps)
+                            waveform = waveform * gain
+
+                        # Slice to the selected clip region (when we have a meaningful time range)
+                        if source_duration > 0.0:
+                            start_sample = int(round(clip_start_time * sample_rate))
+                            end_sample = int(round(clip_end_time * sample_rate))
+                            start_sample = max(0, min(start_sample, waveform.shape[-1]))
+                            end_sample = max(0, min(end_sample, waveform.shape[-1]))
+                            if end_sample > start_sample:
+                                waveform = waveform[..., start_sample:end_sample]
+                            else:
+                                # No valid audio segment
+                                waveform = None
                         else:
-                            # No valid audio segment
+                            # If we can't compute a meaningful time range, treat as no-audio
                             waveform = None
-                    else:
-                        # If we can't compute a meaningful time range, treat as no-audio
-                        waveform = None
 
                     if waveform is not None and waveform.numel() > 0:
                         target_samples = int(round(target_duration * sample_rate))

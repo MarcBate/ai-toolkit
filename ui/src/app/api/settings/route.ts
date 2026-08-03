@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
-import { defaultTrainFolder, defaultDatasetsFolder } from '@/paths';
+import { defaultTrainFolder, defaultDatasetsFolder, defaultModelsFolder } from '@/paths';
 import { flushCache } from '@/server/settings';
 import fs from 'fs';
 import path from 'path';
@@ -31,6 +31,14 @@ export async function GET() {
     if (!settingsObject.CHECK_CONFIG_MODEL) settingsObject.CHECK_CONFIG_MODEL = 'claude-sonnet-5';
     if (!settingsObject.CHECK_CONFIG_ENABLE_WEB_SEARCH) settingsObject.CHECK_CONFIG_ENABLE_WEB_SEARCH = 'false';
 
+    // MODELS_PATH from the env file always takes precedence over the setting
+    if (process.env.MODELS_PATH && process.env.MODELS_PATH.trim() !== '') {
+      settingsObject.MODELS_PATH = process.env.MODELS_PATH;
+    } else if (!settingsObject.MODELS_PATH || settingsObject.MODELS_PATH === '') {
+      // if MODELS_PATH is not set, use default
+      settingsObject.MODELS_PATH = defaultModelsFolder;
+    }
+
     // Read version from version.py in root
     let version = 'unknown';
     try {
@@ -55,7 +63,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const {
-      HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR,
+      HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR, MODELS_PATH,
       CHECK_CONFIG_API_BASE_URL, CHECK_CONFIG_API_KEY, CHECK_CONFIG_MODEL,
       CHECK_CONFIG_ENABLE_WEB_SEARCH,
     } = body;
@@ -70,6 +78,7 @@ export async function POST(request: Request) {
       upsert('TRAINING_FOLDER', TRAINING_FOLDER ?? ''),
       upsert('DATASETS_FOLDER', DATASETS_FOLDER ?? ''),
       upsert('QUANTIZATION_CACHE_DIR', QUANTIZATION_CACHE_DIR ?? ''),
+      upsert('MODELS_PATH', MODELS_PATH ?? ''),
       upsert('CHECK_CONFIG_API_BASE_URL', CHECK_CONFIG_API_BASE_URL ?? ''),
       upsert('CHECK_CONFIG_API_KEY', CHECK_CONFIG_API_KEY ?? ''),
       upsert('CHECK_CONFIG_MODEL', CHECK_CONFIG_MODEL ?? ''),

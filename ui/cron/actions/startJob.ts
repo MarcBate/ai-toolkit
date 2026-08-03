@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getQuantizationCacheDir } from '../paths';
+import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getQuantizationCacheDir, getModelsPath } from '../paths';
 import { resolveDetachedPythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -319,6 +319,15 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
     if (jobConfig?.config?.process?.[0]?.model?.cache_quantized_model) {
       const quantCacheDir = await getQuantizationCacheDir();
       additionalEnv.AITK_QUANTIZATION_CACHE_DIR = quantCacheDir;
+    }
+
+    // MODELS_PATH - one set in the env always takes precedence (it passes
+    // through via process.env); only fall back to the setting if it is not set
+    if (!process.env.MODELS_PATH || process.env.MODELS_PATH.trim() === '') {
+      const modelsPath = await getModelsPath();
+      if (modelsPath && modelsPath.trim() !== '') {
+        additionalEnv.MODELS_PATH = modelsPath;
+      }
     }
 
     // Add the --log argument to the command
