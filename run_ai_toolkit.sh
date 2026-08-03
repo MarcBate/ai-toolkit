@@ -52,6 +52,12 @@ export HF_HOME="${HF_CACHE_MOUNT}/huggingface"
 export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 
+# Non-diffusers (ComfyUI-style) checkpoint downloads, e.g. MiniMax H3's
+# separate DiT/text-encoder/VAE safetensors, default to <repo>/models on the
+# NTFS-backed repo dir if left unset. Keep them on the same ext4 disk as the
+# HF cache above to avoid the drvfs bottleneck.
+export MODELS_PATH="${HF_CACHE_MOUNT}/aitk-models"
+
 # The UI worker spawns training processes via resolvePythonPath(), which would
 # otherwise find the <repo>/venv symlink and pay the drvfs import cost on every
 # job start. Point it at the real interpreter.
