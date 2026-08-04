@@ -169,6 +169,8 @@ export interface TrainConfig {
   max_loss?: number | null;
   validation_config?: ValidationConfig;
   combine_datasets?: boolean;
+  do_guidance_loss?: boolean;
+  guidance_loss_target?: number;
 }
 
 export interface QuantizeKwargsConfig {
