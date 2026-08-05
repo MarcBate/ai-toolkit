@@ -31,6 +31,12 @@ export async function GET() {
     if (!settingsObject.CHECK_CONFIG_MODEL) settingsObject.CHECK_CONFIG_MODEL = 'claude-sonnet-5';
     if (!settingsObject.CHECK_CONFIG_ENABLE_WEB_SEARCH) settingsObject.CHECK_CONFIG_ENABLE_WEB_SEARCH = 'false';
 
+    // Untested: reuses an already-loaded model across consecutive same-arch queued
+    // jobs within one process instead of a fresh load+quantize per job. Defaults to
+    // on (matches prior behavior); can be turned off if it's ever suspected of
+    // causing trouble.
+    if (!settingsObject.ENABLE_HOT_MODEL_RELOAD) settingsObject.ENABLE_HOT_MODEL_RELOAD = 'true';
+
     // MODELS_PATH from the env file always takes precedence over the setting
     if (process.env.MODELS_PATH && process.env.MODELS_PATH.trim() !== '') {
       settingsObject.MODELS_PATH = process.env.MODELS_PATH;
@@ -65,7 +71,7 @@ export async function POST(request: Request) {
     const {
       HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR, MODELS_PATH,
       CHECK_CONFIG_API_BASE_URL, CHECK_CONFIG_API_KEY, CHECK_CONFIG_MODEL,
-      CHECK_CONFIG_ENABLE_WEB_SEARCH,
+      CHECK_CONFIG_ENABLE_WEB_SEARCH, ENABLE_HOT_MODEL_RELOAD,
     } = body;
 
     const upsert = (key: string, value: string) =>
@@ -83,6 +89,7 @@ export async function POST(request: Request) {
       upsert('CHECK_CONFIG_API_KEY', CHECK_CONFIG_API_KEY ?? ''),
       upsert('CHECK_CONFIG_MODEL', CHECK_CONFIG_MODEL ?? ''),
       upsert('CHECK_CONFIG_ENABLE_WEB_SEARCH', CHECK_CONFIG_ENABLE_WEB_SEARCH ?? 'false'),
+      upsert('ENABLE_HOT_MODEL_RELOAD', ENABLE_HOT_MODEL_RELOAD ?? 'true'),
     ]);
 
     flushCache();

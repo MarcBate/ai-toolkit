@@ -2026,7 +2026,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         _hot_arch = getattr(_hot, 'arch', None) or getattr(type(_hot), 'arch', None)
         _new_arch = getattr(model_config_to_load, 'arch', None)
         _used_hot = False
-        if _hot is not None and type(_hot) is ModelClass and _hot_arch == _new_arch:
+        _hot_model_enabled = os.environ.get('AITK_ENABLE_HOT_MODEL', '1') == '1'
+        if _hot is not None and _hot_model_enabled and type(_hot) is ModelClass and _hot_arch == _new_arch:
             try:
                 self.sd = _hot
                 self.sd.model_config = model_config_to_load

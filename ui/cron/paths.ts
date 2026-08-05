@@ -66,6 +66,13 @@ export const getQuantizationCacheDir = async () => {
   return path.join(trainingFolder, 'quantized');
 };
 
+export const getEnableHotModelReload = async () => {
+  const key = 'ENABLE_HOT_MODEL_RELOAD';
+  let row = await prisma.settings.findFirst({ where: { key } });
+  // default true — matches prior (always-on) behavior when the setting has never been saved
+  return row?.value ? row.value === 'true' : true;
+};
+
 export const getModelsPath = async () => {
   const key = 'MODELS_PATH';
   let row = await prisma.settings.findFirst({

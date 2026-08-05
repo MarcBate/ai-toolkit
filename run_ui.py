@@ -112,6 +112,11 @@ def _effective_qtype(model_cfg: dict) -> str:
 
 def _query_next_matching_job(db_path: str, hot_sd, gpu_ids: str):
     """Return the next queued job row that can reuse hot_sd, or None."""
+    # Untested cross-job handoff — a settings-page toggle (default on, matching
+    # prior behavior) lets it be disabled if it's ever suspected of causing
+    # trouble, without losing the fast path for everyone else.
+    if os.environ.get('AITK_ENABLE_HOT_MODEL', '1') != '1':
+        return None
     # Use instance arch first (StableDiffusion stores it on self); fall back to class attr
     hot_arch = getattr(hot_sd, 'arch', None) or getattr(type(hot_sd), 'arch', None)
     if hot_arch is None:
@@ -121,10 +126,17 @@ def _query_next_matching_job(db_path: str, hot_sd, gpu_ids: str):
         conn = sqlite3.connect(db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         try:
+            # Only hand off while the queue for this GPU is actually running.
+            # "Save and Stop Queue" sets return_to_queue + stops the queue, so the
+            # job legitimately sits in 'queued' waiting to be resumed. Without the
+            # is_running check this loop re-claimed it immediately and the job
+            # restarted itself with the queue switched off.
             rows = conn.execute(
-                "SELECT id, name, job_config FROM Job "
-                "WHERE status='queued' AND gpu_ids=? AND job_type='train' "
-                "ORDER BY queue_position ASC LIMIT 10",
+                "SELECT j.id, j.name, j.job_config FROM Job j "
+                "JOIN Queue q ON q.gpu_ids = j.gpu_ids "
+                "WHERE j.status='queued' AND j.gpu_ids=? AND j.job_type='train' "
+                "AND q.is_running=1 "
+                "ORDER BY j.queue_position ASC LIMIT 10",
                 (gpu_ids,)
             ).fetchall()
         finally:
