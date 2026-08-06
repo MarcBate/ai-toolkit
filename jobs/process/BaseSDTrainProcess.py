@@ -594,11 +594,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         step_num = ''
         if step is not None:
             self.last_save_step = step
-            # zeropad 9 digits
-            step_num = f"_{str(step).zfill(9)}"
+            # zeropad 5 digits
+            step_num = f"_{str(step).zfill(5)}"
         elif self.save_config.save_with_step_num:
             # if step is None, use current step
-            step_num = f"_{str(self.step_num).zfill(9)}"
+            step_num = f"_{str(self.step_num).zfill(5)}"
 
         self.update_training_metadata()
         filename = f'{self.job.name}{step_num}.safetensors'
@@ -804,7 +804,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 try:
                     if os.path.exists(optimizer_path):
                         # Archive the existing optimizer.pt (which belongs to the previous save)
-                        archive_name = f"optimizer_{previous_save_step:09d}.pt"
+                        archive_name = f"optimizer_{previous_save_step:05d}.pt"
                         archive_path = os.path.join(self.save_root, archive_name)
 
                         # Archive the existing optimizer if not already archived
