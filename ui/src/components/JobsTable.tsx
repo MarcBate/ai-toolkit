@@ -107,20 +107,30 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
     if (dragOverJobId !== jobId) setDragOverJobId(jobId);
   };
 
-  const optimisticReorderToIndex = (jobID: string, targetIndex: number) => {
+  // Swap queue_positions of two jobs in local state for instant visual feedback
+  const swapJobPositions = (jobID: string, neighbourID: string) => {
+    setJobs(prev => {
+      const job = prev.find(j => j.id === jobID);
+      const neighbour = prev.find(j => j.id === neighbourID);
+      if (!job || !neighbour) return prev;
+      return prev.map(j => {
+        if (j.id === jobID) return { ...j, queue_position: neighbour.queue_position };
+        if (j.id === neighbourID) return { ...j, queue_position: job.queue_position };
+        return j;
+      });
+    });
+  };
+
+  // Move a job to the front of its queue in local state
+  const moveJobToFront = (jobID: string) => {
     setJobs(prev => {
       const job = prev.find(j => j.id === jobID);
       if (!job) return prev;
       const queueJobs = prev
         .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
         .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
-      const currentIdx = queueJobs.findIndex(j => j.id === jobID);
-      if (currentIdx === -1) return prev;
-      const clamped = Math.max(0, Math.min(targetIndex, queueJobs.length - 1));
-      if (clamped === currentIdx) return prev;
-      const reordered = [...queueJobs];
-      reordered.splice(currentIdx, 1);
-      reordered.splice(clamped, 0, job);
+      if (queueJobs[0]?.id === jobID) return prev;
+      const reordered = [job, ...queueJobs.filter(j => j.id !== jobID)];
       const basePos = Math.min(...queueJobs.map(j => j.queue_position ?? 0));
       const updated = new Map(reordered.map((j, i) => [j.id, { ...j, queue_position: basePos + i }]));
       return prev.map(j => updated.get(j.id) ?? j);
@@ -136,7 +146,7 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
     }
     const targetIndex = queuedJobs.findIndex(j => j.id === targetJobId);
     if (targetIndex === -1) return;
-    optimisticReorderToIndex(draggedJobId, targetIndex);
+    swapJobPositions(draggedJobId, targetJobId);
     try {
       await reorderJobToIndex(draggedJobId, targetIndex);
     } catch (err) {
@@ -202,20 +212,28 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
   }, [jobs, filter]);
 
   const handleReorder = async (jobID: string, direction: 'up' | 'down') => {
-    const job = jobs.find(j => j.id === jobID);
-    if (!job) return;
-    const queueJobs = jobs
-      .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
-      .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
-    const idx = queueJobs.findIndex(j => j.id === jobID);
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    optimisticReorderToIndex(jobID, targetIdx);
+    setJobs(prev => {
+      const job = prev.find(j => j.id === jobID);
+      if (!job) return prev;
+      const queueJobs = prev
+        .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
+        .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
+      const idx = queueJobs.findIndex(j => j.id === jobID);
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= queueJobs.length) return prev;
+      const neighbour = queueJobs[swapIdx];
+      return prev.map(j => {
+        if (j.id === jobID) return { ...j, queue_position: neighbour.queue_position };
+        if (j.id === neighbour.id) return { ...j, queue_position: job.queue_position };
+        return j;
+      });
+    });
     try { await reorderJob(jobID, direction); } catch (e) { console.error('Failed to reorder job:', e); }
     refresh();
   };
 
   const handleMoveToTop = async (jobID: string) => {
-    optimisticReorderToIndex(jobID, 0);
+    moveJobToFront(jobID);
     try { await reorderJobToIndex(jobID, 0); } catch (e) { console.error('Failed to move job to top:', e); }
     refresh();
   };
