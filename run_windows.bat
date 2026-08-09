@@ -18,6 +18,21 @@ echo.
 echo   AI Toolkit Manager - Windows
 echo.
 
+REM If the UI is already up (someone already ran this bat, or the worker/UI
+REM survived a crashed console), don't tear it down and rebuild on top of it -
+REM just open the browser and exit.
+for /f %%S in ('curl -s -o nul -w "%%{http_code}" http://localhost:8675 2^>nul') do set "PORT_CHECK=%%S"
+if "%PORT_CHECK%"=="200" (
+    echo AI Toolkit is already running at http://localhost:8675
+    start http://localhost:8675
+    exit /b 0
+)
+
+REM Testing expandable_segments to fix early OOM on the uncut H3 job under
+REM torch 2.13.0+cu130 (native Windows). Remove if it causes the async
+REM "device not ready" failure seen previously on a different job.
+set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 REM Clear env vars that let a stray conda/pyenv/system Python hijack things
 set PYTHONPATH=
 set PYTHONHOME=
