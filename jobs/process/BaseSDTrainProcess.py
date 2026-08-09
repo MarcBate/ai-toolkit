@@ -2027,7 +2027,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         _new_arch = getattr(model_config_to_load, 'arch', None)
         _used_hot = False
         _hot_model_enabled = os.environ.get('AITK_ENABLE_HOT_MODEL', '1') == '1'
-        if _hot is not None and _hot_model_enabled and type(_hot) is ModelClass and _hot_arch == _new_arch:
+        _hot_transformer_intact = getattr(_hot, 'model', None) is not None
+        if not _hot_transformer_intact and _hot is not None:
+            print_acc(" - Model cache: cached model's transformer is missing; falling back to full load+quantize")
+        if _hot is not None and _hot_model_enabled and _hot_transformer_intact and type(_hot) is ModelClass and _hot_arch == _new_arch:
             try:
                 self.sd = _hot
                 self.sd.model_config = model_config_to_load
