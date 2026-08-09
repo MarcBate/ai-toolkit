@@ -305,6 +305,9 @@ class BucketsMixin:
 
             # check if bucket exists, if not, create it
             bucket_key = f'{file_item.crop_width}x{file_item.crop_height}'
+            if self.is_video:
+                # images (1 frame) and videos must not mix in a batch
+                bucket_key += f'x{file_item.num_frames}f'
             if bucket_key not in self.buckets:
                 self.buckets[bucket_key] = Bucket(file_item.crop_width, file_item.crop_height)
             self.buckets[bucket_key].file_list_idx.append(idx)
@@ -864,7 +867,7 @@ class ImageProcessingDTOMixin:
         if self.is_audio_model:
             self.load_and_process_audio()
             return
-        if self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count:
+        if self.is_video:
             self.load_and_process_video(transform, only_load_latents)
             return
         try:
@@ -1915,11 +1918,11 @@ class LatentCachingFileItemDTOMixin:
             item["flip_x"] = True
         if self.flip_y:
             item["flip_y"] = True
-        if self.dataset_config.auto_frame_count:
+        if self.is_video and self.dataset_config.auto_frame_count:
             # don't store num frames here as it is calculated dynamically
             item["auto_frame_count"] = True
             is_video = True
-        elif self.dataset_config.num_frames > 1:
+        elif self.is_video and self.dataset_config.num_frames > 1:
             item["num_frames"] = self.dataset_config.num_frames
             is_video = True
         if is_video and self.dataset_config.fps != 24:
@@ -2207,7 +2210,7 @@ class LatentCachingMixin:
                 file_item.cleanup()
                 return False
             # do first frame
-            is_video = self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1
+            is_video = file_item.is_video
             if is_video and self.dataset_config.do_i2v:
                 frames = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
                 if len(frames.shape) == 4:
@@ -2300,7 +2303,7 @@ class TextEmbeddingFileItemDTOMixin:
         elif (
             getattr(self, "encode_first_frame_in_text_embeddings", False)
             and self.dataset_config.do_i2v
-            and (self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1)
+            and self.is_video
         ):
             item["first_frame_in_te"] = True
         return item
@@ -2391,7 +2394,7 @@ class TextEmbeddingCachingMixin:
                     elif (
                         getattr(self.sd, 'encode_first_frame_in_text_embeddings', False)
                         and self.dataset_config.do_i2v
-                        and (self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1)
+                        and file_item.is_video
                     ):
                         # video item: encode the clip's FIRST FRAME into the text embeddings
                         # as a vision reference, matching sampling (where the ctrl image goes
