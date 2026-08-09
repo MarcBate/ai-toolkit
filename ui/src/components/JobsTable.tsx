@@ -107,17 +107,27 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
     if (dragOverJobId !== jobId) setDragOverJobId(jobId);
   };
 
-  // Swap queue_positions of two jobs in local state for instant visual feedback
-  const swapJobPositions = (jobID: string, neighbourID: string) => {
+  // Move a job to an arbitrary index within its queue, reflowing everyone in
+  // between (not just swapping with the drop target) — matches the backend's
+  // splice+renumber for targetIndex reorders, so drag-drop across multiple
+  // positions previews correctly instead of only swapping the two endpoints.
+  const reorderJobToLocalIndex = (jobID: string, targetIndex: number) => {
     setJobs(prev => {
       const job = prev.find(j => j.id === jobID);
-      const neighbour = prev.find(j => j.id === neighbourID);
-      if (!job || !neighbour) return prev;
-      return prev.map(j => {
-        if (j.id === jobID) return { ...j, queue_position: neighbour.queue_position };
-        if (j.id === neighbourID) return { ...j, queue_position: job.queue_position };
-        return j;
-      });
+      if (!job) return prev;
+      const queueJobs = prev
+        .filter(j => j.status === 'queued' && j.gpu_ids === job.gpu_ids)
+        .sort((a, b) => (a.queue_position ?? 0) - (b.queue_position ?? 0));
+      const currentIdx = queueJobs.findIndex(j => j.id === jobID);
+      if (currentIdx === -1) return prev;
+      const clamped = Math.max(0, Math.min(targetIndex, queueJobs.length - 1));
+      if (clamped === currentIdx) return prev;
+      const reordered = [...queueJobs];
+      reordered.splice(currentIdx, 1);
+      reordered.splice(clamped, 0, job);
+      const basePos = Math.min(...queueJobs.map(j => j.queue_position ?? 0));
+      const updated = new Map(reordered.map((j, i) => [j.id, { ...j, queue_position: basePos + i }]));
+      return prev.map(j => updated.get(j.id) ?? j);
     });
   };
 
@@ -146,7 +156,7 @@ export default function JobsTable({ onlyActive = false, filter = '', job_type = 
     }
     const targetIndex = queuedJobs.findIndex(j => j.id === targetJobId);
     if (targetIndex === -1) return;
-    swapJobPositions(draggedJobId, targetJobId);
+    reorderJobToLocalIndex(draggedJobId, targetIndex);
     try {
       await reorderJobToIndex(draggedJobId, targetIndex);
     } catch (err) {
