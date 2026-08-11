@@ -228,6 +228,31 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'sample.minimax_h3_turbo_lora': {
+    title: 'Turbo LoRA During Sampling',
+    description: (
+      <>
+        Applies a step-distilled (&quot;turbo&quot;) LoRA to the transformer while training previews are generated, then
+        removes it before training resumes. The LoRA never touches the training forward pass, so your own LoRA still
+        trains against the untouched base model — it only makes previews cheap.
+        <br />
+        <br />
+        Turbo LoRAs are built for a <strong>specific checkpoint partition</strong>. The published ComfyUI files target
+        the pruned partition (the default <code>fl2va_pruned</code>). Anything in the file that does not fit the loaded
+        transformer is skipped and reported in the log rather than silently half-applied.
+        <br />
+        <br />
+        Start at strength <strong>1.0</strong> and drop <strong>Sample Steps</strong> to 4–8 — the speedup comes from
+        the step count, not the LoRA. Keep guidance scale at 1; MiniMax-H3 is guidance-distilled either way.
+        <br />
+        <br />
+        <em>
+          Note: AdaLN adapters in these files are skipped. The AdaLN projection runs in float32 outside its linear
+          layer, so an adapter there has no effect — the released pruned files omit them for the same reason.
+        </em>
+      </>
+    ),
+  },
   'model.multistage': {
     title: 'Stages to Train',
     description: (

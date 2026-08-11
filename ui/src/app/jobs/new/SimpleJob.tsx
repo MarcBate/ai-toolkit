@@ -2355,6 +2355,49 @@ export default function SimpleJob({
                 )}
               </div>
             )}
+            {/* Sampling LoRA — MiniMax-H3 (4-step turbo / step distill) */}
+            {modelArch?.additionalSections?.includes('sample.minimax_h3_turbo_lora') && (
+              <div className="mt-4 border-t border-gray-700 pt-4">
+                <Checkbox
+                  label="Use turbo LoRA during sampling"
+                  docKey="sample.minimax_h3_turbo_lora"
+                  checked={
+                    jobConfig.config.process[0].sample.sample_lora_path !== null &&
+                    jobConfig.config.process[0].sample.sample_lora_path !== undefined
+                  }
+                  onChange={value => {
+                    if (value) {
+                      setJobConfig('', 'config.process[0].sample.sample_lora_path');
+                      setJobConfig(1.0, 'config.process[0].sample.sample_lora_strength');
+                    } else {
+                      setJobConfig(null, 'config.process[0].sample.sample_lora_path');
+                    }
+                  }}
+                />
+                {jobConfig.config.process[0].sample.sample_lora_path !== null &&
+                  jobConfig.config.process[0].sample.sample_lora_path !== undefined && (
+                  <div className="mt-2 pl-2 space-y-2">
+                    <LoraPathInput
+                      label="Turbo LoRA Path"
+                      value={jobConfig.config.process[0].sample.sample_lora_path ?? ''}
+                      onChange={v => setJobConfig(v, 'config.process[0].sample.sample_lora_path')}
+                    />
+                    <SliderInput
+                      label="Strength"
+                      value={jobConfig.config.process[0].sample.sample_lora_strength ?? 1.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.sample_lora_strength')}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                    />
+                    <p className="text-xs text-gray-500">
+                      Applied only while generating samples and removed again before training resumes. Drop Sample Steps
+                      to 4–8 to get the speedup.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
             {modelArch?.additionalSections?.includes('sample.krea2_sampling_lora') && (
               <div className="mt-4 border-t border-gray-700 pt-4">
                 <Checkbox

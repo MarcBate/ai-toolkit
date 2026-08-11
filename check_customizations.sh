@@ -210,6 +210,18 @@ check "filter_lora_state_dict_for_quantized_model used in ltx2.py (prevents weig
   "filter_lora_state_dict_for_quantized_model"
 
 echo
+echo "── Python: MiniMax-H3 turbo LoRA ────────────"
+check "turbo sampling LoRA in minimax_h3.py" \
+  "extensions_built_in/diffusion_models/minimax_h3/minimax_h3.py" \
+  "_build_turbo_lora"
+check "_detach_turbo_lora (unwraps forwards on file change)" \
+  "extensions_built_in/diffusion_models/minimax_h3/minimax_h3.py" \
+  "_detach_turbo_lora"
+check "sample.minimax_h3_turbo_lora section wired to minimax_h3" \
+  "ui/src/app/jobs/new/options.tsx" \
+  "sample.minimax_h3_turbo_lora"
+
+echo
 echo "── Python: Gemma API ────────────────────────"
 check "gemma_api_key in ltx2.py" \
   "extensions_built_in/diffusion_models/ltx2/ltx2.py" \

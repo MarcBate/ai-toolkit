@@ -179,6 +179,10 @@ class MinimaxH3Model(BaseModel):
 
         self.processor = None  # Qwen3VLProcessor
         self._warned_frame_trim = False
+        # turbo (4-step distill) sampling LoRA, built lazily on the first sample
+        self._turbo_lora = None
+        self._turbo_lora_path = None
+        self._turbo_lora_ready = False
         self.latent_space_version = "minimax_h3_v1"
         # caption token cap (vision blocks are never truncated); the released
         # stack has no limit — set 0 to disable
@@ -383,6 +387,307 @@ class MinimaxH3Model(BaseModel):
         self.assistant_lora.multiplier = 1.0
         self.assistant_lora.is_active = True
         self.invert_assistant_lora = False
+
+    # ------------------------------------------------------------------
+    # Turbo (4-step distill) sampling LoRA
+    #
+    # Same idea as WAN's LightX2V / LTX-2's distill LoRA: a step-distilled
+    # adapter that is active only while generating previews and completely
+    # inert during training. It is applied as a LIVE LoRA network rather than
+    # merged, for the same reason as the assistant adapter — the transformer is
+    # pre-quantized (int8 ConvRot) and a merge would resample every scale.
+    #
+    # The network is built once (on the first sample) and then just toggled:
+    # active + on GPU for the sample loop, inactive + parked on CPU for
+    # training. An inactive network is a pure pass-through in
+    # ToolkitModuleMixin.forward, so training sees the untouched base model.
+    # ------------------------------------------------------------------
+
+    # AdaLN adapters can never take effect here: MiniMaxH3AdalnProj.forward
+    # calls F.linear directly (to keep the projection in float32) instead of
+    # self.linear(...), so wrapping linear.forward is bypassed. The pruned
+    # checkpoints also use an 8-dim time embedding, which no released turbo
+    # LoRA targets — every published file either omits these or carries the
+    # unpruned 2688-dim version.
+    TURBO_SKIP_PATTERNS = ("adaln_proj",)
+
+    @classmethod
+    def validate_sample_lora_paths(cls, model_config, *sample_configs):
+        """Called at job startup so a bad path fails before any weights load."""
+        for cfg in [model_config] + list(sample_configs):
+            if cfg is None:
+                continue
+            path = getattr(cfg, "sample_lora_path", None)
+            if path and not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Turbo LoRA path not found (check your config before "
+                    f"training starts): {path}"
+                )
+
+    def _turbo_lora_settings(self):
+        """(path, strength) — the sample config wins over the model config."""
+        sc = getattr(self, "sample_config", None)
+        path = (
+            getattr(sc, "sample_lora_path", None) if sc else None
+        ) or self.model_config.sample_lora_path
+        strength = (
+            getattr(sc, "sample_lora_strength", None) if sc else None
+        )
+        if strength is None:
+            strength = self.model_config.sample_lora_strength
+        return path, (1.0 if strength is None else float(strength))
+
+    def _has_turbo_lora(self) -> bool:
+        return bool(self._turbo_lora_settings()[0])
+
+    def _load_turbo_lora_state_dict(self, path):
+        """Load a turbo LoRA and normalize it to ``transformer.<module path>``.
+
+        Released files come with the ComfyUI ``diffusion_model.`` prefix or
+        with the bare original checkpoint keys; both map onto our module tree
+        unchanged apart from the prefix. Entries that cannot apply to the
+        loaded transformer (missing module, shape mismatch against a pruned
+        vs unpruned partition, or a bypassed AdaLN projection) are dropped and
+        counted so the reason is reported once instead of blowing up the load.
+        """
+        raw = load_file(path)
+        modules = dict(self.model.named_modules())
+
+        state_dict = {}
+        ranks: dict = {}
+        alphas: dict = {}
+        skipped_adaln = 0
+        skipped_missing = set()
+        skipped_shape = set()
+
+        for key, value in raw.items():
+            bare = key
+            for prefix in ("diffusion_model.", "transformer."):
+                if bare.startswith(prefix):
+                    bare = bare[len(prefix) :]
+                    break
+
+            # split off the ".lora_A.weight" / ".lora_down.weight" / ".alpha" tail
+            parts = bare.split(".")
+            for i, part in enumerate(parts):
+                if part in ("lora_A", "lora_B", "lora_down", "lora_up", "alpha"):
+                    module_path, tail = ".".join(parts[:i]), ".".join(parts[i:])
+                    break
+            else:
+                continue
+
+            if any(p in module_path for p in self.TURBO_SKIP_PATTERNS):
+                skipped_adaln += 1
+                continue
+
+            target = modules.get(module_path, None)
+            # nn.Linear covers the quantized layers too (OstrisLinear/QLinear
+            # subclass it), and in_features/out_features are plain ints — never
+            # touch .weight here, it materializes the full dequantized tensor
+            if not isinstance(target, torch.nn.Linear):
+                skipped_missing.add(module_path)
+                continue
+
+            # the checkpoint's own down/up shapes tell us the rank and the
+            # in/out features the adapter was trained against
+            if tail.endswith(("lora_A.weight", "lora_down.weight")):
+                rank, in_features = value.shape
+                if in_features != target.in_features:
+                    skipped_shape.add(module_path)
+                    continue
+                ranks[module_path] = int(rank)
+            elif tail.endswith(("lora_B.weight", "lora_up.weight")):
+                out_features, _rank = value.shape
+                if out_features != target.out_features:
+                    skipped_shape.add(module_path)
+                    continue
+            elif tail == "alpha":
+                # kohya-style file; PEFT-style ones omit alpha (== rank)
+                alphas[module_path] = float(value.item())
+                continue
+
+            state_dict[f"transformer.{module_path}.{tail}"] = value
+
+        # a shape mismatch is only caught on one of the two halves; drop the
+        # partner so a half-loaded adapter can never reach the model
+        bad = skipped_shape | skipped_missing
+        if bad:
+            state_dict = {
+                k: v
+                for k, v in state_dict.items()
+                if k[len("transformer.") :].rsplit(".", 2)[0] not in bad
+            }
+            for path_ in bad:
+                ranks.pop(path_, None)
+                alphas.pop(path_, None)
+
+        if skipped_adaln:
+            self.print_and_status_update(
+                f" - skipping {skipped_adaln} AdaLN tensors (the AdaLN "
+                "projection runs in float32 outside the wrapped linear, so an "
+                "adapter there would have no effect)"
+            )
+        if skipped_missing:
+            self.print_and_status_update(
+                f" - skipping {len(skipped_missing)} modules not in this "
+                f"transformer (e.g. {sorted(skipped_missing)[0]})"
+            )
+        if skipped_shape:
+            self.print_and_status_update(
+                f" - skipping {len(skipped_shape)} modules whose shapes do not "
+                f"match this partition (e.g. {sorted(skipped_shape)[0]}) — "
+                "turbo LoRAs are built for a specific pruned/unpruned checkpoint"
+            )
+        if not ranks:
+            raise ValueError(
+                f"No turbo LoRA tensors from {os.path.basename(path)} apply to "
+                f"the loaded {self._dit_component()} transformer."
+            )
+        return state_dict, ranks, alphas
+
+    def _build_turbo_lora(self):
+        """Build + attach the turbo network once. Left inactive and on CPU."""
+        from toolkit.config_modules import NetworkConfig
+        from toolkit.lora_special import LoRASpecialNetwork
+
+        path, strength = self._turbo_lora_settings()
+        self.print_and_status_update(
+            f"Loading turbo sampling LoRA: {os.path.basename(path)}"
+        )
+        state_dict, ranks, alphas = self._load_turbo_lora_state_dict(path)
+
+        # per-module rank/alpha rather than one network-wide rank: this
+        # restricts module creation to exactly what the file covers (the
+        # released turbo LoRA is rank 64 over the block attn/mlp linears and
+        # the token refiner, nothing else) and keeps any per-module rank in
+        # the file honest. PEFT-format files carry no .alpha, in which case
+        # alpha == rank and the module scales by 1.0, matching ComfyUI.
+        def lora_name(module_path):
+            return "transformer$$" + module_path.replace(".", "$$")
+
+        modules_dim = {lora_name(p): r for p, r in ranks.items()}
+        modules_alpha = {
+            lora_name(p): alphas.get(p, float(r)) for p, r in ranks.items()
+        }
+
+        network_config = NetworkConfig(
+            **{
+                "type": "lora",
+                "linear": max(ranks.values()),
+                "linear_alpha": max(ranks.values()),
+                "transformer_only": True,
+            }
+        )
+        network = LoRASpecialNetwork(
+            text_encoder=None,
+            unet=self.model,
+            multiplier=strength,
+            lora_dim=network_config.linear,
+            alpha=network_config.linear_alpha,
+            modules_dim=modules_dim,
+            modules_alpha=modules_alpha,
+            train_unet=True,
+            train_text_encoder=False,
+            network_config=network_config,
+            network_type=network_config.type,
+            transformer_only=network_config.transformer_only,
+            is_transformer=True,
+            # a copy: create_modules appends the conv targets to this list
+            # in place when modules_dim is given
+            target_lin_modules=list(self.target_lora_modules),
+            base_model=self,
+        )
+        network.apply_to(None, self.model, apply_text_encoder=False, apply_unet=True)
+        network.load_weights(state_dict)
+
+        # never trained, never merged — only toggled around the sample loop
+        network.is_merged_in = False
+        for param in network.parameters():
+            param.requires_grad_(False)
+        network.eval()
+        network.is_active = False
+        network.force_to("cpu", self.torch_dtype)
+
+        self.print_and_status_update(
+            f" - turbo LoRA attached to {len(ranks)} modules (strength={strength})"
+        )
+        self._turbo_lora = network
+        self._turbo_lora_path = path
+
+    def _detach_turbo_lora(self):
+        """Unwrap the turbo modules from the transformer entirely.
+
+        Only valid because this network is always the outermost wrapper (it is
+        applied after the training network, the assistant adapter and the
+        memory manager), so handing each module's saved org_forward back
+        restores exactly the chain that was there before.
+        """
+        network = getattr(self, "_turbo_lora", None)
+        if network is None:
+            return
+        network.is_active = False
+        for module in network.get_all_modules():
+            org_module = module.orig_module_ref()
+            if org_module is not None and hasattr(module, "org_forward"):
+                org_module.forward = module.org_forward
+        self._turbo_lora = None
+        self._turbo_lora_path = None
+        self._turbo_lora_ready = False
+        flush()
+
+    def _prepare_turbo_lora(self):
+        path, strength = self._turbo_lora_settings()
+        # rebuild if the job was pointed at a different file since the last
+        # sample — detach first so the stale modules stop wrapping the forwards
+        if (
+            getattr(self, "_turbo_lora", None) is not None
+            and getattr(self, "_turbo_lora_path", None) != path
+        ):
+            self._detach_turbo_lora()
+        if getattr(self, "_turbo_lora", None) is None:
+            self._build_turbo_lora()
+
+        network = self._turbo_lora
+        network.force_to(self.device_torch, self.torch_dtype)
+        network.multiplier = strength
+        network._update_torch_multiplier()
+        network.is_active = True
+        self._turbo_lora_ready = True
+
+    def _teardown_turbo_lora(self):
+        """Deactivate and park the turbo weights back on CPU for training."""
+        network = getattr(self, "_turbo_lora", None)
+        if network is not None:
+            network.is_active = False
+            network.force_to("cpu", self.torch_dtype)
+        self._turbo_lora_ready = False
+        flush()
+
+    def _validate_sample_config(self, image_configs):
+        if not self._has_turbo_lora():
+            return
+        path, _ = self._turbo_lora_settings()
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Turbo LoRA not found — aborting sample to avoid useless "
+                f"inference: {path}"
+            )
+
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        if self._has_turbo_lora():
+            self._prepare_turbo_lora()
+
+    def _after_generate_images_loop(self, pipeline):
+        if getattr(self, "_turbo_lora_ready", False):
+            self._teardown_turbo_lora()
+
+    def _after_sample_failure(self):
+        # the turbo LoRA must never be left live on the training transformer
+        if getattr(self, "_turbo_lora_ready", False):
+            try:
+                self._teardown_turbo_lora()
+            except Exception:
+                pass
 
     def _load_transformer(self) -> MiniMaxH3Transformer:
         dtype = self.torch_dtype

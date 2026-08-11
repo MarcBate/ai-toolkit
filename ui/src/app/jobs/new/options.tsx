@@ -32,6 +32,7 @@ type AdditionalSections =
   | 'sample.distill_lora'
   | 'sample.sampling_lora'
   | 'sample.krea2_sampling_lora'
+  | 'sample.minimax_h3_turbo_lora'
   | 'train.audio_loss_multiplier'
   | 'datasets.num_frames'
   | 'model.multistage'
@@ -750,7 +751,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count', 'model.assistant_lora_path'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count', 'model.assistant_lora_path', 'sample.minimax_h3_turbo_lora'],
     modelNotes: (
       <div className="space-y-2">
         <p>
