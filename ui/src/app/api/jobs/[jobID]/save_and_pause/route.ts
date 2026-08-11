@@ -32,18 +32,22 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const alreadySaved = await checkpointAlreadyExists(job.name, job.step);
 
   if (!alreadySaved) {
-    // Set both flags — end_step_hook runs maybe_save() (save_now) before
-    // maybe_stop() (stop), so the Python trainer saves first then stops cleanly.
+    // NOTE: deliberately does NOT set `stop`. The trainer's stop-watcher thread
+    // treats `stop` as "raise SIGINT now" and would kill the training step before
+    // the checkpoint was ever written. stop_after_save is only read by
+    // maybe_stop(), and only once no save is still pending, so the save always
+    // lands first and the stop happens cleanly straight after it.
     await prisma.job.update({
       where: { id: jobID },
       data: {
         save_now: true,
-        stop: true,
+        stop_after_save: true,
         info: 'Saving snapshot and pausing...',
       },
     });
   } else {
-    // Already have a checkpoint for this exact step — nothing new to save.
+    // Already have a checkpoint for this exact step — nothing new to save, so
+    // this is a plain stop and the watcher may interrupt immediately.
     await prisma.job.update({
       where: { id: jobID },
       data: {

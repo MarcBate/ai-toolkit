@@ -38,14 +38,15 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const alreadySaved = await checkpointAlreadyExists(job.name, job.step);
 
   if (!alreadySaved) {
-    // Save then stop — Python uses the normal save+stop path (status becomes 'stopped').
-    // return_to_queue: true tells processQueue.ts to flip the job back to 'queued'
-    // once it sees the job has stopped, without needing Python to coordinate.
+    // As in save_and_pause: no `stop`, or the watcher SIGINTs the step before the
+    // checkpoint is written. return_to_queue is itself cooperative (only maybe_stop()
+    // reads it, the watcher does not), so it is safe to set here — but it must not
+    // fire before the save, which the stop_after_save gate in maybe_stop() ensures.
     await prisma.job.update({
       where: { id: jobID },
       data: {
         save_now: true,
-        stop: true,
+        stop_after_save: true,
         return_to_queue: true,
         info: 'Saving snapshot and returning to queue...',
       },
@@ -55,7 +56,6 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     await prisma.job.update({
       where: { id: jobID },
       data: {
-        stop: true,
         return_to_queue: true,
         info: 'Returning to queue...',
       },

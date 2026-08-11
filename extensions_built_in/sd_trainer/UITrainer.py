@@ -16,6 +16,9 @@ AITK_Status = Literal["running", "stopped", "error", "completed"]
 
 
 class UITrainer(SDTrainer):
+    # See DiffusionTrainer.STOP_WATCHER_SAVE_GRACE_SEC.
+    STOP_WATCHER_SAVE_GRACE_SEC = 300
+
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         super(UITrainer, self).__init__(process_id, job, config, **kwargs)
         self.sqlite_db_path = self.config.get("sqlite_db_path", "./aitk_db.db")
@@ -29,6 +32,9 @@ class UITrainer(SDTrainer):
         if self.job_id is None:
             raise Exception("AITK_JOB_ID not set")
         self.is_stopping = False
+        # >0 while a checkpoint write is pending or in flight; the stop watcher
+        # refuses to interrupt while raised. See DiffusionTrainer for the full note.
+        self._save_guard = 0
         # Create a thread pool for database operations
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         # Track all async tasks
@@ -57,6 +63,7 @@ class UITrainer(SDTrainer):
         t.start()
 
     def _stop_watcher_thread(self, interval_sec: float):
+        deferred_since: float | None = None
         while True:
             try:
                 if self.should_stop():
@@ -64,6 +71,21 @@ class UITrainer(SDTrainer):
                         # maybe_stop() already started the graceful shutdown;
                         # a second interrupt would only break its cleanup.
                         return
+                    # `stop` now unambiguously means "interrupt now"; save-then-stop
+                    # uses stop_after_save, which this thread never reads. Only an
+                    # in-flight write is worth waiting for. See DiffusionTrainer.
+                    if self._save_guard > 0:
+                        now = time.time()
+                        if deferred_since is None:
+                            deferred_since = now
+                        if now - deferred_since < self.STOP_WATCHER_SAVE_GRACE_SEC:
+                            time.sleep(interval_sec)
+                            continue
+                        print("")
+                        print(
+                            f"Checkpoint write still running after "
+                            f"{self.STOP_WATCHER_SAVE_GRACE_SEC}s; stopping anyway."
+                        )
                     print("")
                     print("****************************************************")
                     print("    Stop signal received; terminating process.      ")
@@ -130,9 +152,26 @@ class UITrainer(SDTrainer):
 
         return _check_return_to_queue()
 
+    def should_stop_after_save(self):
+        """Cooperative 'save then stop'. Separate from `stop` on purpose -- the
+        stop-watcher raises SIGINT on `stop` and would kill the step before the
+        checkpoint was written. See DiffusionTrainer for the full note."""
+        def _check():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT stop_after_save FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                return False if row is None else row[0] == 1
+
+        return _check()
+
+    def reset_stop_after_save(self):
+        self.update_db_key("stop_after_save", 0)
+
     def should_save(self):
         # Reads `save_now` (ostris' canonical on-demand-save schema). Save-and-pause
-        # sets `save_now` + `stop` together; save() writes before the stop is raised.
+        # pairs it with `stop_after_save`; see maybe_save/maybe_stop.
         def _check_save():
             with self._db_connect() as conn:
                 cursor = conn.cursor()
@@ -150,8 +189,14 @@ class UITrainer(SDTrainer):
         """Returns True if a checkpoint was actually written this step, so the
         caller can tell maybe_sample() not to write an identical one again."""
         if self.should_save():
-            self.reset_save()
-            self.save(self.step_num)
+            # raise before reset_save() clears the flag so the watcher never sees
+            # `stop` with no save pending mid-window
+            self._save_guard += 1
+            try:
+                self.reset_save()
+                self.save(self.step_num)
+            finally:
+                self._save_guard -= 1
             return True
         return False
 
@@ -216,16 +261,27 @@ class UITrainer(SDTrainer):
             self.sample(self.step_num)
 
     def maybe_stop(self):
+        # Hard stop: the user asked to stop now, nothing to wait for.
         if self.should_stop():
             self.is_stopping = True
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             raise JobStoppedException("Job stopped")
+        # Cooperative stops must never pre-empt a pending save -- see the
+        # matching note in DiffusionTrainer.maybe_stop().
+        if self.should_save():
+            return
         if self.should_return_to_queue():
             self.is_stopping = True
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             raise JobStoppedException("Job returning to queue")
+        if self.should_stop_after_save():
+            self.reset_stop_after_save()
+            self.is_stopping = True
+            self._run_async_operation(
+                self._update_status("stopped", "Job stopped"))
+            raise JobStoppedException("Job stopped")
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:
@@ -439,7 +495,12 @@ class UITrainer(SDTrainer):
         # first would raise "Job stopped" before the model is ever written to disk.
         # The stop check at the end (and in end_step_hook) handles the stop cleanly
         # after the save completes.
-        self.update_status("running", "Saving model")
-        super().save(step)
+        # The guard keeps the stop watcher from interrupting a half-written file.
+        self._save_guard += 1
+        try:
+            self.update_status("running", "Saving model")
+            super().save(step)
+        finally:
+            self._save_guard -= 1
         self.maybe_stop()
         self.update_status("running", "Training")

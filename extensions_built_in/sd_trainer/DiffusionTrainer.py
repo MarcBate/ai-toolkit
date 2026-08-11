@@ -22,6 +22,11 @@ AITK_Status = Literal["running", "stopped", "error", "completed"]
 
 
 class DiffusionTrainer(SDTrainer):
+    # How long the stop watcher waits for an in-flight checkpoint write before
+    # interrupting anyway. A write is seconds; this only exists so a wedged one
+    # can never make a job impossible to stop.
+    STOP_WATCHER_SAVE_GRACE_SEC = 300
+
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         super(DiffusionTrainer, self).__init__(process_id, job, config, **kwargs)
         self.sqlite_db_path = self.config.get("sqlite_db_path", "./aitk_db.db")
@@ -36,7 +41,14 @@ class DiffusionTrainer(SDTrainer):
             self.is_ui_trainer = False
         else:
             print(f"Job ID: \"{self.job_id}\"")
-        
+
+        # >0 while a checkpoint write is pending or in flight. The stop watcher
+        # refuses to interrupt the main thread while this is raised, so a
+        # save-and-pause always gets its checkpoint. Set before the watcher
+        # thread can start, and unconditionally (save() runs for periodic saves
+        # even when this isn't a UI trainer).
+        self._save_guard = 0
+
         if self.is_ui_trainer:
             self.is_stopping = False
             # Create a thread pool for database operations
@@ -85,6 +97,7 @@ class DiffusionTrainer(SDTrainer):
         t.start()
 
     def _stop_watcher_thread(self, interval_sec: float):
+        deferred_since: float | None = None
         while True:
             try:
                 if self.should_stop():
@@ -92,6 +105,24 @@ class DiffusionTrainer(SDTrainer):
                         # maybe_stop() already started the graceful shutdown;
                         # a second interrupt would only break its cleanup.
                         return
+                    # `stop` now unambiguously means "interrupt now" -- the
+                    # save-then-stop buttons use stop_after_save, which this
+                    # thread never looks at. The only thing worth waiting for
+                    # is a checkpoint write already in flight, since killing
+                    # mid-write leaves a truncated file. Bounded purely so a
+                    # wedged write can't make a job unstoppable.
+                    if self._save_guard > 0:
+                        now = time.time()
+                        if deferred_since is None:
+                            deferred_since = now
+                        if now - deferred_since < self.STOP_WATCHER_SAVE_GRACE_SEC:
+                            time.sleep(interval_sec)
+                            continue
+                        print("")
+                        print(
+                            f"Checkpoint write still running after "
+                            f"{self.STOP_WATCHER_SAVE_GRACE_SEC}s; stopping anyway."
+                        )
                     print("")
                     print("****************************************************")
                     print("    Stop signal received; terminating process.      ")
@@ -189,9 +220,30 @@ class DiffusionTrainer(SDTrainer):
 
         return self._retry_db_operation(_check_return_to_queue)
 
+    def should_stop_after_save(self):
+        """Cooperative 'save then stop' (our save-and-pause). Deliberately a
+        separate flag from `stop`: the stop-watcher thread raises SIGINT the
+        moment it sees `stop`, which killed the training step before the
+        checkpoint was ever written. Nothing watches this one but maybe_stop()."""
+        if not self.is_ui_trainer:
+            return False
+        def _check():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT stop_after_save FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                return False if row is None else row[0] == 1
+
+        return self._retry_db_operation(_check)
+
+    def reset_stop_after_save(self):
+        if self.accelerator.is_main_process and self.is_ui_trainer:
+            self.update_db_key("stop_after_save", 0)
+
     def should_save(self):
         # Reads the `save_now` flag (ostris' canonical on-demand-save schema).
-        # Save-and-pause sets `save_now` + `stop` together; see maybe_save/save.
+        # Save-and-pause pairs it with `stop_after_save`; see maybe_save/maybe_stop.
         if not self.is_ui_trainer:
             return False
         def _check_save():
@@ -229,16 +281,29 @@ class DiffusionTrainer(SDTrainer):
     def maybe_stop(self):
         if not self.is_ui_trainer:
             return
+        # Hard stop: the user asked to stop now, nothing to wait for.
         if self.should_stop():
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
             raise JobStoppedException("Job stopped")
+        # Cooperative stops below must never pre-empt a pending save --
+        # save-and-pause / save-and-requeue set save_now alongside them and the
+        # checkpoint has to land first. maybe_save() clears save_now, so these
+        # fire on the very next call (including save()'s own trailing one).
+        if self.should_save():
+            return
         if self.should_return_to_queue():
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
             raise JobStoppedException("Job returning to queue")
+        if self.should_stop_after_save():
+            self.reset_stop_after_save()
+            self._run_async_operation(
+                self._update_status("stopped", "Job stopped"))
+            self.is_stopping = True
+            raise JobStoppedException("Job stopped")
 
     def maybe_save(self):
         """Returns True if a checkpoint was actually written this step, so the
@@ -246,16 +311,23 @@ class DiffusionTrainer(SDTrainer):
         if not self.is_ui_trainer:
             return False
         if self.should_save():
-            self.reset_save()
-            if self.progress_bar is not None:
-                self.progress_bar.pause()
-            print_acc(f"\nSaving at step {self.step_num}")
-            self.optimizer.zero_grad()
-            self.save(self.step_num)
-            self.ensure_params_requires_grad()
-            flush()
-            if self.progress_bar is not None:
-                self.progress_bar.unpause()
+            # raise the guard before reset_save() clears the flag, so there is no
+            # window where the watcher sees `stop` with no save pending and kills
+            # the step before the write starts
+            self._save_guard += 1
+            try:
+                self.reset_save()
+                if self.progress_bar is not None:
+                    self.progress_bar.pause()
+                print_acc(f"\nSaving at step {self.step_num}")
+                self.optimizer.zero_grad()
+                self.save(self.step_num)
+                self.ensure_params_requires_grad()
+                flush()
+                if self.progress_bar is not None:
+                    self.progress_bar.unpause()
+            finally:
+                self._save_guard -= 1
             return True
         return False
 
@@ -831,7 +903,12 @@ class DiffusionTrainer(SDTrainer):
         # do NOT. Save-and-pause sets save_now + stop together, so a leading
         # maybe_stop() would raise before the model is ever written to disk. The
         # trailing maybe_stop() below handles the stop cleanly after the save.
-        self.update_status("running", "Saving model")
-        super().save(step)
+        # The guard keeps the stop watcher from interrupting the write half-done.
+        self._save_guard += 1
+        try:
+            self.update_status("running", "Saving model")
+            super().save(step)
+        finally:
+            self._save_guard -= 1
         self.maybe_stop()
         self.update_status("running", "Training")
