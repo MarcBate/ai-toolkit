@@ -3,56 +3,19 @@ import { PrismaClient } from '@prisma/client';
 import path from 'path';
 import fs from 'fs';
 import { getTrainingFolder } from '@/server/settings';
-import sqlite3 from 'sqlite3';
 
 const prisma = new PrismaClient();
 
-function openDb(filename: string) {
-  const db = new sqlite3.Database(filename);
-  db.configure('busyTimeout', 5_000);
-  return db;
-}
-
-function getOne<T = any>(db: sqlite3.Database, sql: string, params: any[] = []) {
-  return new Promise<T | null>((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve((row as T) ?? null);
-    });
-  });
-}
-
-function closeDb(db: sqlite3.Database) {
-  return new Promise<void>((resolve, reject) => {
-    db.close((err) => (err ? reject(err) : resolve()));
-  });
-}
-
-async function hasStepsThisSession(logPath: string): Promise<boolean> {
-  if (!fs.existsSync(logPath)) return false;
-  const db = openDb(logPath);
-  try {
-    const tbl = await getOne<{ name: string }>(
-      db,
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='training_sessions'`,
-    );
-    if (!tbl) return false;
-    const session = await getOne<{ start_time: number }>(
-      db,
-      `SELECT start_time FROM training_sessions ORDER BY start_time DESC LIMIT 1`,
-    );
-    if (!session) return false;
-    const row = await getOne<{ n: number }>(
-      db,
-      `SELECT COUNT(*) AS n FROM steps WHERE wall_time >= ?`,
-      [session.start_time],
-    );
-    return (row?.n ?? 0) > 0;
-  } catch {
-    return false;
-  } finally {
-    await closeDb(db);
-  }
+/**
+ * A checkpoint already exists for the job's current step — either nothing has
+ * trained yet (step 0) or a periodic save already landed on this exact step,
+ * so an on-demand save would just write an identical duplicate.
+ */
+async function checkpointAlreadyExists(jobName: string, step: number): Promise<boolean> {
+  if (!step || step <= 0) return true;
+  const trainingFolder = await getTrainingFolder();
+  const filename = `${jobName}_${String(step).padStart(5, '0')}.safetensors`;
+  return fs.existsSync(path.join(trainingFolder, jobName, filename));
 }
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {
@@ -72,11 +35,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     }
   }
 
-  const trainingFolder = await getTrainingFolder();
-  const logPath = path.join(trainingFolder, job.name, 'loss_log.db');
-  const stepsMade = await hasStepsThisSession(logPath);
+  const alreadySaved = await checkpointAlreadyExists(job.name, job.step);
 
-  if (stepsMade) {
+  if (!alreadySaved) {
     // Save then stop — Python uses the normal save+stop path (status becomes 'stopped').
     // return_to_queue: true tells processQueue.ts to flip the job back to 'queued'
     // once it sees the job has stopped, without needing Python to coordinate.
@@ -90,7 +51,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
       },
     });
   } else {
-    // No progress this session — stop immediately and requeue without saving.
+    // Already have a checkpoint for this exact step — nothing new to save.
     await prisma.job.update({
       where: { id: jobID },
       data: {
