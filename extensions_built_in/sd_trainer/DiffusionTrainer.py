@@ -241,8 +241,10 @@ class DiffusionTrainer(SDTrainer):
             raise JobStoppedException("Job returning to queue")
 
     def maybe_save(self):
+        """Returns True if a checkpoint was actually written this step, so the
+        caller can tell maybe_sample() not to write an identical one again."""
         if not self.is_ui_trainer:
-            return
+            return False
         if self.should_save():
             self.reset_save()
             if self.progress_bar is not None:
@@ -254,6 +256,8 @@ class DiffusionTrainer(SDTrainer):
             flush()
             if self.progress_bar is not None:
                 self.progress_bar.unpause()
+            return True
+        return False
 
     def reload_sample_config(self):
         """Re-read sample config from the DB in case prompts were edited while running."""
@@ -304,14 +308,19 @@ class DiffusionTrainer(SDTrainer):
 
         return self._retry_db_operation(_check_sample_now)
 
-    def maybe_sample(self):
+    def maybe_sample(self, already_saved: bool = False):
         if not self.is_ui_trainer:
             return
         if self.should_sample():
             self.reload_sample_config()
             self.reset_sample()
-            # save model and optimizer first as requested
-            self.save(self.step_num)
+            # save model and optimizer first as requested, UNLESS maybe_save()
+            # already wrote this exact step (both flags land together whenever
+            # Save Snapshot is clicked while an on-demand sample is pending).
+            # Saving twice rewrote the same checkpoint and made save() archive
+            # the optimizer it had just written as optimizer_<thisstep>.pt.
+            if not already_saved:
+                self.save(self.step_num)
             # then sample
             self.sample(self.step_num)
 
@@ -691,8 +700,8 @@ class DiffusionTrainer(SDTrainer):
             # save-and-pause (save_now + stop set together) writes the checkpoint
             # before the stop is raised. save()'s trailing maybe_stop() then stops
             # cleanly. maybe_sample() is our on-demand sample feature.
-            self.maybe_save()
-            self.maybe_sample()
+            saved_this_step = self.maybe_save()
+            self.maybe_sample(already_saved=saved_this_step)
             self.maybe_sample_now()
             self.maybe_stop()
 

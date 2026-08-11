@@ -147,9 +147,13 @@ class UITrainer(SDTrainer):
         self.update_db_key("save_now", 0)
 
     def maybe_save(self):
+        """Returns True if a checkpoint was actually written this step, so the
+        caller can tell maybe_sample() not to write an identical one again."""
         if self.should_save():
             self.reset_save()
             self.save(self.step_num)
+            return True
+        return False
 
     def should_sample(self):
         def _check_sample():
@@ -200,12 +204,15 @@ class UITrainer(SDTrainer):
         except Exception as e:
             print(f"Warning: Could not reload sample config from DB: {e}")
 
-    def maybe_sample(self):
+    def maybe_sample(self, already_saved: bool = False):
         if self.should_sample():
             self.reload_sample_config()
             self.reset_sample()
             self.reset_stop_sample()  # clear any stale abort request from a previous sample
-            self.save(self.step_num)
+            # skip the save if maybe_save() already wrote this exact step -- see
+            # the matching note in DiffusionTrainer.maybe_sample()
+            if not already_saved:
+                self.save(self.step_num)
             self.sample(self.step_num)
 
     def maybe_stop(self):
@@ -359,8 +366,8 @@ class UITrainer(SDTrainer):
     def end_step_hook(self):
         super(UITrainer, self).end_step_hook()
         self.update_step()
-        self.maybe_save()
-        self.maybe_sample()
+        saved_this_step = self.maybe_save()
+        self.maybe_sample(already_saved=saved_this_step)
         self.maybe_stop()
 
     def hook_before_model_load(self):
