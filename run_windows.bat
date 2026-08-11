@@ -80,8 +80,35 @@ if not defined PY (
     exit /b 1
 )
 
-REM ---- 3. Sync the environment and start the UI ----
-"%PY%" -m manager update --auto
+REM ---- 3. Check for upstream updates (like run_ai_toolkit.sh used to) ----
+REM `manager update` only does a fast-forward pull, which can never succeed on
+REM this heavily-diverged fork (it has hundreds of commits origin doesn't have)
+REM - it would just skip silently or die. This just fetches and reports what's
+REM new; it does NOT attempt to merge - batch can't resolve conflicts, and the
+REM old Claude-merge-from-bash automation never actually worked. Bring it to a
+REM Claude Code session to merge when this shows updates are available.
+git rev-parse --is-inside-work-tree >nul 2>&1
+if not errorlevel 1 (
+    echo.
+    echo ---- Checking for updates from origin/main...
+    git fetch origin main --quiet
+    if errorlevel 1 (
+        echo ---- Could not reach origin - skipping update check.
+    ) else (
+        for /f %%C in ('git rev-list HEAD..origin/main --count 2^>nul') do set "BEHIND_COUNT=%%C"
+        if defined BEHIND_COUNT if not "!BEHIND_COUNT!"=="0" (
+            echo.
+            echo ---- !BEHIND_COUNT! update^(s^) available from origin/main - ask Claude to merge them:
+            git log --oneline HEAD..origin/main
+            echo.
+        ) else (
+            echo ---- Already up to date with origin/main.
+        )
+    )
+)
+
+REM ---- 4. Sync dependencies (no git pull - handled above) and start the UI ----
+"%PY%" -m manager sync
 if errorlevel 1 (
     echo.
     echo Setup failed - see output above.
