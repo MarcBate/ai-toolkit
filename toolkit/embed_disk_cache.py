@@ -26,7 +26,11 @@ from toolkit.print import print_acc
 
 # Bump this whenever the *meaning* of a cached payload changes (a different
 # encode path, a different tensor layout). It invalidates every entry.
-CACHE_FORMAT_VERSION = 2
+# v3: static embeds (unconditional / blank / trigger / DOP class) are now
+# encoded as plain text via encode_static_prompt, falling back to a blank
+# control image only for models that cannot encode without one. Entries
+# written before this were encoded against a solid black control.
+CACHE_FORMAT_VERSION = 3
 
 CACHE_DIRNAME = '.embed_cache'
 

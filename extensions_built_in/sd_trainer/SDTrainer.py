@@ -121,6 +121,24 @@ class SDTrainer(BaseSDTrainProcess):
 
     def before_model_load(self):
         pass
+
+    def get_blank_control_image(self):
+        # noise instead of a black image so the fallback does not read as a
+        # meaningful (solid black) reference
+        control_image = torch.rand((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
+        if self.sd.has_multiple_control_images:
+            control_image = [control_image]
+        return control_image
+
+    def encode_static_prompt(self, prompt, **kwargs):
+        # static embeds (blank/trigger/uncond/DOP class) are always plain text.
+        # Some models (edit models) cannot encode a prompt without control images
+        # and raise, only then fall back to a blank control image. Real errors
+        # surface on the fallback call.
+        try:
+            return self.sd.encode_prompt(prompt, **kwargs)
+        except Exception:
+            return self.sd.encode_prompt(prompt, control_images=self.get_blank_control_image(), **kwargs)
     
     def _text_encoder_is_unloaded(self) -> bool:
         """True once the text encoder has been swapped for a FakeTextEncoder (unloaded).
@@ -446,18 +464,9 @@ class SDTrainer(BaseSDTrainProcess):
             print_acc("Loaded unconditional embeds from disk cache")
         else:
             with torch.no_grad():
-                kwargs = {}
-                if self.sd.encode_control_in_text_embeddings:
-                    # just do a blank image for unconditionals
-                    control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
-                    if self.sd.has_multiple_control_images:
-                        control_image = [control_image]
-
-                    kwargs['control_images'] = control_image
-                self.unconditional_embeds = self.sd.encode_prompt(
+                self.unconditional_embeds = self.encode_static_prompt(
                     [self.train_config.unconditional_prompt],
                     long_prompts=self.do_long_prompts,
-                    **kwargs
                 ).to(
                     self.device_torch,
                     dtype=self.sd.torch_dtype
@@ -550,31 +559,35 @@ class SDTrainer(BaseSDTrainProcess):
                 if not needs_text_encoder:
                     print_acc("All startup embeddings came from the disk cache, text encoder never moved to GPU")
                 else:
-                    # cache embeddings
+                    # cache embeddings. encode_static_prompt keeps these as plain
+                    # text and only falls back to a blank control for models that
+                    # cannot encode without one — a solid black control image reads
+                    # as a meaningful reference, which is not what an unconditional
+                    # or a DOP class embed is supposed to be.
                     self.sd.text_encoder_to(self.device_torch)
-                    encode_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings:
-                        # just do a blank image for unconditionals
-                        control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
-                        if self.sd.has_multiple_control_images:
-                            control_image = [control_image]
-                        encode_kwargs['control_images'] = control_image
                     if self.cached_blank_embeds is None:
-                        self.cached_blank_embeds = self.sd.encode_prompt("", **encode_kwargs)
+                        self.cached_blank_embeds = self.encode_static_prompt("")
                         embed_disk_cache.save(self.save_root, blank_key, embed_disk_cache.prompt_embeds_to_dict(
                             self.cached_blank_embeds.clone().to('cpu')))
                     if trigger_key is not None and self.cached_trigger_embeds is None:
-                        self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word, **encode_kwargs)
+                        self.cached_trigger_embeds = self.encode_static_prompt(self.trigger_word)
                         embed_disk_cache.save(self.save_root, trigger_key, embed_disk_cache.prompt_embeds_to_dict(
                             self.cached_trigger_embeds.clone().to('cpu')))
                     if dop_key is not None and self.diff_output_preservation_embeds is None:
-                        self.diff_output_preservation_embeds = self.sd.encode_prompt(
+                        self.diff_output_preservation_embeds = self.encode_static_prompt(
                             self.train_config.diff_output_preservation_class)
                         embed_disk_cache.save(self.save_root, dop_key, embed_disk_cache.prompt_embeds_to_dict(
                             self.diff_output_preservation_embeds.clone().to('cpu')))
 
                     if not samples_hit:
                         self.cache_sample_prompts()
+
+                # Hold the class-only DOP embeds separately. The per-step code
+                # reassigns diff_output_preservation_embeds from the batch's own
+                # cached DOP embeds, and falls back to this when an item has
+                # none — without it that fallback hands back None and the
+                # preservation pass dies on expand_to_batch().
+                self.cached_dop_class_embeds = self.diff_output_preservation_embeds
 
                 if using_api:
                     print_acc("\n***** GEMMA API MODE - NO LOCAL TEXT ENCODER *****")
@@ -2168,6 +2181,18 @@ class SDTrainer(BaseSDTrainProcess):
                     else:
                         self.adapter.set_reference_images(None)
 
+                if self.train_config.do_guidance_loss and isinstance(self.train_config.guidance_loss_target, list):
+                    batch_size = noisy_latents.shape[0]
+                    # update the guidance value, random float between guidance_loss_target[0] and guidance_loss_target[1]
+                    # sample before the prior prediction so the prior, main, uncond, and
+                    # preservation passes all run at the same guidance values
+                    self._guidance_loss_target_batch = [
+                        random.uniform(
+                            self.train_config.guidance_loss_target[0],
+                            self.train_config.guidance_loss_target[1]
+                        ) for _ in range(batch_size)
+                    ]
+
                 prior_pred = None
 
                 do_inverted_masked_prior = False
@@ -2275,16 +2300,6 @@ class SDTrainer(BaseSDTrainProcess):
                                 pred_kwargs['down_block_additional_residuals'] = down_block_res_samples
                                 pred_kwargs['mid_block_additional_residual'] = mid_block_res_sample
                 
-                if self.train_config.do_guidance_loss and isinstance(self.train_config.guidance_loss_target, list):
-                    batch_size = noisy_latents.shape[0]
-                    # update the guidance value, random float between guidance_loss_target[0] and guidance_loss_target[1]
-                    self._guidance_loss_target_batch = [
-                        random.uniform(
-                            self.train_config.guidance_loss_target[0],
-                            self.train_config.guidance_loss_target[1]
-                        ) for _ in range(batch_size)
-                    ]
-
                 self.before_unet_predict()
                 
                 if unconditional_embeds is not None:
