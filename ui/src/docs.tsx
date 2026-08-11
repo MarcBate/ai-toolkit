@@ -42,6 +42,31 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.trigger_word': {
+    title: 'Dataset Trigger Word',
+    description: (
+      <>
+        Optional: Overrides the job's global Trigger Word for just this dataset. Useful when a job trains multiple
+        datasets that each need their own trigger word (e.g. training several characters together, one per dataset).
+        <br />
+        <br />
+        If this is set, it is used for this dataset instead of the global trigger word — the global one is ignored
+        for these files. If this is left blank, this dataset falls back to using the job's global Trigger Word (if
+        one is set). Leave this blank on every dataset to just use the global trigger word everywhere, as normal.
+        <br />
+        <br />
+        Works the same way as the global trigger word otherwise: added to the beginning of captions that don't
+        already contain it, or substituted in wherever you place the <code>{'[trigger]'}</code> placeholder.
+        <br />
+        <br />
+        <strong>This replaces the global trigger word for this dataset — it does not combine with it.</strong> If
+        your global trigger word is <code>p3n15</code> and you want an "uncut" dataset to trigger on{' '}
+        <code>uncut p3n15</code> and a "cut" dataset on <code>cut p3n15</code>, you need to type the full phrase into
+        each dataset's field (<code>uncut p3n15</code> and <code>cut p3n15</code>) — just entering{' '}
+        <code>uncut</code> here will drop <code>p3n15</code> from that dataset's captions entirely.
+      </>
+    ),
+  },
   'config.process[0].model.name_or_path': {
     title: 'Name or Path',
     description: (

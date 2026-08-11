@@ -8,6 +8,7 @@ export const defaultDatasetConfig: DatasetConfig = {
   mask_path: null,
   mask_min_value: 0.1,
   default_caption: '',
+  trigger_word: null,
   caption_ext: 'txt',
   caption_dropout_rate: 0.05,
   cache_latents_to_disk: false,

@@ -89,6 +89,7 @@ export interface DatasetConfig {
   mask_path: string | null;
   mask_min_value: number;
   default_caption: string;
+  trigger_word: string | null;
   caption_ext: string;
   caption_dropout_rate: number;
   shuffle_tokens?: boolean;

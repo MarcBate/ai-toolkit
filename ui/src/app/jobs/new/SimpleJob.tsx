@@ -1543,6 +1543,19 @@ export default function SimpleJob({
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].default_caption`)}
                         placeholder="eg. A photo of a cat"
                       />
+                      <TextInput
+                        label="Trigger Word"
+                        className="pt-2"
+                        docKey="datasets.trigger_word"
+                        value={dataset.trigger_word || ''}
+                        onChange={(value: string | null) => {
+                          if (value?.trim() === '') {
+                            value = null;
+                          }
+                          setJobConfig(value, `config.process[0].datasets[${i}].trigger_word`);
+                        }}
+                        placeholder="Uses the global Trigger Word if left blank"
+                      />
                       <NumberInput
                         label="Caption Dropout Rate"
                         className="pt-2"
