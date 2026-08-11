@@ -8,6 +8,28 @@ This is a **personal fork** of [ostris/ai-toolkit](https://github.com/ostris/ai-
 
 **Rule:** When ostris merges a feature that already exists in this fork, ask the user which implementation to keep before making any changes.
 
+**Merging origin/main:** `git fetch origin main` then `git merge origin/main --no-edit`. This repo is heavily
+diverged (hundreds of fork-only commits), so `git diff HEAD..origin/main` looks enormous (thousands of lines,
+mostly our fork-only files showing as pure deletions) — that's just total divergence, not what the merge will
+actually touch. Trust the real merge conflicts instead, and resolve each by keeping our implementation unless
+ostris's side is clearly a superset (verify by reading both sides, don't assume).
+
+After every merge — conflicted or not, since files can auto-merge cleanly and still lose our changes — verify
+these known fork customizations are still present before considering the merge done:
+- `toolkit/dataloader_mixins.py`: our `read_text_file` + JSON caption parsing (`caption`/`caption_short`/`extra_values`) and `PoiFileItemDTOMixin`
+- `ui/src/app/jobs/new/SimpleJob.tsx`: MRU LoRA input (`LoraPathInput`/`MruTextInput`), neg-prompt hidden for ideogram4, per-dataset Trigger Word field
+- `ui/src/app/jobs/new/options.tsx`: `sample.neg` in `DisableableSections` for ideogram4
+- `ui/src/app/layout.tsx`: `StopJobModal` and `StripAudioModal` alongside any new Ostris modals
+- `ui/src/helpers/defaultSamples.ts`: `guidance_scale: 7` in `defaultIdeogramSamplesConfig`
+- `ui/src/components/SampleImageViewer.tsx`: both our `promptExpanded` state and Ostris's `showBoxes` state
+- `ui/src/components/StopJobModal.tsx`, `SaveSnapshotModal.tsx`, `QueueStatusWidget.tsx`, `JobTrainingSessions.tsx`, and the `/api/jobs/[jobID]/save_and_pause`, `/save_and_requeue`, `/save_now` routes: fork-only, shouldn't be touched by a merge at all — confirm they still exist
+
+A one-line `grep -c` per marker (see chat history for the exact commands) is enough — report which markers you
+checked and that they survived, don't just say "looks fine." Also `py_compile` any touched `.py` files and
+`npx tsc --noEmit` (filtering out pre-existing `.next/types` noise) on touched `.ts`/`.tsx` files before calling
+the merge done. Report the *actual* merge diff (`git diff <pre-merge-sha>..HEAD --stat`), not the misleading
+two-dot origin comparison, so the user sees what really changed.
+
 ---
 
 ## Running the stack
