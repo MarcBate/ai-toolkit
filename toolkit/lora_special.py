@@ -507,9 +507,18 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         # - full_if_contains: any matching layer, INCLUDING linear/conv, overriding the
                         #   normal lora for it
                         all_layers = self.network_config is not None and getattr(self.network_config, 'all_layers', False)
+                        # read _parameters directly rather than `child_module.weight`:
+                        # quantized layers (OstrisLinear, Int8Embedding) expose `weight`
+                        # as a property that materializes the FULL dequantized tensor on
+                        # every access. Going through the property here dequantized every
+                        # quantized layer in the model just to type-check the result --
+                        # ~19B elements / ~2.5 min of pure waste on a quantized MiniMax H3,
+                        # plus the transient host allocations that went with it. The answer
+                        # is identical: a dequantized weight is a plain Tensor, never an
+                        # nn.Parameter, so this was always False for those layers anyway.
                         is_leaf_with_weight = (
                             len(list(child_module.children())) == 0
-                            and isinstance(getattr(child_module, 'weight', None), torch.nn.Parameter)
+                            and isinstance(child_module._parameters.get('weight', None), torch.nn.Parameter)
                         )
                         matches_full_if_contains = len(self.full_if_contains) > 0 and (
                             any([word in clean_name for word in self.full_if_contains])
@@ -524,8 +533,10 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         if any([word in clean_name for word in self.ignore_if_contains]):
                             skip = True
 
-                        # see if it is over threshold
-                        if count_parameters(child_module) < parameter_threshold:
+                        # see if it is over threshold. guarded: the default threshold is
+                        # 0.0, where the comparison can never be true (numel >= 0), so
+                        # walking every subtree's parameters to compute it is wasted work.
+                        if parameter_threshold > 0 and count_parameters(child_module) < parameter_threshold:
                             skip = True
                         
                         if self.transformer_only and is_unet:
