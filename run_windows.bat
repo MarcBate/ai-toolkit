@@ -19,14 +19,13 @@ echo   AI Toolkit Manager - Windows
 echo.
 
 REM If the UI is already up (someone already ran this bat, or the worker/UI
-REM survived a crashed console), don't tear it down and rebuild on top of it -
-REM just open the browser and exit.
+REM survived a crashed console), don't tear it down and rebuild on top of it.
+REM Ask what to do instead of exiting silently - a window that vanishes before
+REM it can be read looks identical to the launcher being broken.
 for /f %%S in ('curl -s -o nul -w "%%{http_code}" http://localhost:8675 2^>nul') do set "PORT_CHECK=%%S"
-if "%PORT_CHECK%"=="200" (
-    echo AI Toolkit is already running at http://localhost:8675
-    start http://localhost:8675
-    exit /b 0
-)
+if "%PORT_CHECK%"=="200" goto :already_running
+
+:start_fresh
 
 REM Testing expandable_segments to fix early OOM on the uncut H3 job under
 REM torch 2.13.0+cu130 (native Windows). Remove if it causes the async
@@ -117,3 +116,38 @@ if errorlevel 1 (
 )
 "%PY%" -m manager launch
 pause
+exit /b 0
+
+REM ---------------------------------------------------------------------------
+REM Already-running branch
+REM ---------------------------------------------------------------------------
+:already_running
+echo.
+echo   AI Toolkit is already running at http://localhost:8675
+echo.
+echo   The launcher will not rebuild on top of a live stack, so there is
+echo   nothing to start. Pick what you want to do:
+echo.
+echo     [O]  Open it in your browser        ^(default^)
+echo     [R]  Restart - stop it, then start fresh
+echo     [X]  Leave it running, close this window
+echo.
+set "CHOICE="
+set /p "CHOICE=Choose [O/R/X]: "
+if /i "!CHOICE!"=="R" goto :stop_running
+if /i "!CHOICE!"=="X" exit /b 0
+start http://localhost:8675
+exit /b 0
+
+:stop_running
+echo.
+echo ---- Stopping the running AI Toolkit...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop_ai_toolkit.ps1"
+if errorlevel 1 (
+    echo.
+    echo Could not stop it - see above. Nothing was started.
+    pause
+    exit /b 1
+)
+echo.
+goto :start_fresh
