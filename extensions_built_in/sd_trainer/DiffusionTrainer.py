@@ -10,7 +10,7 @@ import concurrent.futures
 import traceback
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from toolkit.config_modules import SampleConfig
-from toolkit.ui_utils import JobStoppedException
+from toolkit.ui_utils import JobStoppedException, SampleAbortedException
 from typing import Literal, Optional
 import threading
 import time
@@ -260,23 +260,28 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self.update_db_key("save_now", 0)
 
-    def should_sample(self):
-        if not self.is_ui_trainer:
-            return False
-
-        def _check_sample():
-            with self._db_connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT sample FROM Job WHERE id = ?", (self.job_id,))
-                sample = cursor.fetchone()
-                return False if sample is None else sample[0] == 1
-
-        return _check_sample()
-
     def reset_sample(self):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self.update_db_key("sample", False)
+
+    def should_stop_sample(self):
+        """The 'Return to Training' button: abandon the sample, keep training."""
+        if not self.is_ui_trainer:
+            return False
+
+        def _check():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT stop_sample FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                return False if row is None else row[0] == 1
+
+        return self._retry_db_operation(_check)
+
+    def reset_stop_sample(self):
+        if self.accelerator.is_main_process and self.is_ui_trainer:
+            self.update_db_key("stop_sample", False)
 
     def maybe_stop(self):
         if not self.is_ui_trainer:
@@ -386,6 +391,10 @@ class DiffusionTrainer(SDTrainer):
         if self.should_sample():
             self.reload_sample_config()
             self.reset_sample()
+            # clear any abort left over from a previous sample. Without this a
+            # single stale stop_sample would abort every future sample, and
+            # nothing else ever clears it.
+            self.reset_stop_sample()
             # save model and optimizer first as requested, UNLESS maybe_save()
             # already wrote this exact step (both flags land together whenever
             # Save Snapshot is clicked while an on-demand sample is pending).
@@ -403,6 +412,7 @@ class DiffusionTrainer(SDTrainer):
             return
         if self.should_sample_now():
             self.update_db_key("sample_now", 0)
+            self.reset_stop_sample()
             if self.progress_bar is not None:
                 self.progress_bar.pause()
             print_acc(f"\nSampling at step {self.step_num}")
@@ -852,6 +862,9 @@ class DiffusionTrainer(SDTrainer):
         super().sample_step_hook(img_num, total_imgs)
         if self.is_ui_trainer:
             self.maybe_stop()
+            if self.should_stop_sample():
+                raise SampleAbortedException(
+                    "Sample generation aborted by user")
             self.update_status(
                 "running", f"Generating images - {img_num + 1}/{total_imgs}")
 
@@ -866,6 +879,13 @@ class DiffusionTrainer(SDTrainer):
                 super().sample(step, is_first)
             except JobStoppedException:
                 raise
+            except SampleAbortedException:
+                # user hit Return to Training: drop the remaining prompts and
+                # carry on. Clearing the flag here is what makes the next
+                # sample possible at all.
+                print_acc(f"\nSample generation aborted by user at step {step}")
+                self.reset_stop_sample()
+                self.sd._after_sample_failure()
             except Exception as e:
                 if self.sample_only:
                     raise

@@ -2,7 +2,51 @@ import prisma from '../prisma';
 
 import { Job, Queue } from '@prisma/client';
 import fs from 'fs';
+import { execFileSync } from 'child_process';
 import startJob from './startJob';
+
+/**
+ * The process's command line, or null when it cannot be read.
+ *
+ * null means "could not determine" and is deliberately distinct from an empty
+ * result, because the caller treats the two very differently: unknown is
+ * resolved conservatively (assume the trainer lives), while a definite "no such
+ * process" is what lets a recycled PID be recognised as dead.
+ */
+function processCommandLine(pid: number): string | null {
+  if (process.platform !== 'win32') {
+    try {
+      // /proc/<pid>/cmdline is NUL-separated
+      return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  // Windows has no /proc. Without this the check degrades to "does any process
+  // hold this PID", so a recycled PID reads as a live trainer and stalls the
+  // queue permanently — the stack runs natively on Windows now, so this is the
+  // normal path, not an edge case.
+  try {
+    const out = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue; ` +
+          `if (-not $p) { 'NOPROC' } elseif (-not $p.CommandLine) { 'UNKNOWN' } else { $p.CommandLine }`,
+      ],
+      { encoding: 'utf8', timeout: 10000, windowsHide: true },
+    ).trim();
+
+    if (out === 'NOPROC') return '';
+    if (out === 'UNKNOWN' || out === '') return null;
+    return out;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Is this PID a live trainer process?
@@ -29,13 +73,16 @@ function isTrainerAlive(pid: number | null): boolean {
     if (e?.code !== 'EPERM') return false;
   }
 
-  try {
-    // /proc/<pid>/cmdline is NUL-separated
-    return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('run_ui.py');
-  } catch {
-    // No /proc (e.g. native Windows) — fall back to the liveness result above.
-    return true;
-  }
+  const cmdline = processCommandLine(pid);
+
+  // Could not determine it. Resolve conservatively: a false "dead" hands the
+  // GPU to a second job and wrecks both runs, while a false "alive" only stalls
+  // the queue, which is visible and recoverable.
+  if (cmdline === null) return true;
+
+  // Trainers are launched as `python run_ui.py` (pythonw.exe on Windows, so
+  // match on the script rather than the executable name).
+  return cmdline.includes('run_ui.py');
 }
 
 /** Returns a job whose trainer process is still alive on these GPUs, if any. */
