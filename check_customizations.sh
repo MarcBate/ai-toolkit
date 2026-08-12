@@ -55,7 +55,7 @@ check "NOT SAMPLED placeholder cells" \
   "NOT SAMPLED"
 check "steps array for row step labels" \
   "ui/src/components/SampleImages.tsx" \
-  "const steps ="
+  "rowStepLabel"
 check "stepLabel passed to SampleImageCard" \
   "ui/src/components/SampleImages.tsx" \
   "stepLabel="
@@ -152,9 +152,9 @@ check "JobStoppedException defined" \
 check "maybe_stop in UITrainer" \
   "extensions_built_in/sd_trainer/UITrainer.py" \
   "def maybe_stop"
-check "should_save reads 'save' column (not save_now)" \
+check "should_save reads 'save_now' column (ostris canonical schema)" \
   "extensions_built_in/sd_trainer/DiffusionTrainer.py" \
-  "SELECT save FROM Job"
+  "SELECT save_now FROM Job"
 # Duplicate method definitions.
 #
 # This is the signature of a merge resolved by keeping BOTH sides. Python
