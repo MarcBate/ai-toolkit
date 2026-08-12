@@ -30,6 +30,32 @@ checked and that they survived, don't just say "looks fine." Also `py_compile` a
 the merge done. Report the *actual* merge diff (`git diff <pre-merge-sha>..HEAD --stat`), not the misleading
 two-dot origin comparison, so the user sees what really changed.
 
+**`py_compile` is not enough, and neither is `grep -c`.** Both have already let real bugs through:
+
+- `py_compile` only proves a file *parses*. `toolkit/unloader.py` passed it while calling an undefined
+  `_detach_and_cpu` and an unimported `flush`, and raised `NameError` the first time a text encoder unloaded.
+- `grep -c` asks "is the marker present?" A merge resolved by keeping **both** sides makes a marker *more*
+  present, so the check passes while the file now defines the same method twice. Python accepts that silently:
+  the later definition wins, the earlier becomes dead code. This has happened twice — `should_save`, then
+  `should_sample`, where the live and dead copies differed in whether the DB read was retried.
+
+So also run, on every touched `.py`:
+
+```bash
+.venv/Scripts/python.exe -m pyflakes <files>   # undefined names AND redefinitions
+bash check_customizations.sh                    # includes a generic duplicate-method check
+```
+
+Treat `redefinition of unused '<name>'` as a merge that kept both sides — go read both and pick one, don't
+just delete the one that looks redundant.
+
+**Verify a ported feature actually reaches the class that runs.** `UITrainer` and `DiffusionTrainer` are
+*siblings* under `SDTrainer`, not parent and child. Jobs run whichever the config's `type` names — currently
+`diffusion_trainer` for everything. A feature added only to `UITrainer` is dead code for every real job, with
+no error to show for it: that is how `stop_sample` ("Return to Training") sat broken from June to August while
+the button appeared to work. When touching either trainer, check whether the other needs the same change, and
+say which class the running jobs actually use.
+
 ---
 
 ## Running the stack
@@ -92,6 +118,74 @@ Jobs communicate entirely through a **SQLite database** (`aitk_db.db` in the rep
 - **Background worker:** `ui/cron/worker.ts` — manages the training queue, spawns Python processes via `startJob.ts`.
 - **Job actions** flow: UI button → `ui/src/utils/jobs.ts` function → API route → Prisma update to `aitk_db.db` → Python trainer polls and acts.
 - **Key components:** `JobActionBar.tsx` (per-job buttons), `SaveSnapshotModal.tsx` (save/pause dialog), `SampleImageViewer.tsx` (reads prompt from file metadata via `/api/img/metadata`).
+
+### Changing stop / pause / save-checkpoint — treat as production
+
+**Rule:** anything touching how a job stops, pauses, or writes a checkpoint gets handled with
+care, spelled-out reasoning, and the user's agreement before it lands. A lost checkpoint is
+hours of GPU time and, since the LoRAs are now a real revenue stream, real money. "It compiled
+and the tests pass" is not the bar.
+
+This is the single most damaged area of the codebase, and every failure looked fine in review:
+
+- `stop` carried two incompatible meanings ("interrupt now" for ostris' watcher, "stop after
+  saving" for save-and-pause). The watcher polls every 2s and on a 12s/it job almost always won
+  the race — `KeyboardInterrupt` mid-step, **checkpoint simply lost**. Fixed by giving the
+  cooperative case its own `stop_after_save` column.
+- `maybe_save()` and `maybe_sample()` both saved, so one step wrote the same checkpoint twice and
+  the second archived the optimizer the first had just written under the wrong step number.
+- `stop_sample` was implemented on the wrong class and silently did nothing for two months.
+
+So, when changing this path:
+
+1. State explicitly **what each flag means** and who writes and clears it. Most bugs here are one
+   flag carrying two meanings, or a flag nothing clears.
+2. State what the row looks like **between** two writes, and what the next poll concludes from it.
+   Every bug here so far has been a window between writes, not bad logic.
+3. Order matters: `maybe_save()` runs before `maybe_stop()` so a pending save always lands before
+   the stop is raised. Do not reorder `end_step_hook` without saying why it is still safe.
+4. Never let a *preview* concern (sampling, sample LoRAs) be able to abort or skip a save. Saving
+   comes first and failures downstream of it must be contained.
+5. Prefer self-healing: a stale flag should be cleared by the next operation that owns it rather
+   than persisting to break every future attempt.
+
+### Changing the queue or job lifecycle — `ui/cron/**`
+
+**Rule:** a change to `processQueue.ts`, `startJob.ts`, or anything else that decides
+whether a job is alive, dead, or startable is **not done when it compiles**. It is done when
+it has been watched surviving a real launch. This code has broken the queue twice now (see
+"Two job dispatchers" and the launch-race reconcile), and both times it looked correct in
+review and failed on timing.
+
+Before calling such a change complete:
+
+1. `cd ui && npx tsc -p tsconfig.worker.json` — the worker runs **compiled `dist/cron`**;
+   edits to `ui/cron/*.ts` are inert until this runs. Prefer this over `npm run build`
+   while the UI is serving: a full `next build` rewrites `.next/` under the running server.
+2. Restart the worker so it picks up the new `dist`. Under `npm run start`, `concurrently`
+   respawns it, so killing the worker pid alone is enough — it does not touch the Next UI or
+   any detached trainer.
+3. Run the launch smoke test against a real job start and paste its verdict:
+   ```bash
+   python scripts/queue_launch_smoke.py --watch
+   ```
+   It watches the DB through a launch and fails on the things that actually go wrong: a
+   healthy job being reconciled away as "trainer process gone", a row stuck at `running`
+   with no pid, or two live trainers landing on the same GPU. See its `--help` for
+   `--start <job name>`, which queues the job for you instead of waiting for a UI click.
+
+**Ask before restarting anything while a job is training.** Trainers are launched detached
+and survive a worker restart, but this is the user's call, not an assumption to make.
+
+**Reasoning about this code:** every bug here so far has been a window between two writes,
+not bad logic. The worker ticks every second; a launch takes longer than that. Whenever a
+change adds or moves a DB write in the launch/stop path, state explicitly what the row looks
+like *between* the writes and what the next tick will conclude from it.
+
+**Debugging a "hung" job:** the DB row is bookkeeping and can lie. The trainer's
+`<training_folder>/<job_name>/log.txt` is ground truth — if its tail is advancing, the job
+is loading, not hung. H3 in particular takes 1–4 minutes to get through quantization and the
+text encoder before the first step.
 
 ### CivitAI metadata
 

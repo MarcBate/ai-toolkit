@@ -155,19 +155,66 @@ check "maybe_stop in UITrainer" \
 check "should_save reads 'save' column (not save_now)" \
   "extensions_built_in/sd_trainer/DiffusionTrainer.py" \
   "SELECT save FROM Job"
-check "No duplicate should_save definitions" \
+# Duplicate method definitions.
+#
+# This is the signature of a merge resolved by keeping BOTH sides. Python
+# accepts it silently -- the later definition wins and the earlier one becomes
+# dead code -- so py_compile passes and the marker greps above pass too (a
+# duplicate makes a marker MORE present, not less). It has happened twice:
+# should_save, and then should_sample, where the live and dead copies differed
+# in whether the DB read was retried.
+#
+# Checked generically rather than per symbol: the point is to catch the next
+# one without having been bitten by it first.
+echo
+echo "── Python: no duplicate method definitions ──"
+for f in \
   "extensions_built_in/sd_trainer/DiffusionTrainer.py" \
-  "def should_save"  # checked by count below
+  "extensions_built_in/sd_trainer/UITrainer.py" \
+  "extensions_built_in/sd_trainer/SDTrainer.py" \
+  "jobs/process/BaseSDTrainProcess.py"
+do
+  [[ -f "$REPO/$f" ]] || continue
+  # method defs only (4-space indent), name captured, duplicates reported
+  DUPES=$(grep -oE "^    def [a-zA-Z_][a-zA-Z0-9_]*" "$REPO/$f" 2>/dev/null \
+            | sort | uniq -d | sed 's/^    def //' | tr '\n' ' ')
+  if [[ -z "$DUPES" ]]; then
+    echo "  ✓  $(basename "$f"): no duplicated methods"
+    ((PASS++))
+  else
+    echo "  ✗  MISSING: $(basename "$f") defines these twice: $DUPES"
+    echo "       a later definition silently shadows the earlier one"
+    ((FAIL++))
+    FAILURES+=("Duplicate methods in $(basename "$f"): $DUPES")
+  fi
+done
 
-# Check for duplicate definitions (should be exactly 1)
-COUNT=$(grep -c "def should_save" "$REPO/extensions_built_in/sd_trainer/DiffusionTrainer.py" 2>/dev/null || echo 0)
-if [[ "$COUNT" -eq 1 ]]; then
-  echo "  ✓  Exactly one should_save definition"
-  ((PASS++))
+# Undefined names / redefinitions across the files a merge is most likely to
+# touch. py_compile only proves a file PARSES -- it passed on the unloader
+# calling an undefined _detach_and_cpu and an unimported flush, which then
+# raised NameError at runtime. pyflakes catches both that and the duplicates
+# above. Skipped (not failed) when pyflakes isn't installed.
+echo
+echo "── Python: pyflakes (undefined names) ───────"
+PY="$REPO/.venv/Scripts/python.exe"
+[[ -x "$PY" ]] || PY="python"
+if "$PY" -m pyflakes --version >/dev/null 2>&1; then
+  PF=$("$PY" -m pyflakes \
+        "$REPO/extensions_built_in/sd_trainer/DiffusionTrainer.py" \
+        "$REPO/extensions_built_in/sd_trainer/UITrainer.py" \
+        "$REPO/toolkit/unloader.py" \
+        2>/dev/null | grep -E "undefined name|redefinition of" || true)
+  if [[ -z "$PF" ]]; then
+    echo "  ✓  No undefined names or redefinitions"
+    ((PASS++))
+  else
+    echo "  ✗  MISSING: pyflakes findings:"
+    echo "$PF" | sed 's/^/       /'
+    ((FAIL++))
+    FAILURES+=("pyflakes: undefined names or redefinitions")
+  fi
 else
-  echo "  ✗  MISSING: should_save defined $COUNT times (expected 1) — duplicate methods!"
-  ((FAIL++))
-  FAILURES+=("Duplicate should_save in DiffusionTrainer")
+  echo "  ~  pyflakes not installed, skipping (pip install pyflakes)"
 fi
 
 echo
