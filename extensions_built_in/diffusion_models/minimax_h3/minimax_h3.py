@@ -179,10 +179,13 @@ class MinimaxH3Model(BaseModel):
 
         self.processor = None  # Qwen3VLProcessor
         self._warned_frame_trim = False
-        # turbo (4-step distill) sampling LoRA, built lazily on the first sample
+        # turbo (step-distill) sampling LoRA, built lazily on the first sample
         self._turbo_lora = None
         self._turbo_lora_path = None
         self._turbo_lora_ready = False
+        # path whose load already failed; sampling continues without it and we
+        # do not retry until the configured path changes
+        self._turbo_lora_failed_path = None
         self.latent_space_version = "minimax_h3_v1"
         # caption token cap (vision blocks are never truncated); the released
         # stack has no limit — set 0 to disable
@@ -411,6 +414,106 @@ class MinimaxH3Model(BaseModel):
     # unpruned 2688-dim version.
     TURBO_SKIP_PATTERNS = ("adaln_proj",)
 
+    # Some releases (the fl2v_turbo_* line) target the diffusers port of
+    # MiniMax-H3 rather than the original checkpoint, so their keys use
+    # diffusers module names. Everything but attention renames one-to-one.
+    TURBO_DIFFUSERS_RENAMES = (
+        ("token_refiner.refiner_blocks.", "token_refiner.blocks."),
+        ("transformer_blocks.", "blocks."),
+        (".attn.to_out.0", ".attn.out_proj"),
+        (".ff.net.0.proj", ".mlp.fc1"),
+        (".ff.net.2", ".mlp.fc2"),
+    )
+
+    def _convert_diffusers_turbo_lora(self, raw):
+        """Map a diffusers-keyed turbo LoRA onto this checkpoint's modules.
+
+        Returns (state_dict, fused_rank_factor). Renaming covers everything
+        except attention: diffusers keeps q, k and v as three separate
+        projections while our transformer has one fused ``qkv_proj`` whose
+        output is chunked ``[q | k | v]``.
+
+        The three adapters cannot collapse into one of the same rank — each
+        has its own down projection — so they stack:
+
+            A = [A_q ; A_k ; A_v]                    (3r, in)
+            B = diag_blocks(B_q, B_k, B_v)          (3*out, 3r)
+
+        B @ A then reproduces exactly ``concat(B_q A_q, B_k A_k, B_v A_v)``,
+        which is the fused weight delta in chunk order. The cost is a rank-3r
+        adapter that is two thirds zeros; the alternative (a bespoke module
+        holding three pairs) buys back that memory but not any accuracy.
+
+        fused_rank_factor records the 3x for the caller's alpha maths: scale
+        must stay alpha/r, so a fused module needs alpha*3 against its 3r.
+        """
+        if not any(
+            k.startswith(("transformer_blocks.", "token_refiner.refiner_blocks."))
+            for k in raw
+        ):
+            return raw, {}
+
+        self.print_and_status_update(
+            " - diffusers-format turbo LoRA: remapping keys and fusing q/k/v"
+        )
+
+        def rename(key):
+            # PEFT writes the adapter name into the key (lora_A.default.weight)
+            key = key.replace(".default.weight", ".weight")
+            for src, dst in self.TURBO_DIFFUSERS_RENAMES:
+                key = key.replace(src, dst)
+            return key
+
+        converted = {}
+        qkv_parts: dict = {}
+        for key, value in raw.items():
+            new_key = rename(key)
+            # attention q/k/v are collected and fused below
+            for part in ("to_q", "to_k", "to_v"):
+                marker = f".attn.{part}."
+                if marker in new_key:
+                    base = new_key.split(marker)[0] + ".attn.qkv_proj"
+                    side = "down" if ".lora_A." in new_key else "up"
+                    qkv_parts.setdefault(base, {})[(part, side)] = value
+                    break
+            else:
+                converted[new_key] = value
+
+        fused_rank_factor = {}
+        for base, parts in qkv_parts.items():
+            needed = [(p, s) for p in ("to_q", "to_k", "to_v") for s in ("down", "up")]
+            if any(n not in parts for n in needed):
+                self.print_and_status_update(
+                    f" - skipping {base}: incomplete q/k/v set in the file"
+                )
+                continue
+
+            downs = [parts[(p, "down")] for p in ("to_q", "to_k", "to_v")]
+            ups = [parts[(p, "up")] for p in ("to_q", "to_k", "to_v")]
+            ranks = {d.shape[0] for d in downs}
+            if len(ranks) != 1:
+                self.print_and_status_update(
+                    f" - skipping {base}: q/k/v ranks differ {sorted(ranks)}"
+                )
+                continue
+            rank = ranks.pop()
+
+            fused_down = torch.cat(downs, dim=0)  # (3r, in)
+            out_dims = [u.shape[0] for u in ups]
+            fused_up = torch.zeros(
+                sum(out_dims), rank * 3, dtype=ups[0].dtype
+            )
+            row = 0
+            for i, up in enumerate(ups):
+                fused_up[row : row + up.shape[0], i * rank : (i + 1) * rank] = up
+                row += up.shape[0]
+
+            converted[f"{base}.lora_A.weight"] = fused_down
+            converted[f"{base}.lora_B.weight"] = fused_up
+            fused_rank_factor[base] = 3
+
+        return converted, fused_rank_factor
+
     @classmethod
     def validate_sample_lora_paths(cls, model_config, *sample_configs):
         """Called at job startup so a bad path fails before any weights load."""
@@ -451,6 +554,23 @@ class MinimaxH3Model(BaseModel):
         counted so the reason is reported once instead of blowing up the load.
         """
         raw = load_file(path)
+
+        # A file-level alpha in the metadata is the PEFT lora_alpha the adapter
+        # was trained with. It is NOT safe to assume alpha == rank here: the
+        # fl2v_turbo releases ship alpha 8 against rank 128, so treating them
+        # as scale 1.0 would apply the adapter 16x too strongly.
+        file_alpha = None
+        try:
+            from safetensors import safe_open
+
+            with safe_open(path, framework="pt") as f:
+                metadata = f.metadata() or {}
+            if metadata.get("alpha") is not None:
+                file_alpha = float(metadata["alpha"])
+        except Exception:
+            pass
+
+        raw, fused_rank_factor = self._convert_diffusers_turbo_lora(raw)
         modules = dict(self.model.named_modules())
 
         state_dict = {}
@@ -543,6 +663,24 @@ class MinimaxH3Model(BaseModel):
                 f"No turbo LoRA tensors from {os.path.basename(path)} apply to "
                 f"the loaded {self._dit_component()} transformer."
             )
+
+        # Resolve the effective alpha per module. Per-tensor .alpha wins; then
+        # a file-level alpha, scaled by the fusion factor so a fused q/k/v
+        # module keeps the original alpha/r scale against its 3r rank; then
+        # alpha == rank (scale 1.0), the PEFT default.
+        if file_alpha is not None:
+            for module_path in ranks:
+                if module_path not in alphas:
+                    alphas[module_path] = file_alpha * fused_rank_factor.get(
+                        module_path, 1
+                    )
+            scales = {
+                round(alphas[m] / ranks[m], 6) for m in ranks
+            }
+            self.print_and_status_update(
+                f" - file alpha {file_alpha:g}: applying LoRA scale "
+                f"{'/'.join(f'{s:g}' for s in sorted(scales))}"
+            )
         return state_dict, ranks, alphas
 
     def _build_turbo_lora(self):
@@ -598,6 +736,11 @@ class MinimaxH3Model(BaseModel):
             base_model=self,
         )
         network.apply_to(None, self.model, apply_text_encoder=False, apply_unet=True)
+        # Register before loading weights. apply_to() has already rewritten the
+        # module forwards, so from here on a failure leaves the transformer
+        # wrapped — the caller needs a handle to detach it again.
+        self._turbo_lora = network
+        self._turbo_lora_path = path
         network.load_weights(state_dict)
 
         # never trained, never merged — only toggled around the sample loop
@@ -611,8 +754,6 @@ class MinimaxH3Model(BaseModel):
         self.print_and_status_update(
             f" - turbo LoRA attached to {len(ranks)} modules (strength={strength})"
         )
-        self._turbo_lora = network
-        self._turbo_lora_path = path
 
     def _detach_turbo_lora(self):
         """Unwrap the turbo modules from the transformer entirely.
@@ -663,19 +804,38 @@ class MinimaxH3Model(BaseModel):
         self._turbo_lora_ready = False
         flush()
 
-    def _validate_sample_config(self, image_configs):
+    def _before_generate_images_loop(self, pipeline, image_configs):
+        """Attach the turbo LoRA, or carry on without it.
+
+        A turbo LoRA only makes previews cheaper — it is never worth losing the
+        previews themselves over. Anything that goes wrong here (missing file,
+        a LoRA built for a different partition, an unrecognised key layout) is
+        reported once and sampling continues on the base model, which just
+        needs the full step count.
+
+        The failing path is remembered so a broken setting costs one warning
+        rather than one failed load per sample; pointing the job at a different
+        file clears it.
+        """
         if not self._has_turbo_lora():
             return
         path, _ = self._turbo_lora_settings()
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Turbo LoRA not found — aborting sample to avoid useless "
-                f"inference: {path}"
-            )
-
-    def _before_generate_images_loop(self, pipeline, image_configs):
-        if self._has_turbo_lora():
+        if path == self._turbo_lora_failed_path:
+            return
+        try:
             self._prepare_turbo_lora()
+        except Exception as e:
+            self._turbo_lora_failed_path = path
+            try:
+                # apply_to() may already have wrapped the transformer
+                self._detach_turbo_lora()
+            except Exception:
+                pass
+            self.print_and_status_update(
+                f"Warning: could not load turbo LoRA {os.path.basename(path)} — "
+                f"generating samples WITHOUT it (previews will need the full "
+                f"step count). Reason: {e}"
+            )
 
     def _after_generate_images_loop(self, pipeline):
         if getattr(self, "_turbo_lora_ready", False):

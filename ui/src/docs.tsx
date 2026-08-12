@@ -237,9 +237,11 @@ const docs: { [key: string]: ConfigDoc } = {
         trains against the untouched base model — it only makes previews cheap.
         <br />
         <br />
-        Turbo LoRAs are built for a <strong>specific checkpoint partition</strong>. The published ComfyUI files target
-        the pruned partition (the default <code>fl2va_pruned</code>). Anything in the file that does not fit the loaded
-        transformer is skipped and reported in the log rather than silently half-applied.
+        Turbo LoRAs are built for a <strong>specific checkpoint partition</strong> — the published files target the
+        pruned partition (the default <code>fl2va_pruned</code>). Both key formats load: the ComfyUI repacks and the
+        diffusers-keyed <code>fl2v_turbo_*</code> releases, whose separate q/k/v projections are fused to match our
+        single <code>qkv_proj</code>. Anything in the file that does not fit the loaded transformer is skipped and
+        reported in the log rather than silently half-applied.
         <br />
         <br />
         Start at strength <strong>1.0</strong> and drop <strong>Sample Steps</strong> to 4–8 — the speedup comes from
