@@ -129,6 +129,28 @@ export default function Settings() {
                 </div>
 
                 <div>
+                  <label htmlFor="GEMMA_API_MODEL_ID_SOURCE" className="block text-sm font-medium mb-2">
+                    Gemma API Model ID Source (LTX-2.5)
+                    <div className="text-gray-500 text-sm ml-1">
+                      Released LTX-2.5 checkpoints don&apos;t carry the identifier the Gemma API needs, so
+                      LTX-2.5 jobs using the API read it from a different local checkpoint instead — point this
+                      at an LTX-2.3 dev checkpoint (e.g. <code>ltx-2.3-22b-dev.safetensors</code>), which does
+                      carry it. Only used to look up the id; that file isn&apos;t loaded for anything else.
+                      Not needed for LTX-2 / LTX-2.3, whose own checkpoints already carry it.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="GEMMA_API_MODEL_ID_SOURCE"
+                    name="GEMMA_API_MODEL_ID_SOURCE"
+                    value={settings.GEMMA_API_MODEL_ID_SOURCE}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="e.g. M:\models\diffusion_models\ltx-2.3-22b-dev.safetensors"
+                  />
+                </div>
+
+                <div>
                   <label htmlFor="TRAINING_FOLDER" className="block text-sm font-medium mb-2">
                     Training Folder Path
                     <div className="text-gray-500 text-sm ml-1">

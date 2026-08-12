@@ -91,6 +91,9 @@ LTXV_API_BASE_URL = "https://api.ltx.video"
 LTXV_MODEL_ID_KEY = "encrypted_wandb_properties"
 # Read from env as fallback; model config gemma_api_key takes precedence if both are set
 _GEMMA_API_KEY_FROM_ENV = os.getenv("GEMMA_API_KEY", None)
+# Fallback source for the API model id when the checkpoint being loaded doesn't
+# carry LTXV_MODEL_ID_KEY itself -- see _extract_gemma_model_id below.
+_GEMMA_API_MODEL_ID_SOURCE_FROM_ENV = os.getenv("GEMMA_API_MODEL_ID_SOURCE", None)
 
 
 def new_save_image_function(
@@ -413,6 +416,61 @@ class LTX2Model(BaseModel):
         self.text_encoder = [text_encoder]
         self.print_and_status_update("Text encoder reloaded")
 
+    def _extract_gemma_model_id(self, primary_path: Optional[str]):
+        """Resolve self._gemma_model_id for the Gemma API. Called only when
+        model_config.gemma_api_key is set, before the checkpoint is loaded.
+
+        Tries `primary_path` first -- the checkpoint being loaded for
+        generation. That is the only source LTX-2 and LTX-2.3 need, since
+        their own released files carry LTXV_MODEL_ID_KEY.
+
+        Falls back to model_kwargs.gemma_api_model_id_source (or the
+        GEMMA_API_MODEL_ID_SOURCE setting) when the primary checkpoint does
+        not carry it -- every released LTX-2.5 file lacks this metadata
+        (checked dev/distilled x bf16/comfy-int8/nvfp4, all five). Lightricks'
+        own reference ComfyUI workflow for 2.5 does the same thing: it points
+        the Gemma API node's model-id lookup at a local LTX-2.3 checkpoint
+        while generating with the 2.5 transformer.
+
+        Whether embeddings sourced this way are dimensionally/semantically
+        correct for a different transformer version is NOT verified here --
+        that is whatever Lightricks' API does server-side with the id. A bad
+        pairing should surface as a connector shape mismatch downstream, not
+        silently.
+        """
+        def _read_model_id(path):
+            if not path or not path.endswith(".safetensors") or not os.path.exists(path):
+                return None
+            with safe_open(path, framework="pt", device="cpu") as f:
+                metadata = f.metadata()
+            return metadata.get(LTXV_MODEL_ID_KEY) if metadata else None
+
+        fallback_path = (
+            self.model_config.model_kwargs.get("gemma_api_model_id_source")
+            or _GEMMA_API_MODEL_ID_SOURCE_FROM_ENV
+        )
+
+        model_id = _read_model_id(primary_path)
+        source_used = primary_path
+        if model_id is None:
+            model_id = _read_model_id(fallback_path)
+            source_used = fallback_path
+
+        if model_id is None:
+            raise ValueError(
+                f"Cannot use gemma_api_key: neither the model checkpoint "
+                f"('{primary_path}') nor the fallback source ({fallback_path!r}) "
+                f"contain '{LTXV_MODEL_ID_KEY}' metadata required by the API. "
+                "Released LTX-2.5 checkpoints do not carry this metadata -- point "
+                "model_kwargs.gemma_api_model_id_source (or the "
+                "GEMMA_API_MODEL_ID_SOURCE setting) at a local LTX-2.3 checkpoint "
+                "such as ltx-2.3-22b-dev.safetensors, which does."
+            )
+        self._gemma_model_id = model_id
+        self.print_and_status_update(
+            f"Gemma API model id resolved from {os.path.basename(source_used)}"
+        )
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading LTX2 model")
@@ -421,16 +479,8 @@ class LTX2Model(BaseModel):
         use_gemma_api = self.model_config.gemma_api_key is not None
 
         # Extract model_id from checkpoint metadata early so API calls work after load
-        if use_gemma_api and model_path.endswith(".safetensors") and os.path.exists(model_path):
-            with safe_open(model_path, framework="pt", device="cpu") as f:
-                metadata = f.metadata()
-                if metadata and LTXV_MODEL_ID_KEY in metadata:
-                    self._gemma_model_id = metadata[LTXV_MODEL_ID_KEY]
-                else:
-                    raise ValueError(
-                        f"Cannot use gemma_api_key: checkpoint '{model_path}' does not contain "
-                        f"'{LTXV_MODEL_ID_KEY}' metadata required by the API."
-                    )
+        if use_gemma_api:
+            self._extract_gemma_model_id(model_path)
 
         combined_state_dict = None
 
@@ -2076,6 +2126,14 @@ class LTX25Model(LTX2Model):
 
         # ---- transformer + embedding connectors (one comfy file) ----
         dit_path = self._resolve_dit_path()
+
+        # Unlike LTX2Model.load_model, this does not call super().load_model(),
+        # so the base class's extraction never ran for 2.5 -- and the 2.5
+        # transformer itself has no model id to extract anyway (see
+        # _extract_gemma_model_id's docstring). Needs the fallback source.
+        if self.model_config.gemma_api_key is not None:
+            self._extract_gemma_model_id(dit_path)
+
         te_path = self._resolve_te_path()
         self.print_and_status_update(
             f"Loading transformer from {os.path.basename(dit_path)}"

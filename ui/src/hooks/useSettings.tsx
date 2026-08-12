@@ -6,6 +6,7 @@ import { apiClient } from '@/utils/api';
 export interface Settings {
   HF_TOKEN: string;
   GEMMA_API_KEY: string;
+  GEMMA_API_MODEL_ID_SOURCE: string;
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
   QUANTIZATION_CACHE_DIR: string;
@@ -22,6 +23,7 @@ export default function useSettings() {
   const [settings, setSettings] = useState({
     HF_TOKEN: '',
     GEMMA_API_KEY: '',
+    GEMMA_API_MODEL_ID_SOURCE: '',
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
     QUANTIZATION_CACHE_DIR: '',
@@ -43,6 +45,7 @@ export default function useSettings() {
         setSettings({
           HF_TOKEN: data.HF_TOKEN || '',
           GEMMA_API_KEY: data.GEMMA_API_KEY || '',
+          GEMMA_API_MODEL_ID_SOURCE: data.GEMMA_API_MODEL_ID_SOURCE || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
           QUANTIZATION_CACHE_DIR: data.QUANTIZATION_CACHE_DIR || '',

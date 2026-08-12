@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getQuantizationCacheDir, getModelsPath, getEnableHotModelReload } from '../paths';
+import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getGemmaApiModelIdSource, getQuantizationCacheDir, getModelsPath, getEnableHotModelReload } from '../paths';
 import { resolveDetachedPythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -329,6 +329,14 @@ const launchJob = async (job: Job, sampleOnly: boolean = false) => {
     const gemmaApiKey = await getGemmaApiKey();
     if (gemmaApiKey && gemmaApiKey.trim() !== '') {
       additionalEnv.GEMMA_API_KEY = gemmaApiKey;
+    }
+
+    // GEMMA_API_MODEL_ID_SOURCE — fallback checkpoint LTX2Model reads the API
+    // model id from when the model actually being trained/sampled doesn't
+    // carry one itself (LTX-2.5 today). See _extract_gemma_model_id in ltx2.py.
+    const gemmaApiModelIdSource = await getGemmaApiModelIdSource();
+    if (gemmaApiModelIdSource && gemmaApiModelIdSource.trim() !== '') {
+      additionalEnv.GEMMA_API_MODEL_ID_SOURCE = gemmaApiModelIdSource;
     }
 
     // AITK_QUANTIZATION_CACHE_DIR — only injected when the job opts in via cache_quantized_model

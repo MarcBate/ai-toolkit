@@ -53,6 +53,22 @@ export const getGemmaApiKey = async () => {
   return apiKey;
 };
 
+// See ui/src/server/settings.ts getGemmaApiModelIdSource -- same setting, this
+// copy is what startJob.ts reads to inject GEMMA_API_MODEL_ID_SOURCE into the
+// trainer's environment (cron runs from compiled dist/cron, separate from the
+// Next server, hence the duplicated getter).
+export const getGemmaApiModelIdSource = async () => {
+  const key = 'GEMMA_API_MODEL_ID_SOURCE';
+  let row = await prisma.settings.findFirst({
+    where: { key: key },
+  });
+  let path = '';
+  if (row?.value && row.value !== '') {
+    path = row.value;
+  }
+  return path;
+};
+
 export const getQuantizationCacheDir = async () => {
   const key = 'QUANTIZATION_CACHE_DIR';
   let row = await prisma.settings.findFirst({

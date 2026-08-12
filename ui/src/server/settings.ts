@@ -64,6 +64,27 @@ export const getGemmaApiKey = async () => {
   return apiKey;
 };
 
+// Local checkpoint (e.g. ltx-2.3-22b-dev.safetensors) the Gemma API reads its
+// model id from when the model actually being trained/sampled doesn't carry
+// one itself -- currently required for LTX-2.5. See
+// LTX2Model._extract_gemma_model_id for the fallback logic that consumes this.
+export const getGemmaApiModelIdSource = async () => {
+  const key = 'GEMMA_API_MODEL_ID_SOURCE';
+  let path = myCache.get(key) as string;
+  if (path) {
+    return path;
+  }
+  let row = await prisma.settings.findFirst({
+    where: { key: key },
+  });
+  path = '';
+  if (row?.value && row.value !== '') {
+    path = row.value;
+  }
+  myCache.set(key, path);
+  return path;
+};
+
 export const getHFToken = async () => {
   const key = 'HF_TOKEN';
   let token = myCache.get(key) as string;

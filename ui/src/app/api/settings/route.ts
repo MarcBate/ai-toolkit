@@ -69,7 +69,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const {
-      HF_TOKEN, GEMMA_API_KEY, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR, MODELS_PATH,
+      HF_TOKEN, GEMMA_API_KEY, GEMMA_API_MODEL_ID_SOURCE, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR, MODELS_PATH,
       CHECK_CONFIG_API_BASE_URL, CHECK_CONFIG_API_KEY, CHECK_CONFIG_MODEL,
       CHECK_CONFIG_ENABLE_WEB_SEARCH, ENABLE_HOT_MODEL_RELOAD,
     } = body;
@@ -81,6 +81,7 @@ export async function POST(request: Request) {
     await Promise.all([
       upsert('HF_TOKEN', HF_TOKEN ?? ''),
       upsert('GEMMA_API_KEY', GEMMA_API_KEY ?? ''),
+      upsert('GEMMA_API_MODEL_ID_SOURCE', GEMMA_API_MODEL_ID_SOURCE ?? ''),
       upsert('TRAINING_FOLDER', TRAINING_FOLDER ?? ''),
       upsert('DATASETS_FOLDER', DATASETS_FOLDER ?? ''),
       upsert('QUANTIZATION_CACHE_DIR', QUANTIZATION_CACHE_DIR ?? ''),
