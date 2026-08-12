@@ -41,6 +41,7 @@ from torchvision.transforms import functional as TF
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
+from toolkit.sample_preview import SamplePreviewWriter
 from toolkit.basic import flush
 
 if TYPE_CHECKING:
@@ -98,6 +99,12 @@ UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも
 class BaseModel:
     # override these in child classes
     arch = None
+
+    # Set for the duration of one sample by the loop in generate_images. Models
+    # whose sampler can report intermediate progress call it as (step, total);
+    # everything else ignores it. Class-level default so `getattr` is safe and a
+    # callback from a previous run can never leak into the next one.
+    sample_step_callback = None
 
     def __init__(
             self,
@@ -499,9 +506,50 @@ class BaseModel:
                 if network is not None:
                     assert network.is_active
 
-                for i in tqdm(range(len(image_configs)), desc=f"Generating Samples", leave=True, position=0):
+                # One bar unit per denoise step (plus one for the decode) rather
+                # than per sample. A sample can be a 124-frame video that takes
+                # a quarter of an hour, and a bar that sits at 0/4 that whole time
+                # is indistinguishable from a hung job -- which is exactly how it
+                # has been read. Models opt in by calling self.sample_step_callback
+                # (see minimax_h3); for any that don't, the bar still steps once
+                # per finished sample because the boundary update below is
+                # unconditional.
+                sample_units = [
+                    max(1, int(getattr(c, 'num_inference_steps', 1) or 1)) + 1
+                    for c in image_configs
+                ]
+                progress = tqdm(
+                    total=sum(sample_units), desc="Generating Samples", leave=True, position=0
+                )
+
+                # samples land in <job folder>/samples; the preview belongs beside
+                # them, in the job folder itself, not mixed in with real outputs
+                preview_folder = None
+                if image_configs and image_configs[0].output_folder:
+                    preview_folder = os.path.dirname(image_configs[0].output_folder)
+                previewer = SamplePreviewWriter(
+                    getattr(self, 'arch', None), preview_folder, print_fn=print_acc
+                )
+
+                for i in range(len(image_configs)):
                     self.maybe_stop()
                     gen_config = image_configs[i]
+
+                    units_done = sum(sample_units[:i])
+
+                    def _sample_step_callback(step, total, latents_fn=None, _i=i, _base=units_done):
+                        # Never let a model's own count push the bar past this
+                        # sample's share: the boundary update owns that.
+                        share = sample_units[_i]
+                        target = _base + min(int(step), share)
+                        if target > progress.n:
+                            progress.update(target - progress.n)
+                        progress.set_postfix_str(f"sample {_i + 1}/{len(image_configs)} step {step}/{total}")
+
+                        if previewer.enabled and latents_fn is not None:
+                            previewer.write(latents_fn(), _i, len(image_configs), step, total)
+
+                    self.sample_step_callback = _sample_step_callback
 
                     extra = {}
                     validation_image = None
@@ -746,6 +794,17 @@ class BaseModel:
                     gen_config.log_image(img, i)
                     self._after_sample_image(i, len(image_configs))
                     flush()
+
+                    # Square the bar up at the sample boundary whatever the model
+                    # did or didn't report, so the total is always honest.
+                    self.sample_step_callback = None
+                    boundary = sum(sample_units[:i + 1])
+                    if boundary > progress.n:
+                        progress.update(boundary - progress.n)
+
+                progress.close()
+                # a leftover clip would read as a live preview next time
+                previewer.cleanup()
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                     self.adapter.clear_memory()

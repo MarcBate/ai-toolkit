@@ -76,6 +76,11 @@ class MiniMaxH3Pipeline:
             Image.Image
         ] = None,  # first-frame keyframe, already canvas-sized
         with_audio: bool = True,
+        # Called as step_callback(step, total) after each denoise step, and once
+        # more when the decode finishes. A 124-frame clip can take a quarter of an
+        # hour in here, and without this the caller's progress bar cannot move
+        # until the whole clip is done -- which looks identical to a hang.
+        step_callback=None,
         **kwargs,
     ):
         model = self.model
@@ -190,11 +195,27 @@ class MiniMaxH3Pipeline:
             ratio_a = sa_next / sa if float(sa) != 0.0 else 0.0
             audio_rows = ratio_a * audio_rows + (1.0 - ratio_a) * denoised_a
 
+            if step_callback is not None:
+                # x0 estimate for this step, as (N, T, C, H, W) -- the clip as the
+                # model currently believes it should look. Passed as a thunk so the
+                # unpatchify is only paid for when something actually wants it
+                # (previews on); the progress bar alone never calls it.
+                def _preview_latents(_rows=denoised_v):
+                    lat = unpatchify_video_tokens(_rows, t_lat, h_lat, w_lat)
+                    return lat.permute(0, 2, 1, 3, 4)  # (N, C, T, H, W) -> (N, T, C, H, W)
+
+                # the VAE decode below is the last unit of work, and on a long clip
+                # it is a visible slice of the total -- so it is counted, not free
+                step_callback(i + 1, num_steps + 1, _preview_latents)
+
         # --- decode --------------------------------------------------------
         video_latents = unpatchify_video_tokens(video_rows, t_lat, h_lat, w_lat)
         video = model.decode_latents(video_latents)  # (1, 3, T, H, W) in [-1, 1]
         video = ((video.float().clamp(-1, 1) + 1.0) * 127.5).round().to(torch.uint8)
         video = video[0].permute(1, 2, 3, 0).cpu()  # (T, H, W, C)
+
+        if step_callback is not None:
+            step_callback(num_steps + 1, num_steps + 1)
 
         if not is_video:
             return [Image.fromarray(video[0].numpy())]

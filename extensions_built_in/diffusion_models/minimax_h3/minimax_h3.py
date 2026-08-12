@@ -1555,6 +1555,9 @@ class MinimaxH3Model(BaseModel):
             generator=generator,
             ctrl_img=ctrl_img,
             with_audio=with_audio and is_video,
+            # set by the sampling loop in BaseModel.generate_images; None when
+            # something else drives the pipeline
+            step_callback=getattr(self, "sample_step_callback", None),
         )
         if is_video:
             return result  # dict consumed by new_save_image_function
