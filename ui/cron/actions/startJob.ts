@@ -177,7 +177,23 @@ const watchDetachedJob = (pid: number, jobID: string, logPath: string) => {
 
 const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
   // starts and watches the job asynchronously
+  //
+  // Every exit path MUST settle this promise. The caller awaits it now (so the
+  // queue cannot tick mid-launch and reconcile the starting job away), which
+  // means an early `return` that skips `resolve()` does not just lose a result
+  // -- it wedges the worker's loop forever and the queue silently stops
+  // dispatching. `finally` guarantees it regardless of which path is taken.
   return new Promise<void>(async resolve => {
+    try {
+      await launchJob(job, sampleOnly);
+    } finally {
+      resolve();
+    }
+  });
+};
+
+const launchJob = async (job: Job, sampleOnly: boolean = false) => {
+  {
     const jobID = job.id;
 
     // setup the training
@@ -458,9 +474,8 @@ const startAndWatchJob = (job: Job, sampleOnly: boolean = false) => {
       });
       return;
     }
-    // Resolve the promise immediately after starting the process
-    resolve();
-  });
+    // Returns as soon as the process is started; the watcher keeps running.
+  }
 };
 
 export default async function startJob(jobID: string, sampleOnly: boolean = false) {
@@ -478,9 +493,18 @@ export default async function startJob(jobID: string, sampleOnly: boolean = fals
       status: 'running',
       stop: false,
       return_to_queue: false,
+      // Drop the previous run's pid here rather than leaving it to be overwritten
+      // when the new one arrives. Until then it points at a dead (or recycled)
+      // process, and the queue's liveness check cannot tell that apart from a
+      // trainer that just died -- a null pid on a freshly-updated row is what
+      // marks this row as "still launching".
+      pid: null,
       info: sampleOnly ? 'Generating samples...' : 'Starting job...',
     },
   });
-  // start and watch the job asynchronously so the cron can continue
-  startAndWatchJob(job, sampleOnly);
+  // Hold the queue until the pid is recorded. The row is already 'running' with
+  // the previous run's (dead) pid, so letting the cron tick again mid-launch is
+  // what let it reconcile a starting job away as "trainer process gone" and hand
+  // its GPU to the next one. Nothing else needs the tick back sooner.
+  await startAndWatchJob(job, sampleOnly);
 }

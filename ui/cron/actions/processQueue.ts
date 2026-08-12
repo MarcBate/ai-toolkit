@@ -85,6 +85,24 @@ function isTrainerAlive(pid: number | null): boolean {
   return cmdline.includes('run_ui.py');
 }
 
+/**
+ * How long a row may sit at 'running' with no pid before we call it dead.
+ *
+ * A launch is not atomic: startJob flips the row to 'running' first and can only
+ * write the pid once the Windows relay has reported it back, which is well over
+ * one worker tick. In that window the row looks exactly like a crashed job --
+ * 'running', no live pid -- and reconciling it there marks a perfectly healthy
+ * trainer "Stopped (trainer process gone)" and frees its GPU for the next job.
+ * Wait out the launch instead; a genuinely dead job is still reconciled, just
+ * a minute later, and nothing depends on that being instant.
+ */
+const LAUNCH_GRACE_MS = 90000;
+
+function isLaunching(job: Job): boolean {
+  if (job.pid != null) return false;
+  return Date.now() - new Date(job.updated_at).getTime() < LAUNCH_GRACE_MS;
+}
+
 /** Returns a job whose trainer process is still alive on these GPUs, if any. */
 async function findLiveTrainerOnGpu(gpuIds: string): Promise<Job | null> {
   const candidates: Job[] = await prisma.job.findMany({
@@ -158,9 +176,9 @@ export default async function processQueue() {
         },
       });
 
-      const liveClaimedJob = claimedJobs.find(job => isTrainerAlive(job.pid));
+      const liveClaimedJob = claimedJobs.find(job => isTrainerAlive(job.pid) || isLaunching(job));
       if (liveClaimedJob) {
-        // genuinely running, nothing to do
+        // genuinely running (or still starting up), nothing to do
         continue; // skip to next queue
       }
 
