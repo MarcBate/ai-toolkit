@@ -43,6 +43,7 @@ model Job {
   job_ref         String? // can be used for anything for special jobs, like dataset path for caption jobs
   save_now        Boolean  @default(false) // if true, the job will be saved on the next step
   stop_sample     Boolean  @default(false) // if true, abort active sample generation and resume training
+  skip_sample     Boolean  @default(false) // if true, abandon only the clip currently rendering and move to the next prompt
   // Cooperative "save then stop". Deliberately NOT `stop`: the stop-watcher thread
   // treats `stop` as "raise SIGINT now", which killed the step before save-and-pause
   // could ever write its checkpoint. Only maybe_stop() reads this, and only once no

@@ -42,6 +42,7 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
 from toolkit.sample_preview import SamplePreviewWriter
+from toolkit.ui_utils import SampleSkippedException
 from toolkit.basic import flush
 
 if TYPE_CHECKING:
@@ -173,6 +174,9 @@ class BaseModel:
         self._after_sample_img_hooks = []
         self._status_update_hooks = []
         self._maybe_stop_hooks = []
+        # skip: abandon only the clip currently rendering, not the whole batch
+        # -- see add_maybe_skip_hook / maybe_skip_sample below
+        self._maybe_skip_hooks = []
         self.is_transformer = False
 
         self.sample_prompts_cache = None
@@ -434,6 +438,17 @@ class BaseModel:
         for hook in self._maybe_stop_hooks:
             hook()
 
+    def add_maybe_skip_hook(self, func):
+        self._maybe_skip_hooks.append(func)
+
+    def maybe_skip_sample(self):
+        """Called every denoise step from the sample loop's step callback.
+        A hook raises SampleSkippedException to abandon the clip currently
+        rendering; generate_images catches it around the single-image call
+        and moves on to the next prompt."""
+        for hook in self._maybe_skip_hooks:
+            hook()
+
     @torch.no_grad()
     def generate_images(
             self,
@@ -538,6 +553,11 @@ class BaseModel:
                     units_done = sum(sample_units[:i])
 
                     def _sample_step_callback(step, total, latents_fn=None, _i=i, _base=units_done):
+                        # Checked every denoise step (not just once per image like
+                        # maybe_stop above) so a skip lands within one step of being
+                        # requested, not after the clip currently rendering finishes.
+                        self.maybe_skip_sample()
+
                         # Never let a model's own count push the bar past this
                         # sample's share: the boundary update owns that.
                         share = sample_units[_i]
@@ -781,19 +801,28 @@ class BaseModel:
                     unconditional_embeds = unconditional_embeds.to(
                         self.device_torch, dtype=self.unet.dtype)
 
-                    img = self.generate_single_image(
-                        pipeline,
-                        gen_config,
-                        conditional_embeds,
-                        unconditional_embeds,
-                        generator,
-                        extra,
-                    )
-
-                    gen_config.save_image_atomic(img, i)
-                    gen_config.log_image(img, i)
-                    self._after_sample_image(i, len(image_configs))
-                    flush()
+                    try:
+                        img = self.generate_single_image(
+                            pipeline,
+                            gen_config,
+                            conditional_embeds,
+                            unconditional_embeds,
+                            generator,
+                            extra,
+                        )
+                    except SampleSkippedException:
+                        # abandon only this clip -- nothing to save or log -- and
+                        # move on to the next prompt in the batch. The bar still
+                        # squares up below so it does not read as stuck.
+                        self.print_and_status_update(
+                            f"Sample {i + 1}/{len(image_configs)} skipped by user"
+                        )
+                        flush()
+                    else:
+                        gen_config.save_image_atomic(img, i)
+                        gen_config.log_image(img, i)
+                        self._after_sample_image(i, len(image_configs))
+                        flush()
 
                     # Square the bar up at the sample boundary whatever the model
                     # did or didn't report, so the total is always honest.

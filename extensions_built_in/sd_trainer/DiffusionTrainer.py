@@ -10,7 +10,7 @@ import concurrent.futures
 import traceback
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from toolkit.config_modules import SampleConfig
-from toolkit.ui_utils import JobStoppedException, SampleAbortedException
+from toolkit.ui_utils import JobStoppedException, SampleAbortedException, SampleSkippedException
 from typing import Literal, Optional
 import threading
 import time
@@ -283,6 +283,36 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self.update_db_key("stop_sample", False)
 
+    def should_skip_sample(self):
+        """The 'Skip' button on the live preview: abandon only the clip
+        currently rendering, unlike stop_sample which abandons the whole
+        batch. Checked every denoise step via the maybe_skip hook below, not
+        just once per image, so it lands within one step of being clicked."""
+        if not self.is_ui_trainer:
+            return False
+
+        def _check():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT skip_sample FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                return False if row is None else row[0] == 1
+
+        return self._retry_db_operation(_check)
+
+    def reset_skip_sample(self):
+        if self.accelerator.is_main_process and self.is_ui_trainer:
+            self.update_db_key("skip_sample", False)
+
+    def _maybe_skip_sample_hook(self):
+        """Registered on the model via add_maybe_skip_hook; raises to unwind
+        out of the current clip's denoise loop. See BaseModel.maybe_skip_sample
+        and generate_images, which catches this around the single-image call."""
+        if self.should_skip_sample():
+            self.reset_skip_sample()
+            raise SampleSkippedException("Sample skipped by user")
+
     def maybe_stop(self):
         if not self.is_ui_trainer:
             return
@@ -391,10 +421,11 @@ class DiffusionTrainer(SDTrainer):
         if self.should_sample():
             self.reload_sample_config()
             self.reset_sample()
-            # clear any abort left over from a previous sample. Without this a
-            # single stale stop_sample would abort every future sample, and
-            # nothing else ever clears it.
+            # clear any abort/skip left over from a previous sample. Without
+            # this a single stale flag would abort or skip every future
+            # sample, and nothing else ever clears it.
             self.reset_stop_sample()
+            self.reset_skip_sample()
             # save model and optimizer first as requested, UNLESS maybe_save()
             # already wrote this exact step (both flags land together whenever
             # Save Snapshot is clicked while an on-demand sample is pending).
@@ -413,6 +444,7 @@ class DiffusionTrainer(SDTrainer):
         if self.should_sample_now():
             self.update_db_key("sample_now", 0)
             self.reset_stop_sample()
+            self.reset_skip_sample()
             if self.progress_bar is not None:
                 self.progress_bar.pause()
             print_acc(f"\nSampling at step {self.step_num}")
@@ -857,6 +889,7 @@ class DiffusionTrainer(SDTrainer):
             self.maybe_stop()
             self.sd.add_status_update_hook(self.status_update_hook_func)
             self.sd.add_maybe_stop_hook(self.maybe_stop)
+            self.sd.add_maybe_skip_hook(self._maybe_skip_sample_hook)
 
     def sample_step_hook(self, img_num, total_imgs):
         super().sample_step_hook(img_num, total_imgs)

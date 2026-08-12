@@ -114,6 +114,24 @@ export const stopSampleJob = (jobID: string) => {
   });
 };
 
+// Skips only the clip currently rendering and moves to the next prompt,
+// unlike stopSampleJob which abandons the whole batch and returns to training.
+export const skipCurrentSample = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/skip_sample`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Sample skip requested:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error requesting sample skip:', error);
+        reject(error);
+      });
+  });
+};
+
 export const sampleJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

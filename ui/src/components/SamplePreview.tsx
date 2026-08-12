@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Job } from '@prisma/client';
+import { SkipForward } from 'lucide-react';
 import { apiClient } from '@/utils/api';
+import { skipCurrentSample } from '@/utils/jobs';
 
 interface PreviewState {
   available: boolean;
@@ -16,8 +18,6 @@ interface PreviewState {
 
 interface Props {
   job: Job;
-  /** Rendered under the clip — e.g. the skip / return-to-training buttons. */
-  actions?: React.ReactNode;
 }
 
 /**
@@ -31,8 +31,9 @@ interface Props {
  * run: a stale clip left on screen reads as the finished sample, and this is a
  * low-quality approximation that should never be mistaken for one.
  */
-export default function SamplePreview({ job, actions }: Props) {
+export default function SamplePreview({ job }: Props) {
   const [preview, setPreview] = useState<PreviewState>({ available: false });
+  const [skipping, setSkipping] = useState(false);
   const cancelled = useRef(false);
 
   useEffect(() => {
@@ -106,11 +107,33 @@ export default function SamplePreview({ job, actions }: Props) {
         </div>
       )}
 
-      <p className="mt-2 text-xs text-gray-500">
-        Approximate — decoded with a tiny VAE to show progress, not final quality.
-      </p>
-
-      {actions && <div className="mt-2 flex items-center gap-2">{actions}</div>}
+      <div className="mt-2 flex items-center justify-between">
+        <p className="text-xs text-gray-500">
+          Approximate — decoded with a tiny VAE to show progress, not final quality.
+        </p>
+        <button
+          type="button"
+          disabled={skipping}
+          onClick={async () => {
+            if (skipping) return;
+            setSkipping(true);
+            try {
+              await skipCurrentSample(job.id);
+            } catch {
+              // a failed request is not worth surfacing; the button just re-enables
+            } finally {
+              setSkipping(false);
+            }
+          }}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-gray-600
+                     text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed
+                     flex-shrink-0 ml-3"
+          title="Abandon this clip and move to the next prompt"
+        >
+          <SkipForward className="w-3.5 h-3.5" />
+          Skip
+        </button>
+      </div>
     </div>
   );
 }
