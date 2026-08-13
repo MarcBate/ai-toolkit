@@ -214,6 +214,48 @@ class AudioProcessor(torch.nn.Module):
         return mel.permute(0, 1, 3, 2).contiguous()
 
 
+class _X0Capture:
+    """Captures the fully-guided x0 estimate diffusers computes each denoise
+    step, for the sample preview (see toolkit/sample_preview.py).
+
+    pipeline_ltx2.py and pipeline_ltx2_image2video.py both call
+    ``convert_x0_to_velocity(latents, x0, i, scheduler)`` for video immediately
+    before the same call for audio, immediately before the per-step callback
+    fires -- that x0 is the pipeline's own combined CFG/STG/modality-guidance
+    result, not a re-derivation. There is no public hook for it (it is not in
+    either pipeline class's ``_callback_tensor_inputs``), so this monkeypatches
+    ``convert_x0_to_velocity`` on the pipeline's own class for the duration of
+    one generation. The first call each step is always video (checked both
+    pipeline source files); ``pop()`` clears the captured value so a later
+    call in the same step is never mistaken for the next step's video x0.
+    """
+
+    def __init__(self, pipeline):
+        self._cls = type(pipeline)
+        self._orig = self._cls.convert_x0_to_velocity
+        self.latest = None
+
+    def __enter__(self):
+        capture = self
+        orig = self._orig
+
+        def _patched(self_pipe, sample, denoised_output, step_idx, scheduler=None):
+            if capture.latest is None:
+                capture.latest = denoised_output
+            return orig(self_pipe, sample, denoised_output, step_idx, scheduler)
+
+        self._cls.convert_x0_to_velocity = _patched
+        return self
+
+    def __exit__(self, *exc):
+        self._cls.convert_x0_to_velocity = self._orig
+
+    def pop(self):
+        value = self.latest
+        self.latest = None
+        return value
+
+
 class LTX2Model(BaseModel):
     arch = "ltx2"
     ltx_version = "2.0"
@@ -1301,8 +1343,42 @@ class LTX2Model(BaseModel):
                 True  # they dont set this in some examples in diffusers, but I believe it should always be true for 2.3
             )
 
+        # Live preview: captures the pipeline's own x0 estimate each step (see
+        # _X0Capture) and reports it through the same sample_step_callback
+        # hook BaseModel.generate_images sets up for MiniMax-H3. Only two-pass
+        # upscale generation (below) is not covered.
+        _x0_capture = _X0Capture(pipeline)
+
         def _stop_callback(pipe, i, t, callback_kwargs):
             self.maybe_stop()
+            step_cb = getattr(self, "sample_step_callback", None)
+            if step_cb is not None:
+                x0 = _x0_capture.pop()
+                if x0 is not None:
+                    def _preview_latents(_x0=x0, _pipe=pipe):
+                        # Mirrors the pipeline's own real-decode path (lines
+                        # around its `self.vae.decode(...)` call): unpack the
+                        # packed [B,S,D] sequence back to [B,C,F,H,W], then
+                        # denormalize the same way vae.decode's caller does.
+                        # NOT independently verified against a live LTX run --
+                        # see the note in toolkit/sample_preview.py's LTX entry.
+                        lat_f = (gen_config.num_frames - 1) // _pipe.vae_temporal_compression_ratio + 1
+                        lat_h = gen_config.height // _pipe.vae_spatial_compression_ratio
+                        lat_w = gen_config.width // _pipe.vae_spatial_compression_ratio
+                        unpacked = type(_pipe)._unpack_latents(
+                            _x0, lat_f, lat_h, lat_w,
+                            _pipe.transformer_spatial_patch_size,
+                            _pipe.transformer_temporal_patch_size,
+                        )
+                        denorm = type(_pipe)._denormalize_latents(
+                            unpacked, _pipe.vae.latents_mean, _pipe.vae.latents_std,
+                            _pipe.vae.config.scaling_factor,
+                        )
+                        return denorm.permute(0, 2, 1, 3, 4)  # (B,C,F,H,W) -> (B,F,C,H,W)
+
+                    step_cb(i + 1, gen_config.num_inference_steps, _preview_latents)
+                else:
+                    step_cb(i + 1, gen_config.num_inference_steps)
             return callback_kwargs
 
         use_two_pass = self._has_upscaler() and is_video and self.ltx_version == "2.3"
@@ -1330,31 +1406,32 @@ class LTX2Model(BaseModel):
                 pipeline.connectors = _GemmaAPIConnectorPassthrough()
 
             try:
-                video, audio = pipeline(
-                    prompt_embeds=conditional_embeds.text_embeds.to(
-                        self.device_torch, dtype=self.torch_dtype
-                    ),
-                    prompt_attention_mask=conditional_embeds.attention_mask.to(
-                        self.device_torch
-                    ),
-                    negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                        self.device_torch, dtype=self.torch_dtype
-                    ),
-                    negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
-                        self.device_torch
-                    ),
-                    height=gen_config.height,
-                    width=gen_config.width,
-                    num_inference_steps=gen_config.num_inference_steps,
-                    guidance_scale=gen_config.guidance_scale,
-                    latents=gen_config.latents,
-                    num_frames=gen_config.num_frames,
-                    generator=generator,
-                    return_dict=False,
-                    output_type="np" if is_video else "pil",
-                    callback_on_step_end=_stop_callback,
-                    **extra,
-                )
+                with _x0_capture:
+                    video, audio = pipeline(
+                        prompt_embeds=conditional_embeds.text_embeds.to(
+                            self.device_torch, dtype=self.torch_dtype
+                        ),
+                        prompt_attention_mask=conditional_embeds.attention_mask.to(
+                            self.device_torch
+                        ),
+                        negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                            self.device_torch, dtype=self.torch_dtype
+                        ),
+                        negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
+                            self.device_torch
+                        ),
+                        height=gen_config.height,
+                        width=gen_config.width,
+                        num_inference_steps=gen_config.num_inference_steps,
+                        guidance_scale=gen_config.guidance_scale,
+                        latents=gen_config.latents,
+                        num_frames=gen_config.num_frames,
+                        generator=generator,
+                        return_dict=False,
+                        output_type="np" if is_video else "pil",
+                        callback_on_step_end=_stop_callback,
+                        **extra,
+                    )
             finally:
                 if getattr(self, '_distill_lora_ready', False):
                     try:
