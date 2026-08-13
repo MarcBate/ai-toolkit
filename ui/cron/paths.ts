@@ -89,6 +89,17 @@ export const getEnableHotModelReload = async () => {
   return row?.value ? row.value === 'true' : true;
 };
 
+// See ui/src/server/settings.ts getSamplePreviewEnabled -- same setting, this
+// copy is what startJob.ts reads to inject AITK_SAMPLE_PREVIEW into the
+// trainer's environment (cron runs from compiled dist/cron, separate from the
+// Next server, hence the duplicated getter).
+export const getSamplePreviewEnabled = async () => {
+  const key = 'AITK_SAMPLE_PREVIEW';
+  let row = await prisma.settings.findFirst({ where: { key } });
+  // default true — matches toolkit/sample_preview.py's own env-var default
+  return row?.value ? row.value === 'true' : true;
+};
+
 export const getModelsPath = async () => {
   const key = 'MODELS_PATH';
   let row = await prisma.settings.findFirst({

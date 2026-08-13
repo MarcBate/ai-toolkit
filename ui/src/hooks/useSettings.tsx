@@ -16,6 +16,7 @@ export interface Settings {
   CHECK_CONFIG_MODEL: string;
   CHECK_CONFIG_ENABLE_WEB_SEARCH: string;
   ENABLE_HOT_MODEL_RELOAD: string;
+  AITK_SAMPLE_PREVIEW: string;
   VERSION: string;
 }
 
@@ -33,6 +34,7 @@ export default function useSettings() {
     CHECK_CONFIG_MODEL: '',
     CHECK_CONFIG_ENABLE_WEB_SEARCH: 'false',
     ENABLE_HOT_MODEL_RELOAD: 'true',
+    AITK_SAMPLE_PREVIEW: 'true',
     VERSION: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
@@ -55,6 +57,7 @@ export default function useSettings() {
           CHECK_CONFIG_MODEL: data.CHECK_CONFIG_MODEL || '',
           CHECK_CONFIG_ENABLE_WEB_SEARCH: data.CHECK_CONFIG_ENABLE_WEB_SEARCH || 'false',
           ENABLE_HOT_MODEL_RELOAD: data.ENABLE_HOT_MODEL_RELOAD || 'true',
+          AITK_SAMPLE_PREVIEW: data.AITK_SAMPLE_PREVIEW || 'true',
           VERSION: data.VERSION || '',
         });
         setIsLoaded(true);

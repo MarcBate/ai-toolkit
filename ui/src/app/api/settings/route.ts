@@ -37,6 +37,11 @@ export async function GET() {
     // causing trouble.
     if (!settingsObject.ENABLE_HOT_MODEL_RELOAD) settingsObject.ENABLE_HOT_MODEL_RELOAD = 'true';
 
+    // Live sample preview (tiny-VAE decode of the clip forming during a
+    // sample). Defaults to on, matching toolkit/sample_preview.py's own
+    // env-var default when unset.
+    if (!settingsObject.AITK_SAMPLE_PREVIEW) settingsObject.AITK_SAMPLE_PREVIEW = 'true';
+
     // MODELS_PATH from the env file always takes precedence over the setting
     if (process.env.MODELS_PATH && process.env.MODELS_PATH.trim() !== '') {
       settingsObject.MODELS_PATH = process.env.MODELS_PATH;
@@ -71,7 +76,7 @@ export async function POST(request: Request) {
     const {
       HF_TOKEN, GEMMA_API_KEY, GEMMA_API_MODEL_ID_SOURCE, TRAINING_FOLDER, DATASETS_FOLDER, QUANTIZATION_CACHE_DIR, MODELS_PATH,
       CHECK_CONFIG_API_BASE_URL, CHECK_CONFIG_API_KEY, CHECK_CONFIG_MODEL,
-      CHECK_CONFIG_ENABLE_WEB_SEARCH, ENABLE_HOT_MODEL_RELOAD,
+      CHECK_CONFIG_ENABLE_WEB_SEARCH, ENABLE_HOT_MODEL_RELOAD, AITK_SAMPLE_PREVIEW,
     } = body;
 
     const upsert = (key: string, value: string) =>
@@ -91,6 +96,7 @@ export async function POST(request: Request) {
       upsert('CHECK_CONFIG_MODEL', CHECK_CONFIG_MODEL ?? ''),
       upsert('CHECK_CONFIG_ENABLE_WEB_SEARCH', CHECK_CONFIG_ENABLE_WEB_SEARCH ?? 'false'),
       upsert('ENABLE_HOT_MODEL_RELOAD', ENABLE_HOT_MODEL_RELOAD ?? 'true'),
+      upsert('AITK_SAMPLE_PREVIEW', AITK_SAMPLE_PREVIEW ?? 'true'),
     ]);
 
     flushCache();

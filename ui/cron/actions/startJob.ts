@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getGemmaApiModelIdSource, getQuantizationCacheDir, getModelsPath, getEnableHotModelReload } from '../paths';
+import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getGemmaApiKey, getGemmaApiModelIdSource, getQuantizationCacheDir, getModelsPath, getEnableHotModelReload, getSamplePreviewEnabled } from '../paths';
 import { resolveDetachedPythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -348,6 +348,10 @@ const launchJob = async (job: Job, sampleOnly: boolean = false) => {
     // AITK_ENABLE_HOT_MODEL — gates run_ui.py's persistent-loop model handoff between
     // consecutive same-arch queued jobs (untested; defaults on to match prior behavior)
     additionalEnv.AITK_ENABLE_HOT_MODEL = (await getEnableHotModelReload()) ? '1' : '0';
+
+    // AITK_SAMPLE_PREVIEW — toolkit/sample_preview.py's on/off switch for the
+    // live tiny-VAE sample preview
+    additionalEnv.AITK_SAMPLE_PREVIEW = (await getSamplePreviewEnabled()) ? '1' : '0';
 
     // MODELS_PATH - one set in the env always takes precedence (it passes
     // through via process.env); only fall back to the setting if it is not set

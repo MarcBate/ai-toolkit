@@ -250,6 +250,28 @@ export default function Settings() {
                     </span>
                   </label>
                 </div>
+
+                <div>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="AITK_SAMPLE_PREVIEW"
+                      checked={settings.AITK_SAMPLE_PREVIEW === 'true'}
+                      onChange={handleChange}
+                      className="mt-1 h-4 w-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium">
+                      Live Sample Preview
+                      <div className="text-gray-500 text-sm font-normal mt-1">
+                        Decodes the clip forming during a sample through a tiny VAE and shows it as it denoises, so a
+                        bad generation can be caught and skipped early instead of waiting for it to finish. Supported
+                        for MiniMax-H3, LTX-2, and LTX-2.3 (needs the matching tiny VAE checkpoint under{' '}
+                        <code>vae_approx</code> in the models folder). Adds a small decode+encode cost per sample
+                        step — turn off if that overhead ever matters more than the preview.
+                      </div>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
