@@ -75,7 +75,8 @@ export default function SamplePreview({ job }: Props) {
           <span className="text-sm font-medium text-gray-200">Live preview</span>
           {preview.sample != null && preview.of != null && (
             <span className="text-xs text-gray-400">
-              prompt {preview.sample + 1} of {preview.of}
+              {/* sample_preview.py already sends a 1-based index */}
+              prompt {preview.sample} of {preview.of}
             </span>
           )}
         </div>

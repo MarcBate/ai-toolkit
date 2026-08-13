@@ -14,7 +14,10 @@ Files written to the job folder, both replaced atomically:
     preview.mp4     the clip so far, looping
     preview.json    {sample, of, step, total, updated, file}
 
-Configured by environment, injected by the UI worker from the settings page:
+Configured by environment. AITK_SAMPLE_PREVIEW has a Settings page checkbox
+(ui/src/app/settings/page.tsx) and is injected by the worker
+(ui/cron/actions/startJob.ts); the rest are env-only -- set them in the shell
+that launches the UI/worker:
 
     AITK_SAMPLE_PREVIEW           "0" disables everything here (default on)
     AITK_SAMPLE_PREVIEW_FRAMES    frames in the preview clip (default 60)
@@ -34,8 +37,21 @@ import torch
 # arch -> tiny VAE filename under <MODELS_PATH>/vae_approx.
 # Only TAEHV-family (video) checkpoints belong here; image models use the TAESD
 # layout, which load_taehv_decoder refuses outright rather than half-loading.
+#
+# LTX-2.5 deliberately excluded: its README describes a new diffusion video
+# decoder, and no taeltx checkpoint has been verified against its latent
+# geometry. Guessing wrong here means a plausible-looking but wrong preview,
+# not a loud failure -- worse than no preview at all.
+#
+# ltx2 / ltx2.3's decode path (extensions_built_in/diffusion_models/ltx2/ltx2.py,
+# _stop_callback) is built from reading diffusers' pipeline_ltx2*.py source and
+# cross-checked against kijai's ComfyUI-LTXVideo preview node, not verified
+# against a live run -- watch the first real preview for a plausible (even if
+# blurry) image forming, not noise or static colour, before trusting it.
 TINY_VAE_BY_ARCH = {
     'minimax_h3': 'taeh3.safetensors',
+    'ltx2': 'taeltx_2.safetensors',
+    'ltx2.3': 'taeltx2_3.safetensors',
 }
 
 
@@ -65,6 +81,15 @@ class SamplePreviewWriter:
         self.decoder = None
         self._load_failed = False
         self._ffmpeg = shutil.which('ffmpeg')
+        if self.enabled and self._ffmpeg is None:
+            # Without this, a missing ffmpeg makes the whole feature vanish
+            # with zero signal anywhere -- no log line, no preview.json, no
+            # error. Disable up front (like a failed decoder load) instead of
+            # silently no-op-ing every step in _write.
+            self.enabled = False
+            self.print_fn(
+                " - Sample preview disabled: ffmpeg not found on PATH"
+            )
 
     # -- decoder ---------------------------------------------------------
     def _ensure_decoder(self, device):
@@ -115,8 +140,6 @@ class SamplePreviewWriter:
         frames = self._downscale(frames)
 
         out = os.path.join(self.job_folder, 'preview.mp4')
-        if self._ffmpeg is None:
-            return  # no encoder, nothing useful to write
         self._encode(frames, out)
 
         self._write_json({

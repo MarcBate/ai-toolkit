@@ -8,6 +8,7 @@ import { getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useJobLog from '@/hooks/useJobLog';
+import SamplePreview from '@/components/SamplePreview';
 
 interface JobOverviewProps {
   job: Job;
@@ -101,6 +102,11 @@ export default function JobOverview({ job }: JobOverviewProps) {
         </div>
 
         <div className="p-4 space-y-6 flex flex-col flex-grow">
+          {/* Renders itself only while a sample is actually being denoised --
+              previously only reachable from the Samples tab, so a job left on
+              this (default) tab never showed it. */}
+          <SamplePreview job={job} />
+
           {/* Progress Bar */}
           {totalSteps > 0 && (
             <div className="space-y-2">
