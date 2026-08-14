@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import { isMac } from '@/helpers/basic';
 import { cached } from '@/server/apiCache';
+import {
+  stripMootModelSettings,
+  stripMootTrainSettings,
+  stripMootDatasetSettings,
+} from '@/utils/jobConfigSanitize';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -59,6 +64,9 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { id, name, job_config } = body;
+    stripMootModelSettings(job_config);
+    stripMootTrainSettings(job_config);
+    stripMootDatasetSettings(job_config);
     let gpu_ids: string = body.gpu_ids;
 
     if (isMac()) {
