@@ -557,6 +557,7 @@ export default function SimpleJob({
             {modelArch?.additionalSections?.includes('model.spatial_upscaler_path') && (
               <TextInput
                 label="Spatial Upscaler Path"
+                className="md:col-span-2"
                 value={jobConfig.config.process[0].model.spatial_upscaler_path ?? ''}
                 docKey="config.process[0].model.spatial_upscaler_path"
                 onChange={(value: string | undefined) => {
@@ -566,6 +567,21 @@ export default function SimpleJob({
                   setJobConfig(value, 'config.process[0].model.spatial_upscaler_path');
                 }}
                 placeholder="Path to .safetensors upscaler model (optional)"
+              />
+            )}
+            {modelArch?.additionalSections?.includes('model.te_name_or_path') && !useGemmaApi && (
+              <TextInput
+                label="Text Encoder Path Override"
+                className="md:col-span-2"
+                value={jobConfig.config.process[0].model.te_name_or_path ?? ''}
+                docKey="config.process[0].model.te_name_or_path"
+                onChange={(value: string | undefined) => {
+                  if (value?.trim() === '') {
+                    value = undefined;
+                  }
+                  setJobConfig(value, 'config.process[0].model.te_name_or_path');
+                }}
+                placeholder="Path to .safetensors text encoder (optional — defaults to the arch's own resolution)"
               />
             )}
             {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && !useGemmaApi && (
@@ -2430,6 +2446,15 @@ export default function SimpleJob({
                 {jobConfig.config.process[0].sample.sample_lora_path !== null &&
                   jobConfig.config.process[0].sample.sample_lora_path !== undefined && (
                   <div className="mt-2 pl-2 space-y-3">
+                    {jobConfig.config.process[0].model.layer_offloading && (
+                      <p className="text-xs text-yellow-500">
+                        Layer offloading is on — sample LoRA merging currently fails on offloaded (quantized)
+                        layers and falls back to dequantizing them on the fly. That undoes the memory savings
+                        layer offloading gives you on those layers (risking OOM on high-res buckets) and,
+                        since a turbo/distill LoRA's whole point is speed, quietly gives up that benefit too.
+                        Turn off layer offloading, or drop the sample LoRA, to avoid this.
+                      </p>
+                    )}
                     <div className="space-y-2">
                       <LoraPathInput
                         label="LoRA 1 Path"

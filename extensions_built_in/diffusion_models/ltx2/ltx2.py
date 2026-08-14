@@ -1381,7 +1381,11 @@ class LTX2Model(BaseModel):
                     step_cb(i + 1, gen_config.num_inference_steps)
             return callback_kwargs
 
-        use_two_pass = self._has_upscaler() and is_video and self.ltx_version == "2.3"
+        # 2.5's spatial upscaler is the same LatentUpsampler architecture as 2.3's
+        # (identical key set and shapes; its embedded config matches the one
+        # _get_upsampler_model builds), and 2.5 runs on the pinned conv VAE, so the
+        # 128-channel latent space the upsampler expects is the same one.
+        use_two_pass = self._has_upscaler() and is_video and self.ltx_version in ("2.3", "2.5")
         if use_two_pass:
             video, audio = self._generate_two_pass(
                 pipeline, gen_config, conditional_embeds, unconditional_embeds, generator, extra

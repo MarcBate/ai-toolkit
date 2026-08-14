@@ -42,6 +42,7 @@ type AdditionalSections =
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path'
   | 'model.spatial_upscaler_path'
+  | 'model.te_name_or_path'
   | 'model.unconditional_lora_path'
   | 'model.model_kwargs.kv_cache'
   | 'ideogram_4_prompt';
@@ -1021,8 +1022,12 @@ export const modelArchs: ModelArch[] = [
     disableSections: ['network.conv'],
     // sample.distill_lora: LTX25Model inherits the whole distill-LoRA path from
     // LTX2Model without overriding any of it, so the only thing that was missing
-    // for 2.5 was the form field to set sample_lora_path.
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count', 'sample.distill_lora'],
+    // for 2.5 was the form field to set sample_lora_path. Same story for
+    // model.spatial_upscaler_path (+ the two-pass sampling it enables),
+    // model.gemma_api, and model.te_name_or_path (the DiT equivalent,
+    // name_or_path, already had a field) - all fully supported by the
+    // inherited LTX2Model code, just missing from this arch's form.
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'model.gemma_api', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count', 'sample.distill_lora', 'model.spatial_upscaler_path', 'model.te_name_or_path'],
   },
   {
     name: 'flux2_klein_4b',
