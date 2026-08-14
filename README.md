@@ -19,7 +19,8 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Automagic v3 backward compat** — resumes from checkpoints saved by any prior v3 variant (per-row lr tensors, missing `dir_ema`/`prev_sign` keys all handled)
 - **LightX2V for WAN 2.2** — 4-step distilled samples (~40s vs ~6 min); PEFT adapter reuse fix
 - **LTX-2.3 distilled LoRA** — 8-step samples instead of 30
-- **Gemma API for LTX-2.3** — use free Gemma API instead of loading 12B text encoder locally
+- **Gemma API for LTX-2/2.3/2.5** — use free Gemma API instead of loading the 12B text encoder locally; LTX-2.5 checkpoints don't carry the model-ID metadata the API needs, so a **Gemma API Model ID Source** setting on the Settings page lets you point at a local LTX-2.3 dev checkpoint purely to look up the ID (LTX-2/2.3 need no extra setup, their own checkpoints already carry it)
+- **LTX-2.5 two-pass spatial upscaling** — enabled for `ltx_version == "2.5"`, not just 2.3 (same `LatentUpsampler` architecture, same pinned conv VAE latent space)
 - **Sampling LoRA (Krea 2 & Qwen Image)** — apply a LoRA only during sample generation, not training; useful for filter-bypass or style LoRAs (see [Krea 2 Training](#krea-2-training)); fixed crash on quantized Qwen Image models where `QModuleMixin._load_from_state_dict` would raise `KeyError` on `_data` keys belonging to unrelated modules
 - **Corrupt/truncated JSON captions** — graceful fallback with warning instead of crashing the job
 - **Optimizer archiving** — option to archive optimizer state on each save
@@ -49,6 +50,9 @@ This is a personal fork of [ostris/ai-toolkit](https://github.com/ostris/ai-tool
 - **Cache quantized model** — skip re-quantization on subsequent runs
 - **Negative Prompt field** — exposed in job config UI
 - **Automagic v3 in optimizer dropdown** — was missing from upstream UI
+- **Text Encoder Path Override** — override which text-encoder file/checkpoint loads, independent of the DiT (`name_or_path`); hidden when Gemma API is active since no local TE loads then
+- **LTX-2.5 model-config fields completed** — Spatial Upscaler Path, Gemma API, and the new Text Encoder Path Override are now exposed for LTX-2.5 (the backend already supported all three via inherited `LTX2Model` code; only the form fields were missing)
+- **Moot settings zeroed on save** — job configs no longer keep stale values for settings that have no effect given their gating flag (e.g. a leftover `layer_offloading_transformer_percent` after turning `layer_offloading` off) — reset to the same default the backend would use if you re-enabled the toggle, never an arbitrary placeholder
 
 ### UI — Loss Graph
 
